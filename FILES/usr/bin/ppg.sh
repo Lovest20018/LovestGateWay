@@ -832,6 +832,19 @@ try_conf() {
     down_type=$2
     log "Try to get new ""$conf_name"
     if [ "${PPGW_DEBIAN:-0}" = "1" ]; then
+        if [ "$conf_name" = "ppgw.ini" ] && [ "$down_type" = "ini" ] && [ -f /www/ppgw.ini ]; then
+            # Debian's persistent file is authoritative; an existing private /tmp copy
+            # must not prevent a requested reload from seeing an atomic CLI/Web edit.
+            (
+                umask 077
+                candidate_ini=$(mktemp /tmp/ppgw.ini.XXXXXX) || exit 1
+                trap 'rm -f "$candidate_ini"' EXIT HUP INT TERM
+                cp /www/ppgw.ini "$candidate_ini" || exit 1
+                ppgw -ini-export "$candidate_ini" >/dev/null 2>&1 || exit 1
+                mv "$candidate_ini" /tmp/ppgw.ini
+            )
+            return $?
+        fi
         case "$conf_name" in
             ''|*/*|*..*) ;;
             *)

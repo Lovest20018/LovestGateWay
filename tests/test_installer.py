@@ -57,7 +57,7 @@ class InstallerTests(unittest.TestCase):
             config.write_text(config.read_text() + 'box="route.block_unknown=true,route.block_quic=true"\n')
             (stage / 'etc/paopaogw/test-profile.initialized').unlink()
             subprocess.run(args, check=True, capture_output=True)
-            self.assertIn('box="route.block_unknown=true,route.block_quic=false"', config.read_text())
+            self.assertIn('box="route.block_unknown=true,route.block_quic=true"', config.read_text())
             (package / 'lib/base.yaml').write_text('corrupt')
             self.assertNotEqual(subprocess.run(args, capture_output=True).returncode, 0)
 

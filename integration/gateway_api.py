@@ -101,12 +101,31 @@ class Settings:
             raise ValueError("probe_urls must contain at most 16 public HTTP(S) URLs")
 
 
+def core_base_url(env_file=Path('/etc/paopaogw/service.env')):
+    from manage_common import ManagementError
+    from manage_model import parse_assignments, endpoint
+    try:
+        raw = env_file.read_bytes() if env_file.exists() else b''
+        listen = parse_assignments(raw).get('PPGW_WEB_LISTEN', '0.0.0.0:80')
+        endpoint(listen)
+        parsed = urlsplit('http://' + listen)
+        host = parsed.hostname
+        if host == '0.0.0.0': host = '127.0.0.1'
+        if host == '::': host = '::1'
+        return 'http://' + ('[' + host + ']' if ':' in host else host) + ':' + str(parsed.port)
+    except (OSError, ValueError): raise ManagementError('INVALID_CORE_LISTENER') from None
+
+
 class CoreClient:
     """Only code-owned loopback paths are passed to this client."""
-    def __init__(self, token_file: Path, base_url: str = "http://127.0.0.1:80"):
-        self.token_file, self.base_url = token_file, base_url
+    def __init__(self, token_file: Path, base_url: str | None = None):
+        self.token_file, self._base_url = token_file, base_url
         # A host HTTP_PROXY must never receive the core credential.
         self.opener = build_opener(ProxyHandler({}), NoRedirect())
+
+    @property
+    def base_url(self):
+        return self._base_url or core_base_url()
 
     def request(self, path: str, body: dict | None = None, timeout: float = 3) -> dict:
         try:

@@ -44,8 +44,11 @@ def main():
         copy(args.binary, 'lib/bin/sniffbox', True)
         for filename in ('runtime.sh', 'network.py', 'launch.py', 'test_profile.py'):
             copy(ROOT / 'deploy/debian' / filename, 'lib/' + filename, True)
-        for filename in ('install.py', 'uninstall.sh'):
+        for filename in ('install.py', 'uninstall.sh', 'install.sh', 'deploy.py'):
             copy(ROOT / 'deploy/debian' / filename, filename, True)
+        copy(ROOT / 'deploy/debian/ppgw-admin', 'lib/ppgw-admin', True)
+        for source in sorted((ROOT / 'integration').glob('manage*.py')):
+            copy(source, 'lib/' + source.name)
         for filename in ('ppg.sh', 'nft.sh'):
             copy(ROOT / 'FILES/usr/bin' / filename, 'lib/' + filename, True)
         copy(ROOT / 'integration/gateway_api.py', 'lib/gateway_api.py')
@@ -64,7 +67,7 @@ def main():
         prepare_dashboard(stage / 'ui')
         for filename in ('LICENSE',):
             copy(ROOT / filename, filename)
-        for filename in ('debian-deployment.md', 'integration-api-v1.md', 'openapi-v1.json'):
+        for filename in ('debian-deployment.md', 'debian-management.md', 'integration-api-v1.md', 'openapi-v1.json'):
             copy(ROOT / 'docs' / filename, 'docs/' + filename)
         (stage / 'lib/build.json').write_text(json.dumps({'version': args.version,
             'build_commit': args.commit, 'source_sha256': args.source_sha256,

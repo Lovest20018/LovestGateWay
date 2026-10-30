@@ -6,6 +6,7 @@ After=network-online.target
 Type=oneshot
 ExecStart=/usr/bin/python3 /usr/local/lib/paopaogw/maintenance.py %i
 Environment=TZ=Asia/Shanghai
+EnvironmentFile=-/etc/paopaogw/service.env
 UMask=0077
 PrivateTmp=yes
 ProtectHome=yes

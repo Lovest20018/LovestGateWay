@@ -9,6 +9,7 @@ from pathlib import Path
 import secrets
 import shutil
 import subprocess
+import sys
 import uuid
 
 
@@ -34,6 +35,15 @@ def main():
             parser.exit(1, 'Invalid package path.\n')
         if hashlib.sha256(item.read_bytes()).hexdigest() != expected:
             parser.exit(1, 'Package checksum mismatch.\n')
+    sys.path.insert(0, str(package / 'lib'))
+    from manage_common import Layout, atomic_write
+    layout = Layout(args.root)
+    def install_file(source, destination):
+        relative = destination.relative_to(target).as_posix()
+        layout.path(relative)  # refuse existing target/parent symlinks before writing
+        mode = source.stat().st_mode & 0o777
+        atomic_write(layout, relative, source.read_bytes(), mode)
+        destination.chmod(mode)
     if live:
         if os.geteuid() != 0:
             parser.exit(1, 'Run as root.\n')
@@ -61,6 +71,7 @@ def main():
     config = target / 'etc/paopaogw'
     state = target / 'var/lib/paopaogw'
     code = target / 'usr/local/lib/paopaogw'
+    existing_install = (config / 'files/ppgw.ini').exists() or (config / 'instance-id').exists()
     for directory in (config, config / 'files', state, state / 'history', state / 'logs', state / 'clash', state / 'clash/clash-dashboard', code):
         directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(0o750)
@@ -69,15 +80,22 @@ def main():
         if source.is_file():
             dest = code / source.relative_to(package / 'lib')
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, dest)
+            install_file(source, dest)
+    launcher = target / 'usr/local/bin/ppgw-admin'
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    install_file(package / 'lib/ppgw-admin', launcher)
+    launcher.chmod(0o755)
     unit_dir = target / 'etc/systemd/system'
     unit_dir.mkdir(parents=True, exist_ok=True)
     for source in (package / 'units').iterdir():
         if source.suffix not in {'.service', '.timer'}:
             continue
-        shutil.copy2(source, unit_dir / source.name)
+        install_file(source, unit_dir / source.name)
     # Copy dashboard only; generated runtime data survives every upgrade.
-    shutil.copytree(package / 'ui', state / 'clash/clash-dashboard/ui', dirs_exist_ok=True)
+    for source in (package / 'ui').rglob('*'):
+        if source.is_file():
+            dest = state / 'clash/clash-dashboard/ui' / source.relative_to(package / 'ui')
+            install_file(source, dest)
     write_new(config / 'instance-id', str(uuid.uuid4()) + '\n', 0o640)
     write_new(config / 'read-token', secrets.token_hex(32) + '\n', 0o640)
     write_new(config / 'revision-key', secrets.token_hex(32) + '\n', 0o600)
@@ -90,12 +108,14 @@ def main():
               'dns_ip=223.5.5.5\ndns_port=53\nclash_web_password="' + secrets.token_urlsafe(24) + '"\n'
               'openport=no\nudp_enable=no\nnet_rec=no\n', 0o600)
     profile_marker = config / 'test-profile.initialized'
-    if args.enable_test_features or not profile_marker.exists():
+    if args.enable_test_features or (not existing_install and not profile_marker.exists()):
         spec = importlib.util.spec_from_file_location('test_profile', code / 'test_profile.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.enable(target)
         write_new(profile_marker, 'private-authenticated-v1\n', 0o600)
+    elif not profile_marker.exists():
+        write_new(profile_marker, 'existing-install-preserved\n', 0o600)
     write_new(state / 'hosts', '127.0.0.1 localhost\n::1 localhost\n', 0o640)
     if live:
         import grp
@@ -106,7 +126,7 @@ def main():
         (state / 'history').chmod(0o770)
         for name in ('maintenance.json',):
             os.chown(config / name, 0, group)
-        for name in ('instance-id', 'read-token', 'api.json'):
+        for name in ('instance-id', 'read-token', 'api.json', 'service.env'):
             os.chown(config / name, 0, group)
         subprocess.run(['systemctl', 'daemon-reload'], check=True)
     print('Installed; existing identity, credentials, configuration and state preserved.')
