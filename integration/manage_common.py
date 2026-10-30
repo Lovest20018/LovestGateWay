@@ -105,6 +105,13 @@ def require_idle(layout):
 _local = threading.local()
 
 
+def operation_lock_descriptor(layout):
+    """Share the held POSIX flock with a writer subprocess for its entire lifetime."""
+    stream = getattr(_local, 'locks', {}).get(str(layout.root))
+    if stream is None: raise ManagementError('MANAGEMENT_LOCK_REQUIRED')
+    return stream.fileno()
+
+
 @contextmanager
 def operation_lock(layout=None, reentrant=True):
     layout = layout or Layout()

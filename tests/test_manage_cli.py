@@ -50,6 +50,21 @@ class CliTests(unittest.TestCase):
         source = self.layout.path('source.ovpn'); source.write_text('client\nremote 192.0.2.1 1194\nup /tmp/script\n')
         with self.assertRaises(ManagementError): import_asset(self.layout, source, 'ovpn', 'custom.ovpn')
 
+    def test_invalid_yaml_returns_managed_error_and_menu_remains_open(self):
+        import io
+        from contextlib import redirect_stdout
+        from manage import menu
+        from manage_runtime import System
+        source = self.layout.path('broken.yaml'); source.write_text('proxies: [')
+        with self.assertRaisesRegex(ManagementError, 'INVALID_ASSET_CONTENT'):
+            import_asset(self.layout, source, 'yaml', 'custom.yaml')
+        answers = iter(['4', 'yaml', str(source), 'custom.yaml', 'no', '0'])
+        output = io.StringIO()
+        with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', side_effect=lambda _: next(answers)), redirect_stdout(output):
+            self.assertEqual(menu(self.layout, System(self.layout)), 0)
+        self.assertIn('操作失败', output.getvalue())
+        self.assertFalse(self.layout.path('etc/paopaogw/files/custom.yaml').exists())
+
     def test_vpn_quoted_hook_and_external_include_are_rejected(self):
         source = self.layout.path('source.ovpn')
         for directive in ('"up" "/bin/sh"', '"script-security" 2', '"config" "/etc/secret"', 'm\\anagement 127.0.0.1 9999', 'tls-crypt-v2 /etc/key', 'redirect-gateway def1', 'route 0.0.0.0 0.0.0.0'):

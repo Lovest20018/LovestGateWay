@@ -20,7 +20,8 @@ def import_asset(layout, source, kind, name, overwrite=False):
         if '\x00' in text: raise ValueError()
         if kind == 'yaml':
             import yaml
-            value = yaml.safe_load(text)
+            try: value = yaml.safe_load(text)
+            except yaml.YAMLError: raise ValueError() from None
             if not isinstance(value, dict) or not any(k in value for k in ('proxies', 'proxy-providers')): raise ValueError()
         elif kind == 'ppsub':
             value = json.loads(text)
