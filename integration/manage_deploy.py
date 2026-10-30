@@ -10,7 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 from types import SimpleNamespace
-from manage_common import ManagementError, operation_lock, read_bytes, write_json, digest
+from manage_common import ManagementError, operation_lock, operation_lock_descriptor, read_bytes, write_json, digest
 from manage_backup import BackupStore, UNITS
 from manage_model import load_settings
 from manage_runtime import System
@@ -79,8 +79,11 @@ class Deployer:
         self.layout = layout; self.system = system or System(layout); self.store = BackupStore(layout)
         self.installer = installer or self.install
     def install(self, package):
-        result = subprocess.run([os.sys.executable, '-B', str(package.path / 'install.py'), '--root', str(self.layout.root)],
-                                capture_output=True, timeout=120)
+        with operation_lock(self.layout):
+            # SIGKILL of this process must not release exclusion while install.py still writes.
+            inherited = {'pass_fds': (operation_lock_descriptor(self.layout),)} if os.name == 'posix' else {}
+            result = subprocess.run([os.sys.executable, '-B', str(package.path / 'install.py'), '--root', str(self.layout.root)],
+                                    capture_output=True, timeout=120, **inherited)
         if result.returncode: raise ManagementError('INSTALLER_FAILED')
     @contextmanager
     def candidate(self, package, fresh, interface):

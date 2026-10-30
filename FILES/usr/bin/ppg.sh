@@ -600,9 +600,8 @@ load_ovpn() {
             echo "$ovpn_password" >>/tmp/ovpn_pass.txt
         fi
         echo "dev tun114" >>/tmp/paopao.ovpn
-        if ! grep -q route-nopull /tmp/paopao.ovpn; then
-            echo "route-nopull" >>/tmp/paopao.ovpn
-        fi
+        # Enforce an active option even when comments or inline certificates mention its name.
+        echo "route-nopull" >>/tmp/paopao.ovpn
         log "paopao.ovpn generated; openvpn managed by sniffbox." succ
     else
         log "The paopao.ovpn generation failed." warn
