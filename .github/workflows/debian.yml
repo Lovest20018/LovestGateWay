@@ -26,6 +26,10 @@ jobs:
           git diff --exit-code -- docs/openapi-v1.json integration/fixtures
           sh -n FILES/usr/bin/ppg.sh
           sh -n FILES/usr/bin/nft.sh
+          sh -n deploy/debian/install.sh
+          sh -n deploy/debian/ppgw-admin
+          sh -n deploy/debian/uninstall.sh
+          sh -n deploy/debian/runtime.sh
       - name: Rust test and build
         working-directory: sniffbox
         env:

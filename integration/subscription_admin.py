@@ -13,6 +13,8 @@ import shlex
 import subprocess
 import threading
 import time
+from functools import wraps
+from manage_common import Layout, ManagementError, require_idle, operation_lock as management_lock
 from urllib.parse import urlsplit
 from gateway_api import CoreClient, ApiError
 from clash_ppsub import editor_config, running_document, merge_editor, fingerprint, source_identity, feature_options, apply_features, logical_document
@@ -24,6 +26,21 @@ STATE = Path('/var/lib/paopaogw/admin')
 CODE = Path(__file__).resolve().parent
 CORE_TOKEN = Path('/var/lib/paopaogw/core-token')
 POLICY = FILES / 'clash-policy.json'
+
+
+def managed_worker(function):
+    @wraps(function)
+    def run(self, *args, **kwargs):
+        try:
+            # Tests may place CONFIG in an isolated root; production uses /.
+            layout = Layout(CONFIG.parents[3] if CONFIG.as_posix().endswith('/etc/paopaogw/files/ppgw.ini') else STATE.parent)
+            with management_lock(layout):
+                require_idle(layout)
+                return function(self, *args, **kwargs)
+        except ManagementError:
+            with self.lock:
+                if self.operation: self.operation.update(status='failed', message='管理操作正在进行或需要恢复，请稍后检查状态再试。')
+    return run
 
 
 def revision(raw):
@@ -139,15 +156,20 @@ class Admin:
             if not POLICY.is_file(): return {'status': 'unchanged'}
             old = POLICY.read_bytes()
             self.operation = {'id': 'policy-reset-' + str(int(time.time())), 'status': 'applying', 'message': '正在恢复订阅原始分流策略…'}
-            thread = threading.Timer(.5, self.reset_worker, args=(old,))
+            thread = threading.Timer(.5, self.reset_worker, args=(old, CONFIG.read_bytes()))
             thread.daemon = True; thread.start()
             return dict(self.operation)
 
-    def reset_worker(self, old):
+    @managed_worker
+    def reset_worker(self, old, original=None):
+        written = False
         try:
+            if (original is not None and CONFIG.read_bytes() != original) or not POLICY.exists() or POLICY.read_bytes() != old:
+                raise ManagementError('CONFIG_CHANGED')
             STATE.mkdir(parents=True, exist_ok=True)
             atomic_write(STATE / 'clash-policy.before-reset.json', old)
             POLICY.unlink()
+            written = True
             subprocess.run(['systemctl', 'restart', 'paopaogw'], check=True, timeout=30,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             deadline = time.monotonic() + 90
@@ -160,7 +182,7 @@ class Admin:
                 time.sleep(1)
             raise ValueError('NOT_READY')
         except Exception:
-            if not POLICY.exists():
+            if written and not POLICY.exists():
                 atomic_write(POLICY, old)
                 subprocess.run(['systemctl', 'restart', 'paopaogw'], timeout=30,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -299,6 +321,7 @@ class Admin:
             thread.start()
             return dict(self.operation)
 
+    @managed_worker
     def clash_worker(self, snapshot, original, candidate, policy, document):
         import yaml
         policy_bytes = (json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode()
@@ -366,9 +389,12 @@ class Admin:
         finally:
             check_file.unlink(missing_ok=True)
 
+    @managed_worker
     def worker(self, original, candidate, upload):
         old_files = {}
+        written = False
         try:
+            if CONFIG.read_bytes() != original: raise ManagementError('CONFIG_CHANGED')
             STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
             atomic_write(STATE / 'ppgw.before-subscription.ini', original)
             # A stale local PPsub must not override a subsequently imported URL/YAML.
@@ -381,6 +407,7 @@ class Admin:
                 elif name == 'ppsub.json' and (FILES / name).exists():
                     (FILES / name).unlink()
             atomic_write(CONFIG, candidate)
+            written = True
             subprocess.run(['systemctl', 'restart', 'paopaogw.service'], check=True, timeout=25,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             deadline = time.monotonic() + 90
@@ -399,7 +426,7 @@ class Admin:
             # Restore only when the candidate is still ours, preserving later external edits.
             restored = False
             try:
-                if CONFIG.read_bytes() == candidate:
+                if written and CONFIG.read_bytes() == candidate:
                     atomic_write(CONFIG, original)
                     for name, content in old_files.items():
                         if content is None:

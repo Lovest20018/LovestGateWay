@@ -7,6 +7,7 @@ Type=simple
 User=paopaogw-api
 Group=paopaogw-api
 ExecStart=/usr/bin/python3 /usr/local/lib/paopaogw/observe.py
+EnvironmentFile=-/etc/paopaogw/service.env
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=yes

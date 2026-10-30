@@ -1,0 +1,86 @@
+"""Durable configuration transactions, safe preview, and conditional recovery."""
+import json
+from manage_common import ManagementError, operation_lock, atomic_write, read_bytes, write_json, digest
+from manage_model import load_settings, public_settings, render_updates, settings_revision
+from manage_backup import BackupStore
+from manage_runtime import System
+
+JOURNAL = 'var/lib/paopaogw/admin/transaction.json'
+SAFE_RELOAD = {'max_rec', 'net_cleanday', 'admin_cidr', 'proxy_cidr'}
+
+
+class ConfigManager:
+    def __init__(self, layout, system=None):
+        self.layout = layout; self.system = system or System(layout); self.backups = BackupStore(layout)
+    def show(self): return {'revision': settings_revision(self.layout), 'settings': public_settings(load_settings(self.layout))}
+    def journal(self):
+        raw = read_bytes(self.layout, JOURNAL)
+        return json.loads(raw) if raw else None
+    def plan(self, patch, reset_source=False):
+        updates, changes = render_updates(self.layout, patch)
+        if set(changes.get('ini', {})) & {'mode', 'suburl', 'yamlfile'}:
+            target = load_settings(self.layout)['ini']; target.update(changes.get('ini', {}))
+            names = ('clash-policy.json',) if target['mode'] == 'suburl' and target['suburl'].startswith('ppsub@') else ('ppsub.json', 'clash-policy.json')
+            conflicts = ['etc/paopaogw/files/' + name for name in names
+                         if self.layout.path('etc/paopaogw/files/' + name).exists()]
+            if conflicts and not reset_source: raise ManagementError('SOURCE_CONFLICT:use --reset-source to remove local PPsub/policy')
+            for path in conflicts: updates[path] = None
+        action = 'none'
+        if changes.get('ini'): action = 'reload' if set(changes['ini']) <= SAFE_RELOAD else 'restart'
+        if set(changes.get('ini', {})) & {'max_rec', 'net_cleanday'} and not load_settings(self.layout)['ini']['net_rec']:
+            action = 'restart'
+        if changes.get('service'): action = 'restart'
+        return updates, changes, action
+    def apply(self, patch, base_revision, dry_run=False, reset_source=False, restart=False):
+        # Preview does not create a lock, journal or backup.
+        updates, changes, action = self.plan(patch, reset_source)
+        if restart: action = 'restart'
+        if dry_run:
+            settings = load_settings(self.layout)
+            for namespace, fields in changes.items(): settings[namespace].update(fields)
+            self.system.preflight(settings)
+            return {'status': 'preview', 'changes': public_settings(changes), 'action': action, 'revision': settings_revision(self.layout)}
+        with operation_lock(self.layout):
+            if self.journal() and self.journal()['phase'] not in {'complete', 'rolled_back'}: raise ManagementError('RECOVERY_REQUIRED')
+            if settings_revision(self.layout) != base_revision: raise ManagementError('CONFIG_REVISION_CONFLICT')
+            updates, changes, action = self.plan(patch, reset_source)
+            if restart: action = 'restart'
+            if not updates and not restart: return {'status': 'unchanged', 'revision': base_revision}
+            settings = load_settings(self.layout)
+            for namespace, fields in changes.items(): settings[namespace].update(fields)
+            self.system.preflight(settings)
+            before = self.system.status()
+            if hasattr(self.system, 'prepare'): self.system.prepare(action, before)
+            backup = self.backups.create(updates, {'services': before, 'kind': 'config'})
+            original = self.backups.index(backup)['files']
+            journal = {'kind': 'config', 'phase': 'prepared', 'backup': backup, 'services': before,
+                       'expected': {path: [None if raw is None else digest(raw), None if original[path] is None else original[path]['sha256']] for path, raw in updates.items()}}
+            write_json(self.layout, JOURNAL, journal)
+            try:
+                for path, raw in updates.items():
+                    if raw is None: self.layout.path(path).unlink(missing_ok=True)
+                    else: atomic_write(self.layout, path, raw)
+                journal['phase'] = 'applying'; write_json(self.layout, JOURNAL, journal)
+                running = self.system.apply(action, settings, changes, before)
+                journal['phase'] = 'complete'; write_json(self.layout, JOURNAL, journal)
+                return {'status': 'applied', 'revision': settings_revision(self.layout), 'backup': backup, 'action': action, 'runtime': running}
+            except Exception:
+                self._rollback(journal)
+                raise ManagementError('APPLY_FAILED_ROLLED_BACK') from None
+    def _rollback(self, journal):
+        try:
+            self.backups.restore(journal['backup'], expected=journal['expected'])
+        except ManagementError:
+            journal['phase'] = 'conflict'; write_json(self.layout, JOURNAL, journal)
+            raise ManagementError('EXTERNAL_CONFIG_CONFLICT') from None
+        self.system.restore_services(journal['services'])
+        journal['phase'] = 'rolled_back'; write_json(self.layout, JOURNAL, journal)
+    def recover(self):
+        with operation_lock(self.layout):
+            journal = self.journal()
+            if not journal or journal['phase'] in {'complete', 'rolled_back'}: return {'status': 'nothing_to_recover'}
+            if journal.get('kind') in {'deploy', 'restore', 'backup'}:
+                from manage_deploy import Deployer
+                return Deployer(self.layout, self.system).recover()
+            self._rollback(journal)
+            return {'status': 'rolled_back', 'backup': journal['backup']}

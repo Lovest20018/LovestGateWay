@@ -38,17 +38,11 @@ def atomic_json(path, value):
 
 @contextmanager
 def operation_lock(state=STATE):
-    import fcntl
-    state.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (state / 'operation.lock').open('a') as stream:
-        try:
-            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ValueError('MAINTENANCE_BUSY') from None
-        try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+    from manage_common import Layout, require_idle, operation_lock as shared_lock
+    layout = Layout(state.parents[3])
+    with shared_lock(layout):
+        require_idle(layout)
+        yield
 
 
 def official_url(url):
