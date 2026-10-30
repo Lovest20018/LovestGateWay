@@ -79,7 +79,7 @@ class Deployer:
         self.layout = layout; self.system = system or System(layout); self.store = BackupStore(layout)
         self.installer = installer or self.install
     def install(self, package):
-        result = subprocess.run([os.sys.executable, str(package.path / 'install.py'), '--root', str(self.layout.root)],
+        result = subprocess.run([os.sys.executable, '-B', str(package.path / 'install.py'), '--root', str(self.layout.root)],
                                 capture_output=True, timeout=120)
         if result.returncode: raise ManagementError('INSTALLER_FAILED')
     @contextmanager

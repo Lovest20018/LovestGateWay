@@ -77,7 +77,7 @@ def main():
         directory.chmod(0o750)
     code.chmod(0o755)
     for source in (package / 'lib').rglob('*'):
-        if source.is_file():
+        if source.is_file() and source.relative_to(package).as_posix() in manifest:
             dest = code / source.relative_to(package / 'lib')
             dest.parent.mkdir(parents=True, exist_ok=True)
             install_file(source, dest)
