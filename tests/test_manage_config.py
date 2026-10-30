@@ -113,5 +113,15 @@ class ConfigTests(unittest.TestCase):
         restore_backup(self.layout, self.system, full)
         self.assertFalse(local.exists())
 
+    def test_generated_bytecode_is_not_a_program_edit_or_snapshot_input(self):
+        from manage_backup import BackupStore
+        store = BackupStore(self.layout)
+        cache = self.layout.path('usr/local/lib/paopaogw/__pycache__/manage_common.cpython-311.pyc')
+        cache.parent.mkdir(parents=True); cache.write_bytes(b'generated cache')
+        self.assertNotIn(cache.relative_to(self.layout.root).as_posix(), store.paths())
+        identifier = store.create(['etc/paopaogw/files/ppgw.ini'])
+        store.restore(identifier, expected={cache.relative_to(self.layout.root).as_posix(): ['old-cache-digest']})
+        self.assertEqual(self.ini.read_bytes(), self.original)
+
 
 if __name__ == '__main__': unittest.main()

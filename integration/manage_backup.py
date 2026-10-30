@@ -7,6 +7,10 @@ import time
 import uuid
 from manage_common import ManagementError, atomic_write, read_bytes, write_json, digest, operation_lock
 
+
+def generated(path):
+    return '__pycache__' in path.split('/') or path.endswith(('.pyc', '.pyo'))
+
 ROOTS = ('etc/paopaogw', 'usr/local/lib/paopaogw', 'var/lib/paopaogw')
 UNITS = ('paopaogw.service', 'paopaogw-api.service', 'paopaogw-subscription.service',
          'paopaogw-observe.service', 'paopaogw-maintenance.service', 'paopaogw-maintenance.timer',
@@ -37,7 +41,7 @@ class BackupStore:
             if directory.exists():
                 for item in directory.rglob('*'):
                     relative = item.relative_to(self.layout.root).as_posix()
-                    if managed(relative):
+                    if managed(relative) and not generated(relative):
                         self.layout.check(item)
                         if item.is_file(): result.add(relative)
         return sorted(p for p in result if managed(p))
@@ -78,6 +82,7 @@ class BackupStore:
             # Validate every target before restoring the first file.
             if expected is not None:
                 for path, allowed in expected.items():
+                    if generated(path): continue  # compatibility with early snapshots containing bytecode
                     raw = read_bytes(self.layout, path, limit=512 * 1024 * 1024)
                     actual = None if raw is None else digest(raw)
                     if actual not in allowed: raise ManagementError('EXTERNAL_CONFIG_CONFLICT')

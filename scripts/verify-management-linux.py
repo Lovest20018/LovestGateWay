@@ -11,6 +11,8 @@ import subprocess
 import sys
 import threading
 import time
+import tarfile
+import tempfile
 
 
 def main():
@@ -46,6 +48,8 @@ def main():
         result = apply({'ini': {'max_rec': count}}); current = system.runtime()
         assert result['action'] == 'reload' and old['boot_id'] == current['boot_id'] and old['config_revision'] != current['config_revision']
         system.verify_loaded(load_settings(layout))
+        assert Path('/var/lib/paopaogw/core-token').stat().st_mode & 0o777 == 0o640
+        system.wait_api(load_settings(layout))
     record('real_hot_reload_snapshot_revision', hot)
     def no_op():
         raw = ini.read_bytes(); boot = system.runtime()['boot_id']
@@ -149,6 +153,43 @@ ConfigManager(layout,Killed(layout)).apply({'ini':{'max_rec':value}},settings_re
         assert ini.read_bytes() == original and manager.journal()['phase'] == 'rolled_back'
         system.wait(load_settings(layout))
     record('sigkill_and_recover_persistent_config', killed_transaction)
+    def killed_program_upgrade():
+        from manage_deploy import verify_package
+        module = Path('/usr/local/lib/paopaogw/manage_deploy.py'); original = module.read_bytes()
+        with tempfile.TemporaryDirectory(prefix='ppgw-kill-upgrade-') as temporary:
+            broken = Path(temporary) / 'candidate.tar.gz'
+            with verify_package(args.archive, archive_sha) as package:
+                changed = package.path / 'lib/manage_deploy.py'
+                changed.write_bytes(changed.read_bytes() + b'\nraise RuntimeError("INJECTED_MIXED_UPGRADE_MODULE")\n')
+                manifest = json.loads((package.path / 'manifest.json').read_bytes())
+                manifest['lib/manage_deploy.py'] = hashlib.sha256(changed.read_bytes()).hexdigest()
+                (package.path / 'manifest.json').write_text(json.dumps(manifest))
+                with tarfile.open(broken, 'w:gz') as tar:
+                    for name in ['manifest.json', *manifest]: tar.add(package.path / name, arcname='release/' + name, recursive=False)
+            script = """import sys,os,signal
+sys.path.insert(0,'/usr/local/lib/paopaogw')
+from manage_common import Layout,atomic_write
+from manage_deploy import Deployer
+from manage_runtime import System
+def interrupted(package):
+ atomic_write(Layout(),'usr/local/lib/paopaogw/manage_deploy.py',(package.path/'lib/manage_deploy.py').read_bytes())
+ os.kill(os.getpid(),signal.SIGKILL)
+Deployer(Layout(),System(Layout(),timeout=8),installer=interrupted).deploy(sys.argv[1],sys.argv[2])
+"""
+            sha = hashlib.sha256(broken.read_bytes()).hexdigest()
+            child = subprocess.run(['python3', '-c', script, str(broken), sha], capture_output=True)
+            assert child.returncode == -signal.SIGKILL
+            assert b'INJECTED_MIXED_UPGRADE_MODULE' in module.read_bytes()
+            cli = subprocess.run(['ppgw-admin', 'recover', '--yes'], capture_output=True)
+            assert cli.returncode != 0, 'fixture must demonstrate installed entry cannot import'
+            # A separately verified clean release carries an independent recovery implementation.
+            clean = Path(temporary) / 'clean'
+            with verify_package(args.archive, archive_sha) as package:
+                result = subprocess.run(['python3', str(package.path / 'deploy.py'), '--recover', '--yes'], capture_output=True)
+                assert result.returncode == 0, 'verified bootstrap recovery failed'
+        assert module.read_bytes() == original and manager.journal()['phase'] == 'rolled_back'
+        system.wait(load_settings(layout)); system.wait_api(load_settings(layout))
+    record('sigkill_program_upgrade_independent_bootstrap_recovery', killed_program_upgrade)
     def external_conflict():
         original = ini.read_bytes(); external = original+b'# external edit\n'
         class External(System):
@@ -163,8 +204,10 @@ ConfigManager(layout,Killed(layout)).apply({'ini':{'max_rec':value}},settings_re
     def backup_restore():
         identifier = create_backup(layout, system)['backup']; count = load_settings(layout)['ini']['max_rec']
         apply({'ini': {'max_rec': count+2}})
+        local = Path('/etc/paopaogw/files/ppsub.json'); local.write_text('{"fixture_new":true}')
         restore_backup(layout, system, identifier)
         assert load_settings(layout)['ini']['max_rec'] == count
+        assert not local.exists(), 'complete restore must remove newer local subscription source'
         system.wait(load_settings(layout)); system.wait_api(load_settings(layout))
     record('real_backup_and_restore', backup_restore)
     args.report.write_text(json.dumps({'complete': True, 'passed': results, 'archive_sha256': archive_sha,
