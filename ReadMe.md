@@ -1,6 +1,6 @@
 # LovestGateWay
 
-<img src="lovestgateway.svg" width="144" height="144" alt="LovestGateWay logo">
+<img src="lovestgateway.svg" width="360" height="108" alt="LovestGateWay logo">
 
 基于 [Lovest20018/PaoPaoGateWay](https://github.com/Lovest20018/PaoPaoGateWay) 的 Rust FakeIP 网关，改为 Debian 原生部署，并提供 HNM observer API v1。
 
