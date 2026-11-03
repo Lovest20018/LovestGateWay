@@ -15,14 +15,14 @@ fn log_get(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::green("[PaoPaoGW Get]")
+        crate::term::green("[LovestGateWay Get]")
     );
 }
 fn log_get_warn(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::orange("[PaoPaoGW Get]")
+        crate::term::orange("[LovestGateWay Get]")
     );
 }
 

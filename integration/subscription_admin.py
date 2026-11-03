@@ -448,7 +448,7 @@ class Admin:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'PaoPaoGateway-Subscription/1'
+    server_version = 'LovestGateWay-Subscription/1'
     def setup(self):
         super().setup()
         self.connection.settimeout(10)

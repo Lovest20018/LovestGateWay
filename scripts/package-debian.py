@@ -31,7 +31,7 @@ def main():
     if header[:5] != b'\x7fELF\x02' or struct.unpack('<H', header[18:20])[0] != {'amd64': 62, 'arm64': 183}[args.arch]:
         parser.error('binary is not a matching 64-bit Linux ELF')
     args.output.mkdir(parents=True, exist_ok=True)
-    name = f'paopaogw-{args.version}-debian-{args.arch}'
+    name = f'lovestgateway-{args.version}-debian-{args.arch}'
     with tempfile.TemporaryDirectory() as temporary:
         stage = Path(temporary) / name
         executables = set()

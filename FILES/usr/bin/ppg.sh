@@ -217,14 +217,14 @@ log() {
     log_type=$2
     log_ts
     if [ "$log_type" = "warn" ]; then
-        ppgwecho "\033[31m[PaoPaoGW $log_hms]\033[0m ""$log_msg"
+        ppgwecho "\033[31m[LovestGateWay $log_hms]\033[0m ""$log_msg"
         return 0
     fi
     if [ "$log_type" = "succ" ]; then
-        ppgwecho "\033[32m[PaoPaoGW $log_hms]\033[0m ""$log_msg"
+        ppgwecho "\033[32m[LovestGateWay $log_hms]\033[0m ""$log_msg"
         return 0
     fi
-    ppgwecho "[PaoPaoGW $log_hms] ""$1"
+    ppgwecho "[LovestGateWay $log_hms] ""$1"
 }
 
 

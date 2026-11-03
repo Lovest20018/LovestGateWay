@@ -79,7 +79,7 @@ class Settings:
     version: str = "development"
     build_commit: str = "unknown"
     source_sha256: str | None = None
-    name: str = "PaoPaoGateway"
+    name: str = "LovestGateWay"
     listen: str = "127.0.0.1"
     port: int = 8788
     probe_urls: tuple[str, ...] = ()
@@ -641,7 +641,7 @@ class ApiServer(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "PaoPaoGateway-API/1"
+    server_version = "LovestGateWay-API/1"
     sys_version = ""
 
     def setup(self):
@@ -747,7 +747,7 @@ def main():
             CoreClient(Path("/var/lib/paopaogw/core-token")), StagedProbe()))
     except (OSError, ValueError, KeyError, TypeError):
         parser.exit(1, "Invalid API configuration or unreadable credentials.\n")
-    print(f"PaoPaoGateway API v1 listening on {settings.listen}:{settings.port}", flush=True)
+    print(f"LovestGateWay API v1 listening on {settings.listen}:{settings.port}", flush=True)
     server.serve_forever()
 
 

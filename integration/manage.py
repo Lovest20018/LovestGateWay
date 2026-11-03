@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PaoPaoGateway 中文脚本管理入口。凭据只从私有 JSON/stdin/隐藏输入读取。"""
+"""LovestGateWay 中文脚本管理入口。凭据只从私有 JSON/stdin/隐藏输入读取。"""
 import argparse
 import getpass
 import json
@@ -100,7 +100,7 @@ def menu(layout, system):
     if not sys.stdin.isatty(): raise ManagementError('INTERACTIVE_TERMINAL_REQUIRED:use --help for batch commands')
     manager = ConfigManager(layout, system)
     while True:
-        print('\n泡泡网关管理\n1 状态诊断  2 查看脱敏配置  3 修改配置\n4 导入资源  5 创建备份  6 列出/恢复备份  7 安装/升级本地包  8 恢复中断事务\n9 重启并验证持久配置/资源  0 退出')
+        print('\nLovestGateWay 网关管理\n1 状态诊断  2 查看脱敏配置  3 修改配置\n4 导入资源  5 创建备份  6 列出/恢复备份  7 安装/升级本地包  8 恢复中断事务\n9 重启并验证持久配置/资源  0 退出')
         choice = input('选择: ').strip()
         if choice == '0': return 0
         try:
