@@ -794,6 +794,9 @@ pub fn find_pids_by_names(groups: &[&[&str]]) -> Vec<Vec<u32>> {
         let Some(pid) = fname.to_str().and_then(|s| s.parse::<u32>().ok()) else {
             continue;
         };
+        if !sb_ppgw::procinfo::process_in_scope(pid) {
+            continue;
+        }
         let Ok(comm) = std::fs::read_to_string(format!("/proc/{pid}/comm")) else {
             continue;
         };
@@ -811,7 +814,8 @@ pub fn find_pids_by_names(groups: &[&[&str]]) -> Vec<Vec<u32>> {
 }
 
 pub fn pid_has_comm(pid: u32, names: &[&str]) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| names.contains(&c.trim()))
+    sb_ppgw::procinfo::process_in_scope(pid)
+        && std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| names.contains(&c.trim()))
 }
 
 pub struct RescanCache<T> {

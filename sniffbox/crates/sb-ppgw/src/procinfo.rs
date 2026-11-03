@@ -1,7 +1,23 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
-fn proc_is_clash(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/comm"))
+/// Native Debian services share the host PID namespace with unrelated gateways.
+/// Fail closed when ownership cannot be established; upstream behavior is unchanged.
+pub fn process_in_scope(pid: u32) -> bool {
+    if std::env::var("PPGW_DEBIAN").as_deref() != Ok("1") {
+        return true;
+    }
+    same_cgroup(
+        std::fs::read("/proc/self/cgroup").ok().as_deref(),
+        std::fs::read(format!("/proc/{pid}/cgroup")).ok().as_deref(),
+    )
+}
+
+fn same_cgroup(ours: Option<&[u8]>, theirs: Option<&[u8]>) -> bool {
+    matches!((ours, theirs), (Some(a), Some(b)) if !a.is_empty() && a == b)
+}
+
+pub fn proc_is_clash(pid: u32) -> bool {
+    process_in_scope(pid) && std::fs::read_to_string(format!("/proc/{pid}/comm"))
         .map(|c| c.trim() == "clash")
         .unwrap_or(false)
 }
@@ -70,6 +86,16 @@ pub fn readiness_age_secs() -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cgroup_ownership_rejects_foreign_and_unreadable_processes() {
+        let ours = Some(b"0::/system.slice/paopaogw.service\n".as_slice());
+        assert!(same_cgroup(ours, ours));
+        assert!(!same_cgroup(ours, Some(b"0::/system.slice/docker.scope\n")));
+        assert!(!same_cgroup(None, ours));
+        assert!(!same_cgroup(ours, None));
+        assert!(!same_cgroup(Some(b""), Some(b"")));
+    }
 
     #[test]
     fn self_process_uptime_is_readable_and_sane() {

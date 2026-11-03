@@ -361,6 +361,9 @@ safe_kill() {
     parent_pid="$PPID"
     pids=""
     for pid in $(pgrep -f "$target_path"); do
+        if [ "${PPGW_DEBIAN:-0}" = "1" ] && ! ppgw_owned_pid "$pid" "${target_path##*/}"; then
+            continue
+        fi
         if [ "$pid" = "$self_pid" ] || [ "$pid" = "$parent_pid" ]; then
             continue
         fi

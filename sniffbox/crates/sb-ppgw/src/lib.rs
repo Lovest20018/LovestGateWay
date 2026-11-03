@@ -137,7 +137,6 @@ impl Subcommand {
                 | Subcommand::TestNodeOnce
                 | Subcommand::RawUrl
                 | Subcommand::ClashReady
-                | Subcommand::Genhost
         )
     }
 }
@@ -800,6 +799,9 @@ fn cmd_genhost(f: &PpgwFlags, io: &mut Io) -> i32 {
             return 1;
         }
     };
+    // Configuration can contain credentials and is intentionally root-readable.
+    // Read it before dropping privileges, then resolve hostnames as nobody.
+    let _ = privsep::drop_privileges();
     let hosts = dnsutil::extract_hosts(&content);
     let ipv6 = dnsutil::ipv6_enabled();
     for (host, ip) in dnsutil::resolve_hosts_batch(&hosts, &f.server, f.port, ipv6) {
