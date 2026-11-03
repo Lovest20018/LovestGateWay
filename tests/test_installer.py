@@ -18,10 +18,10 @@ class InstallerTests(unittest.TestCase):
             subprocess.run([sys.executable, str(ROOT / 'scripts/package-debian.py'),
                 '--binary', str(binary), '--version', 'test', '--commit', 'a' * 40,
                 '--source-sha256', 'b' * 64, '--arch', 'amd64', '--output', str(work)], check=True, capture_output=True)
-            with tarfile.open(work / 'paopaogw-test-debian-amd64.tar.gz') as archive:
+            with tarfile.open(work / 'lovestgateway-test-debian-amd64.tar.gz') as archive:
                 for name in ('lib/bin/sniffbox', 'lib/network.py', 'lib/ppg.sh', 'uninstall.sh', 'install.py'):
-                    self.assertEqual(archive.getmember('paopaogw-test-debian-amd64/' + name).mode, 0o755)
-                self.assertEqual(archive.getmember('paopaogw-test-debian-amd64/lib/base.yaml').mode, 0o644)
+                    self.assertEqual(archive.getmember('lovestgateway-test-debian-amd64/' + name).mode, 0o755)
+                self.assertEqual(archive.getmember('lovestgateway-test-debian-amd64/lib/base.yaml').mode, 0o644)
                 destination = (work / 'package').resolve()
                 for member in archive.getmembers():
                     output = (destination / member.name).resolve()
@@ -33,7 +33,7 @@ class InstallerTests(unittest.TestCase):
                         output.parent.mkdir(parents=True, exist_ok=True)
                         output.write_bytes(archive.extractfile(member).read())
                         output.chmod(member.mode & 0o777)
-            package = work / 'package/paopaogw-test-debian-amd64'
+            package = work / 'package/lovestgateway-test-debian-amd64'
             stage = work / 'root'
             args = [sys.executable, str(package / 'install.py'), '--root', str(stage)]
             subprocess.run(args, check=True, capture_output=True)
