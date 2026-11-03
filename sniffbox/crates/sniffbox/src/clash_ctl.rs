@@ -137,21 +137,9 @@ fn spawn_clash() -> io::Result<u32> {
 }
 
 fn proc_is_clash(pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/{pid}/comm"))
-        .map(|c| c.trim() == "clash")
-        .unwrap_or(false)
+    sb_ppgw::procinfo::proc_is_clash(pid)
 }
 
 fn find_clash_pid() -> Option<u32> {
-    let rd = std::fs::read_dir("/proc").ok()?;
-    for entry in rd.flatten() {
-        let name = entry.file_name();
-        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
-            continue;
-        };
-        if proc_is_clash(pid) {
-            return Some(pid);
-        }
-    }
-    None
+    sb_ppgw::procinfo::clash_pid()
 }
