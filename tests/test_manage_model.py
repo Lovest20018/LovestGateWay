@@ -33,6 +33,16 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(updates, {})
         self.assertEqual(changes, {})
 
+    def test_native_dns_listener_is_validated_and_preserves_other_settings(self):
+        env = self.layout.path('etc/paopaogw/service.env')
+        env.write_text('PPGW_INTERFACE=ens33\nPPGW_WEB_LISTEN="192.0.2.10:18080"\n')
+        updates, _ = render_updates(self.layout, {'service': {'PPGW_DNS_LISTEN': '192.0.2.10:53'}})
+        raw = updates['etc/paopaogw/service.env']
+        self.assertIn(b'PPGW_DNS_LISTEN="192.0.2.10:53"', raw)
+        self.assertIn(b'PPGW_WEB_LISTEN="192.0.2.10:18080"', raw)
+        with self.assertRaises(ManagementError):
+            render_updates(self.layout, {'service': {'PPGW_DNS_LISTEN': 'localhost:53'}})
+
     def test_native_ppsub_source_and_escaped_quotes_match_core_parser(self):
         self.ini.write_bytes(b'#paopao-gateway\nsuburl="ppsub@http://127.0.0.1/ppsub.json"\nclash_web_password="one\\$two\\`three\\\"four" # retain inline\n')
         self.assertEqual(load_settings(self.layout)['ini']['clash_web_password'], 'one$two`three"four')

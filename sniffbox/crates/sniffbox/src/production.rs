@@ -77,7 +77,7 @@ fn build_for_environment(p: &PpgwIni, debian: bool) -> Config {
 
     let dns = Some(DnsCfg {
         enabled: true,
-        listen: "0.0.0.0:53".parse().unwrap(),
+        listen: dns_listener(debian, std::env::var("PPGW_DNS_LISTEN").ok().as_deref()),
         fake_cidr: p
             .cidr("fake_cidr")
             .unwrap_or_else(|| "7.0.0.0/8".parse().unwrap()),
@@ -161,6 +161,11 @@ fn build_for_environment(p: &PpgwIni, debian: bool) -> Config {
         report,
         cloudflared,
     }
+}
+
+fn dns_listener(debian: bool, configured: Option<&str>) -> SocketAddr {
+    configured.filter(|_| debian).and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| "0.0.0.0:53".parse().unwrap())
 }
 
 fn web_password(p: &PpgwIni) -> String {
@@ -496,6 +501,14 @@ mod tests {
         assert_eq!(s.max_rec, 12000);
         assert_eq!(s.net_cleanday, 15);
         assert_eq!(cfg.dns.unwrap().fake_cidr, "28.0.0.0/8".parse().unwrap());
+    }
+
+    #[test]
+    fn native_dns_can_bind_the_lan_without_claiming_host_loopback() {
+        assert_eq!(dns_listener(true, Some("192.0.2.10:53")).to_string(), "192.0.2.10:53");
+        assert_eq!(dns_listener(true, Some("[fd00::1]:5353")).to_string(), "[fd00::1]:5353");
+        assert_eq!(dns_listener(true, None).to_string(), "0.0.0.0:53");
+        assert_eq!(dns_listener(false, Some("192.0.2.10:53")).to_string(), "0.0.0.0:53");
     }
 
     #[test]
