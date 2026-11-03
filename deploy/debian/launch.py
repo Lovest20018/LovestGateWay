@@ -14,6 +14,9 @@ BASE = Path('/usr/local/lib/paopaogw')
 
 
 def main():
+    from manage_model import validate
+    # Reject a malformed listener before a wildcard fallback can claim host DNS.
+    validate('service', 'PPGW_DNS_LISTEN', os.environ.get('PPGW_DNS_LISTEN', '0.0.0.0:53'))
     interface = os.environ.get('PPGW_INTERFACE', '')
     if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,15}', interface):
         sys.exit('Set PPGW_INTERFACE in /etc/paopaogw/service.env.')
