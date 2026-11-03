@@ -14,7 +14,7 @@ pub fn run(config_json: &str, client: &ClashClient, io: &mut crate::Io) -> i32 {
     let cfg: serde_json::Value = match serde_json::from_str(config_json) {
         Ok(v) => v,
         Err(e) => {
-            let _ = writeln!(io.out, "[PaoPaoGW Health]Failed to parse config file: {e}");
+            let _ = writeln!(io.out, "[LovestGateWay Health]Failed to parse config file: {e}");
             return 255;
         }
     };
@@ -53,7 +53,7 @@ pub fn run(config_json: &str, client: &ClashClient, io: &mut crate::Io) -> i32 {
                 let _ = writeln!(
                     io.out,
                     "{} {target} Success HTTP CODE: {code}",
-                    crate::term::green("[PaoPaoGW Health]")
+                    crate::term::green("[LovestGateWay Health]")
                 );
                 return 0;
             }
@@ -61,18 +61,18 @@ pub fn run(config_json: &str, client: &ClashClient, io: &mut crate::Io) -> i32 {
                 let _ = writeln!(
                     io.out,
                     "{} Failed. {target} CODE:[{code}], Need: {expected}",
-                    crate::term::red("[PaoPaoGW Health]")
+                    crate::term::red("[LovestGateWay Health]")
                 );
             }
             Err(e) => {
-                let _ = writeln!(io.out, "[PaoPaoGW Health] {target} failed: {e}");
+                let _ = writeln!(io.out, "[LovestGateWay Health] {target} failed: {e}");
             }
         }
         if i == retries {
             let _ = writeln!(
                 io.out,
                 "{} Max retries reached. Exiting.",
-                crate::term::red("[PaoPaoGW Health]")
+                crate::term::red("[LovestGateWay Health]")
             );
             return 255;
         }
@@ -128,7 +128,7 @@ fn run_group_failover(client: &ClashClient, cfg: &serde_json::Value, io: &mut cr
             Err(e) => {
                 let _ = writeln!(
                     io.out,
-                    "[PaoPaoGW Failover] Group {name:?}: lookup failed: {e}"
+                    "[LovestGateWay Failover] Group {name:?}: lookup failed: {e}"
                 );
                 continue;
             }
@@ -136,7 +136,7 @@ fn run_group_failover(client: &ClashClient, cfg: &serde_json::Value, io: &mut cr
         if !info.typ.eq_ignore_ascii_case("Selector") {
             let _ = writeln!(
                 io.out,
-                "[PaoPaoGW Failover] Group {name:?}: not a Selector ({}), skip",
+                "[LovestGateWay Failover] Group {name:?}: not a Selector ({}), skip",
                 info.typ
             );
             continue;
@@ -144,7 +144,7 @@ fn run_group_failover(client: &ClashClient, cfg: &serde_json::Value, io: &mut cr
         if info.now.is_empty() {
             let _ = writeln!(
                 io.out,
-                "[PaoPaoGW Failover] Group {name:?}: no current node, skip"
+                "[LovestGateWay Failover] Group {name:?}: no current node, skip"
             );
             continue;
         }
@@ -171,7 +171,7 @@ fn run_group_failover(client: &ClashClient, cfg: &serde_json::Value, io: &mut cr
             Err(e) => {
                 let _ = writeln!(
                     io.out,
-                    "[PaoPaoGW Failover] Group {name:?}: group delay error: {e}"
+                    "[LovestGateWay Failover] Group {name:?}: group delay error: {e}"
                 );
                 continue;
             }
@@ -186,7 +186,7 @@ fn run_group_failover(client: &ClashClient, cfg: &serde_json::Value, io: &mut cr
             None => {
                 let _ = writeln!(
                     io.out,
-                    "[PaoPaoGW Failover] Group {name:?}: all timeout, keep current"
+                    "[LovestGateWay Failover] Group {name:?}: all timeout, keep current"
                 );
                 continue;
             }
@@ -199,14 +199,14 @@ fn run_group_failover(client: &ClashClient, cfg: &serde_json::Value, io: &mut cr
                 let _ = writeln!(
                     io.out,
                     "{} Group {name:?}: switched {} -> {best}",
-                    crate::term::green("[PaoPaoGW Failover]"),
+                    crate::term::green("[LovestGateWay Failover]"),
                     info.now
                 );
             }
             Err(e) => {
                 let _ = writeln!(
                     io.out,
-                    "[PaoPaoGW Failover] Group {name:?}: switch to {best:?} failed: {e}"
+                    "[LovestGateWay Failover] Group {name:?}: switch to {best:?} failed: {e}"
                 );
             }
         }

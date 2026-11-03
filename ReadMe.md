@@ -1,4 +1,6 @@
-# PaoPaoGateway · Debian / HNM fork
+# LovestGateWay
+
+<img src="lovestgateway.svg" width="144" height="144" alt="LovestGateWay logo">
 
 基于 [Lovest20018/PaoPaoGateWay](https://github.com/Lovest20018/PaoPaoGateWay) 的 Rust FakeIP 网关，改为 Debian 原生部署，并提供 HNM observer API v1。
 
@@ -17,6 +19,8 @@ Debian 版移除 Cloudflared，mihomo 直接从官方 GitHub 稳定版在线安�
 本地发布包可用 `sudo sh install.sh --interface eth0 --install-deps --yes` 安装；`sudo ppgw-admin` 提供中文菜单与可自动化子命令。配置修改带校验、版本检查、运行验收和失败回退；安装升级与现有 Web 写操作共用跨进程锁。
 
 CI 构建 Debian amd64 安装包和校验文件，不再构建/发布 ISO 或推送上游 Docker Hub 镜像。旧 ISO 脚本保留以便追踪上游；Debian 运行和发布均不调用这些脚本。
+
+项目品牌为 LovestGateWay。已有安装继续使用 `ppgw-admin`、`paopaogw` 服务与配置路径；HNM `kind=paopaogateway`、PPsub 格式标记和浏览器登录存储键保持兼容。上游项目名称与来源归属保留。
 
 ```sh
 python3 -m unittest discover -s tests -v

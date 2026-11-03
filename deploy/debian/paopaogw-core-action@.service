@@ -1,5 +1,5 @@
 [Unit]
-Description=PaoPaoGateway owner-requested mihomo operation (%i)
+Description=LovestGateWay owner-requested mihomo operation (%i)
 After=network-online.target
 
 [Service]

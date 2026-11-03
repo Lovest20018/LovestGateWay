@@ -106,7 +106,7 @@ pub(crate) fn pp_log(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::green("[PaoPaoGW PPSub]")
+        crate::term::green("[LovestGateWay PPSub]")
     );
 }
 
@@ -114,7 +114,7 @@ pub(crate) fn pp_step(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::orange("[PaoPaoGW PPSub]")
+        crate::term::orange("[LovestGateWay PPSub]")
     );
 }
 
@@ -122,7 +122,7 @@ pub(crate) fn pp_warn(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::red("[PaoPaoGW PPSub]")
+        crate::term::red("[LovestGateWay PPSub]")
     );
 }
 

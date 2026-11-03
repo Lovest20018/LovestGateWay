@@ -425,7 +425,7 @@ fn combine_and_reload(output: &str, io: &mut crate::Io) -> Result<(), String> {
     let _ = writeln!(
         io.out,
         "{}gap-fill applied, clash reloaded {CLASH_YAML}",
-        crate::term::green("[PaoPaoGW PPSub]")
+        crate::term::green("[LovestGateWay PPSub]")
     );
     Ok(())
 }

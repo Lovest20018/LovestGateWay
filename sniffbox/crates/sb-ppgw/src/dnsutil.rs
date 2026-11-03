@@ -288,7 +288,7 @@ fn keep_usable(domain: &str, ip: IpAddr, set: &mut BTreeSet<IpAddr>) -> bool {
         let _ = writeln!(
             std::io::stdout(),
             "{}{domain} -> {ip} discarded (fakeip/reserved)",
-            crate::term::orange("[PaoPaoGW DNS]")
+            crate::term::orange("[LovestGateWay DNS]")
         );
         false
     }

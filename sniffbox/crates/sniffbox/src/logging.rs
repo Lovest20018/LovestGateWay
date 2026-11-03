@@ -56,7 +56,7 @@ impl LogSink {
                             if n > 0 {
                                 let _ = writeln!(
                                     out,
-                                    " PaoPaoGW BOX  WARN dropped {n} log lines (log consumer too slow)"
+                                    " LovestGateWay BOX  WARN dropped {n} log lines (log consumer too slow)"
                                 );
                             }
                             let _ = out.write_all(&line);
@@ -265,9 +265,9 @@ where
             ("", "", "")
         };
 
-        let own_tag = message_starts_with(event, "[PaoPaoGW ");
+        let own_tag = message_starts_with(event, "[LovestGateWay ");
         if !own_tag {
-            write!(writer, "{box_style} PaoPaoGW BOX {reset}")?;
+            write!(writer, "{box_style} LovestGateWay BOX {reset}")?;
         }
         if self.timestamp {
             let t = time::OffsetDateTime::now_utc().to_offset(self.offset);

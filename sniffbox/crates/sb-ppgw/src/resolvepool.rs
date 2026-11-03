@@ -113,13 +113,13 @@ fn dns_write(prefix: String, msg: &str) {
     let _ = writeln!(std::io::stdout(), "{prefix}{msg}");
 }
 fn dns_info(msg: &str) {
-    dns_write(crate::term::green("[PaoPaoGW DNS]"), msg);
+    dns_write(crate::term::green("[LovestGateWay DNS]"), msg);
 }
 fn dns_step(msg: &str) {
-    dns_write(crate::term::orange("[PaoPaoGW DNS]"), msg);
+    dns_write(crate::term::orange("[LovestGateWay DNS]"), msg);
 }
 fn dns_warn(msg: &str) {
-    dns_write(crate::term::red("[PaoPaoGW DNS]"), msg);
+    dns_write(crate::term::red("[LovestGateWay DNS]"), msg);
 }
 
 pub fn resolve_batch<F>(

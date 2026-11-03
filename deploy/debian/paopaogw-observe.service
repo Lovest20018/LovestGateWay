@@ -1,5 +1,5 @@
 [Unit]
-Description=PaoPaoGateway persistent observation collector
+Description=LovestGateWay persistent observation collector
 After=paopaogw.service
 
 [Service]

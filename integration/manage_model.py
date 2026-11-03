@@ -35,7 +35,7 @@ SCHEMA = {
              'TZ': ('timezone', 'Asia/Shanghai'), 'PPGW_WEB_LISTEN': ('endpoint', '0.0.0.0:80'),
              'PPGW_DNS_LISTEN': ('endpoint', '0.0.0.0:53')},
  'api': {'listen': ('ipv4', '127.0.0.1'), 'port': ('int', 8788, 1, 65535),
-         'name': ('name', 'PaoPaoGateway'), 'probe_urls': ('probe_urls', [])},
+         'name': ('name', 'LovestGateWay'), 'probe_urls': ('probe_urls', [])},
  'maintenance': {'history_enabled': ('bool', True), 'history_retention_days': ('int', 30, 1, 90),
                  'auto_update': ('bool', True), 'timezone': ('timezone', 'Asia/Shanghai')},
 }

@@ -63,7 +63,7 @@ def fetch(url, limit):
     if not official_url(url):
         raise ValueError('UNTRUSTED_RELEASE_URL')
     opener = build_opener(ProxyHandler({}), OfficialRedirect())
-    request = Request(url, headers={'User-Agent': 'PaoPaoGateway-Debian', 'Accept': 'application/vnd.github+json'})
+    request = Request(url, headers={'User-Agent': 'LovestGateWay-Debian', 'Accept': 'application/vnd.github+json'})
     with opener.open(request, timeout=30) as response:
         data = response.read(limit + 1)
     if len(data) > limit:

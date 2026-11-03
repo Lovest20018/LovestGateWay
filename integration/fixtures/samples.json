@@ -10,7 +10,7 @@
         "edition": "debian",
         "id": "00000000-0000-4000-8000-000000000001",
         "kind": "paopaogateway",
-        "name": "PaoPaoGateway",
+        "name": "LovestGateWay",
         "source_sha256": null,
         "version": "development"
       },

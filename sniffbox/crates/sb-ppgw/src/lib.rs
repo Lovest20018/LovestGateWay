@@ -284,12 +284,12 @@ fn cmd_reload(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}Yaml reload OK.",
-                term::green("[PaoPaoGW Reload]")
+                term::green("[LovestGateWay Reload]")
             );
             0
         }
         Err(e) => {
-            let _ = writeln!(io.out, "{}ERR: {e}", term::red("[PaoPaoGW Reload]"));
+            let _ = writeln!(io.out, "{}ERR: {e}", term::red("[LovestGateWay Reload]"));
             1
         }
     }
@@ -306,7 +306,7 @@ fn cmd_closeall(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}Unable to close connections: {e}",
-                term::red("[PaoPaoGW Close]")
+                term::red("[LovestGateWay Close]")
             );
             1
         }
@@ -343,7 +343,7 @@ fn cmd_spec_node(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}The ppgwsocks node selected.",
-                term::green("[PaoPaoGW SOCKS]")
+                term::green("[LovestGateWay SOCKS]")
             );
             0
         }
@@ -351,7 +351,7 @@ fn cmd_spec_node(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}Unable to select ppgwsocks: {e}",
-                term::red("[PaoPaoGW SOCKS]")
+                term::red("[LovestGateWay SOCKS]")
             );
             1
         }
@@ -364,7 +364,7 @@ fn cmd_fastnode(f: &PpgwFlags, io: &mut Io, retry: bool) -> i32 {
         let _ = writeln!(
             io.out,
             "{}invalid API configuration",
-            term::red("[PaoPaoGW Fast]")
+            term::red("[LovestGateWay Fast]")
         );
         return 1;
     }
@@ -390,12 +390,12 @@ fn cmd_fastnode(f: &PpgwFlags, io: &mut Io, retry: bool) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}The fastest node selected: {name}",
-                term::green("[PaoPaoGW Fast]")
+                term::green("[LovestGateWay Fast]")
             );
             0
         }
         Err(e) => {
-            let _ = writeln!(io.out, "{}{e}", term::red("[PaoPaoGW Fast]"));
+            let _ = writeln!(io.out, "{}{e}", term::red("[LovestGateWay Fast]"));
             1
         }
     }
@@ -433,7 +433,7 @@ fn cmd_hash(f: &PpgwFlags, io: &mut Io) -> i32 {
                 let _ = writeln!(io.out, "{h}");
             }
             Err(e) => {
-                let _ = writeln!(io.err, "[PaoPaoGW Hash]{e}");
+                let _ = writeln!(io.err, "[LovestGateWay Hash]{e}");
                 return 1;
             }
         }
@@ -444,7 +444,7 @@ fn cmd_hash(f: &PpgwFlags, io: &mut Io) -> i32 {
                 let _ = writeln!(io.out, "{h}");
             }
             Err(e) => {
-                let _ = writeln!(io.err, "[PaoPaoGW Hash]{e}");
+                let _ = writeln!(io.err, "[LovestGateWay Hash]{e}");
                 return 1;
             }
         }
@@ -492,14 +492,14 @@ fn cmd_download(f: &PpgwFlags, io: &mut Io) -> i32 {
     let dl = download::Downloader::new(&f.down_url, &f.output);
     match dl.download() {
         Ok(_) => {
-            let _ = writeln!(io.out, "{}Download: OK!", term::green("[PaoPaoGW Get]"));
+            let _ = writeln!(io.out, "{}Download: OK!", term::green("[LovestGateWay Get]"));
             0
         }
         Err(e) => {
             let _ = writeln!(
                 io.out,
                 "{}Download failed: {e}",
-                term::red("[PaoPaoGW Get]")
+                term::red("[LovestGateWay Get]")
             );
             1
         }
@@ -517,7 +517,7 @@ fn cmd_curl(f: &PpgwFlags, io: &mut Io) -> i32 {
             0
         }
         Err(e) => {
-            let _ = writeln!(io.err, "{}{e}", term::red("[PaoPaoGW Curl]"));
+            let _ = writeln!(io.err, "{}{e}", term::red("[LovestGateWay Curl]"));
             1
         }
     }
@@ -554,7 +554,7 @@ fn cmd_healthcheck(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}Failed to read config file: {e}",
-                term::red("[PaoPaoGW Health]")
+                term::red("[LovestGateWay Health]")
             );
             return 255;
         }
@@ -575,7 +575,7 @@ fn cmd_healthcheck(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}unhealthy but within {HEALTHCHECK_GRACE_SECS}s grace since clash (re)start/reload (age {age}s), deferring teardown",
-                term::orange("[PaoPaoGW Health]")
+                term::orange("[LovestGateWay Health]")
             );
             return HC_NOT_READY;
         }
@@ -587,7 +587,7 @@ fn cmd_healthcheck(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}clash api not up yet (uptime {uptime}s), not-ready (no teardown)",
-                term::orange("[PaoPaoGW Health]")
+                term::orange("[LovestGateWay Health]")
             );
             HC_NOT_READY
         }
@@ -595,7 +595,7 @@ fn cmd_healthcheck(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}clash process gone and api unreachable, unhealthy",
-                term::red("[PaoPaoGW Health]")
+                term::red("[LovestGateWay Health]")
             );
             255
         }
@@ -636,13 +636,13 @@ fn cmd_dnslist(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}New configuration written to {} (Added {added} nodes)",
-                term::green("[PaoPaoGW DNS]"),
+                term::green("[LovestGateWay DNS]"),
                 f.output
             );
             0
         }
         Err(e) => {
-            let _ = writeln!(io.out, "{}{e}", term::red("[PaoPaoGW DNS]"));
+            let _ = writeln!(io.out, "{}{e}", term::red("[LovestGateWay DNS]"));
             1
         }
     }
@@ -662,7 +662,7 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}PPSub processed successfully, output file: {}",
-                term::green("[PaoPaoGW PPSub]"),
+                term::green("[LovestGateWay PPSub]"),
                 f.output
             );
 
@@ -671,7 +671,7 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
                 let _ = writeln!(
                     io.out,
                     "{}clash already running, rule-set prefetch skipped (clash owns them now)",
-                    term::green("[PaoPaoGW RuleSet]")
+                    term::green("[LovestGateWay RuleSet]")
                 );
 
                 let rep = ruleset::predetect(&f.output, &auto);
@@ -679,7 +679,7 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
                     let _ = writeln!(
                         io.out,
                         "{}rule-set format detect: detected={} unknown={} format_backfilled={}",
-                        term::green("[PaoPaoGW RuleSet]"),
+                        term::green("[LovestGateWay RuleSet]"),
                         rep.detected,
                         rep.unknown,
                         rep.backfilled,
@@ -696,7 +696,7 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}rule-set prefetch: downloaded={} cached={} failed={} removed={} format_backfilled={}",
-                term::green("[PaoPaoGW RuleSet]"),
+                term::green("[LovestGateWay RuleSet]"),
                 rep.downloaded,
                 rep.cached,
                 rep.failed,
@@ -712,7 +712,7 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
             let _ = writeln!(
                 io.out,
                 "{}PPSub processing failed: {e}",
-                term::red("[PaoPaoGW PPSub]")
+                term::red("[LovestGateWay PPSub]")
             );
             1
         }
@@ -750,7 +750,7 @@ fn spawn_gap_fill(io: &mut Io) {
             let _ = writeln!(
                 io.out,
                 "{}gaps left and clash is not up yet — background gap-fill scheduled (pid {})",
-                term::orange("[PaoPaoGW PPSub]"),
+                term::orange("[LovestGateWay PPSub]"),
                 child.id()
             );
         }
@@ -758,7 +758,7 @@ fn spawn_gap_fill(io: &mut Io) {
             let _ = writeln!(
                 io.out,
                 "{}cannot schedule background gap-fill: {e}",
-                term::red("[PaoPaoGW PPSub]")
+                term::red("[LovestGateWay PPSub]")
             );
         }
     }
@@ -814,12 +814,12 @@ fn cmd_ini_export(f: &PpgwFlags, io: &mut Io) -> i32 {
     let ini = match inienv::Ini::read(&f.ini_export) {
         Ok(i) => i,
         Err(e) => {
-            let _ = writeln!(io.err, "{}{e}", term::red("[PaoPaoGW INI]"));
+            let _ = writeln!(io.err, "{}{e}", term::red("[LovestGateWay INI]"));
             return 1;
         }
     };
     for w in ini.warnings() {
-        let _ = writeln!(io.err, "{}{w}", term::red("[PaoPaoGW INI]"));
+        let _ = writeln!(io.err, "{}{w}", term::red("[LovestGateWay INI]"));
     }
     let _ = write!(io.out, "{}", ini.export());
     0
@@ -827,7 +827,7 @@ fn cmd_ini_export(f: &PpgwFlags, io: &mut Io) -> i32 {
 
 pub fn usage() -> String {
     let mut s = String::new();
-    s.push_str("ppgw (sniffbox multi-call) — PaoPaoGateWay CLI replacement\n");
+    s.push_str("ppgw (sniffbox multi-call) — LovestGateWay CLI\n");
     s.push_str("Usage: ppgw -<subcommand> [flags]\n");
     s.push_str("  -reload                            Trigger clash reload /tmp/clash.yaml\n");
     s.push_str("  -closeall                          Close all clash connections\n");

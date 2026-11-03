@@ -1,4 +1,4 @@
-name: Debian core and HNM API
+name: LovestGateWay Debian core and HNM API
 on:
   push:
   pull_request:
@@ -44,5 +44,5 @@ jobs:
           python3 scripts/package-debian.py --binary sniffbox/target/release/sniffbox --version "dev-${GITHUB_SHA}" --commit "$GITHUB_SHA" --source-sha256 "$SOURCE_SHA" --arch amd64
       - uses: actions/upload-artifact@v4
         with:
-          name: paopaogw-debian-amd64
-          path: dist/paopaogw-*.tar.gz*
+          name: lovestgateway-debian-amd64
+          path: dist/lovestgateway-*.tar.gz*

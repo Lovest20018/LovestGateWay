@@ -1,5 +1,5 @@
 [Unit]
-Description=PaoPaoGateway HNM observer API
+Description=LovestGateWay HNM observer API
 After=network.target
 
 [Service]

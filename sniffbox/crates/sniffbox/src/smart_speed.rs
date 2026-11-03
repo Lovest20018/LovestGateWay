@@ -170,13 +170,13 @@ fn node_json(h: &NodeHist) -> Value {
 
 macro_rules! st_log {
     ($($arg:tt)*) => {
-        tracing::debug!("[PaoPaoGW Smart Test] {}", format!($($arg)*))
+        tracing::debug!("[LovestGateWay Smart Test] {}", format!($($arg)*))
     };
 }
 
 macro_rules! st_info {
     ($($arg:tt)*) => {
-        tracing::info!("[PaoPaoGW Smart Test] {}", format!($($arg)*))
+        tracing::info!("[LovestGateWay Smart Test] {}", format!($($arg)*))
     };
 }
 
@@ -540,7 +540,7 @@ async fn runner(
                 Ok(o) => settled &= o.settled,
                 Err(e) => {
                     tracing::warn!(
-                        "[PaoPaoGW Smart Test] {}: clash api error ({e}), retry in {}s",
+                        "[LovestGateWay Smart Test] {}: clash api error ({e}), retry in {}s",
                         g.name,
                         ERR_BACKOFF.as_secs()
                     );
@@ -974,7 +974,7 @@ async fn ladder_pass(
             return Ok(());
         }
     }
-    tracing::warn!("[PaoPaoGW Smart Test] {group}: all nodes timed out at every ladder step");
+    tracing::warn!("[LovestGateWay Smart Test] {group}: all nodes timed out at every ladder step");
     Ok(())
 }
 

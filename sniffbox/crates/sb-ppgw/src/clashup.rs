@@ -43,14 +43,14 @@ async fn run(io: &mut Io<'_>) -> i32 {
                     let _ = writeln!(
                         io.out,
                         "{}clash up (HTTP {code})",
-                        crate::term::green("[PaoPaoGW Clash]")
+                        crate::term::green("[LovestGateWay Clash]")
                     );
                     return 0;
                 }
                 let _ = writeln!(
                     io.err,
                     "{}clash-up {url} -> HTTP {code}",
-                    crate::term::orange("[PaoPaoGW Clash]")
+                    crate::term::orange("[LovestGateWay Clash]")
                 );
                 return 1;
             }
@@ -60,7 +60,7 @@ async fn run(io: &mut Io<'_>) -> i32 {
                     let _ = writeln!(
                         io.err,
                         "{}sniffbox not ready after {}s: {e}",
-                        crate::term::orange("[PaoPaoGW Clash]"),
+                        crate::term::orange("[LovestGateWay Clash]"),
                         READY_WAIT.as_secs()
                     );
                     return 1;

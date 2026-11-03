@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-labelledby="title desc">
+  <title id="title">LovestGateWay</title>
+  <desc id="desc">An LG monogram forming an open gateway, in white and orange on midnight blue.</desc>
+  <rect width="192" height="192" rx="44" fill="#111b2c"/>
+  <rect x="1" y="1" width="190" height="190" rx="43" fill="none" stroke="#ffffff" stroke-opacity=".1" stroke-width="2"/>
+  <path d="M46 54v78h36" fill="none" stroke="#f5f7fb" stroke-width="16" stroke-linecap="square" stroke-linejoin="round"/>
+  <path d="M146 66a31 31 0 0 0-23-10c-21 0-33 17-33 38s12 38 33 38c11 0 20-4 27-11V96h-25" fill="none" stroke="#f9832a" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
