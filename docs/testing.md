@@ -1,0 +1,42 @@
+# 测试与验证
+
+公开仓库仅保留使用合成数据的测试和可复现的验证方法。真实部署的地址、实例标识、订阅、服务状态、操作日志、截图和验收记录应保存在仓库之外。
+
+## 本地检查
+
+```sh
+python3 -m unittest discover -s tests -v
+python3 scripts/export-api-contract.py
+python3 scripts/check-api-contract.py
+git diff --exit-code -- docs/openapi-v1.json integration/fixtures
+node --check integration/gateway.js
+node --check integration/ppsub_panel.js
+```
+
+API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
+
+```sh
+cd sniffbox
+cargo test --workspace --locked
+cargo build --release --locked -p sniffbox
+```
+
+## 浏览器检查
+
+安装 Playwright 和 Chrome 后先生成面板资源，再运行使用合成 API 的浏览器脚本：
+
+```sh
+python3 scripts/prepare_dashboard.py --output dist/test-ui
+node scripts/verify-settings-fixture.cjs dist/test-ui
+node scripts/verify-dashboard-fixture.cjs dist/test-ui
+node scripts/verify-runtime-navigation.cjs dist/test-ui
+node scripts/verify-subscription-flow.cjs dist/test-ui
+```
+
+`PPGW_PLAYWRIGHT_MODULE` 和 `PPGW_PYTHON` 可指定本地工具位置。生成资源、截图和日志保存在被忽略的 `dist/` 中。
+
+## 隔离运行验证
+
+安装包可用暂存根目录检查文件布局、摘要及升级保留行为。真实 systemd、服务权限和透明转发验证需要独立 Debian 环境及可丢弃客户端；不能以本机 API 或显式代理成功代替完整转发路径验证。
+
+测试输入应使用虚构名称、文档示例地址和合成凭据。公开构建仅从源码生成通用安装包，不包含运行配置、订阅缓存或部署验收记录。
