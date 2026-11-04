@@ -11,7 +11,7 @@
 - [Lovest HomeNet API 契约及模式能力](docs/integration-api-v1.md)
 - [OpenAPI 3.1](docs/openapi-v1.json)
 - [确定性 HTTP 样例](integration/fixtures/samples.json)
-- [测试及验收记录](docs/validation/README.md)
+- [测试与验证方法](docs/testing.md)
 - [上游配置和 ISO 文档归档](docs/upstream-iso-reference.md)
 
 核心、API 和 Lovest HomeNet 独立运行。观察凭据不能重启、切换节点、断开连接或修改配置。已提供状态/指标、真实 FakeIP 缓存查询、有界 TCP 连接与模式派发记录、mihomo 原生规则/节点快照、持久观测历史和分阶段白名单探测。轮询和事件缓冲都有覆盖缺口，完整流量历史及远端 DNS 仍不能保证。完整透明转发验收需要独立证据，不能以本机代理探测代替。
