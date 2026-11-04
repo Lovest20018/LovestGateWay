@@ -359,7 +359,8 @@ async fn handle_conn(
                 }
             }
             router::Route::Native => {
-                let max_body = if req.path_only() == "/sniffbox/subscription/apply" {
+                let max_body = if req.path_only() == "/sniffbox/subscription/apply"
+                    || req.path_only().starts_with("/sniffbox/settings/") {
                     crate::subscription::MAX_BODY
                 } else {
                     MAX_NATIVE_BODY

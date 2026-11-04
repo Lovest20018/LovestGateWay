@@ -145,3 +145,10 @@ class ClashPpsubTests(unittest.TestCase):
     def test_structured_invalid_rules_are_rejected(self):
         with self.assertRaises(ValueError):
             editor_config({'rules': [{'invalid': True}]})
+
+    def test_noop_roundtrip_preserves_absent_rules_section(self):
+        document = {'proxies': [{'name': 'N1', 'type': 'socks5', 'server': '127.0.0.1', 'port': 9}]}
+        baseline, _ = editor_config(document)
+        result, url, names = merge_editor(document, baseline, deepcopy(baseline))
+        self.assertEqual(result, document)
+        self.assertNotIn('rules', result)

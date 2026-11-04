@@ -36,8 +36,9 @@ def main():
     Path('/tmp/ppgw.ini').write_text(data)
     # Obtain effective password from the same Rust parser; output never enters logs.
     password = values.get('clash_web_password', '')
-    if len(password) < 16 or password == 'clashpass':
-        sys.exit('Set a dashboard password of at least 16 characters.')
+    if len(password) < 8 or password == 'clashpass':
+        sys.exit('Set a dashboard password of at least 8 characters.')
+    os.environ.setdefault('PPGW_SUB_CACHE_DIR', '/var/lib/paopaogw/subscriptions')
     os.environ['cloudflared_token'] = ''
     os.environ.setdefault('TZ', 'Asia/Shanghai')
     os.umask(0o077)

@@ -5,6 +5,40 @@ use super::{SubProvider, SubResult, UserInfo, pp_log, pp_warn};
 use yaml_rust2::{Yaml, YamlLoader};
 
 pub fn download_subscription(sub: &SubProvider) -> SubResult {
+    let directory = super::cache::directory();
+    let only_saved = std::env::var("PPGW_SUB_CACHE_ONLY").as_deref() == Ok("1");
+    // A selected refresh must never contact other providers, even with no cache.
+    let selected = std::env::var("PPGW_SUB_REFRESH_NAMES").ok();
+    let excluded = selected.as_ref().is_some_and(|raw| {
+        serde_json::from_str::<Vec<String>>(raw)
+            .map(|names| !names.iter().any(|name| name == &sub.name)).unwrap_or(true)
+    });
+    if only_saved || excluded {
+        if let Some(saved) = directory.as_deref().and_then(|dir| super::cache::load(dir, sub)) {
+            pp_log(&format!("[{}] manual update mode: using {} saved node(s)", sub.name, saved.proxies.len()));
+            return saved;
+        }
+        pp_warn(&format!("[{}] no saved nodes; use the manual subscription update action to fetch them", sub.name));
+        return SubResult { name: sub.name.clone(), success: false, proxies: Vec::new(),
+            hosts: SubHosts::default(), userinfo: None, cached_at: None, raw_yaml: String::new(),
+            error: "no saved subscription nodes".into() };
+    }
+    let result = download_fresh(sub);
+    if let Some(dir) = directory.as_deref() {
+        if result.success {
+            if let Err(error) = super::cache::save(dir, sub, &result) {
+                pp_warn(&format!("[{}] cannot persist subscription nodes: {error}", sub.name));
+            }
+        } else if let Some(mut saved) = super::cache::load(dir, sub) {
+            pp_warn(&format!("[{}] update failed; keeping {} previously saved node(s)", sub.name, saved.proxies.len()));
+            saved.error = result.error;
+            return saved;
+        }
+    }
+    result
+}
+
+fn download_fresh(sub: &SubProvider) -> SubResult {
     pp_log(&format!(
         "[{}] downloading{} {}",
         sub.name,
@@ -40,6 +74,11 @@ pub fn download_subscription(sub: &SubProvider) -> SubResult {
                     .as_deref()
                     .and_then(parse_subscription_userinfo);
                 let (proxies, hosts) = parse_payload(&data, &sub.name);
+                if proxies.is_empty() {
+                    last_err = "subscription contains no usable proxy nodes".into();
+                    pp_warn(&format!("[{}] attempt {attempt}/3: {last_err}", sub.name));
+                    continue;
+                }
                 pp_log(&format!(
                     "[{}] OK: {} downloaded, {} proxy node(s) parsed",
                     sub.name,
@@ -61,6 +100,7 @@ pub fn download_subscription(sub: &SubProvider) -> SubResult {
                     proxies,
                     hosts,
                     userinfo,
+                    cached_at: None,
                     raw_yaml: data,
                     error: String::new(),
                 };
@@ -81,6 +121,7 @@ pub fn download_subscription(sub: &SubProvider) -> SubResult {
         proxies: Vec::new(),
         hosts: SubHosts::default(),
         userinfo: None,
+        cached_at: None,
         raw_yaml: String::new(),
         error: last_err,
     }

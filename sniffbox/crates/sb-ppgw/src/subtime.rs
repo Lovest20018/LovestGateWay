@@ -1,6 +1,7 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
 pub fn parse_subtime(subtime: &str, sleeptime: &str) -> i64 {
+    if subtime == "manual" { return i64::MAX; }
     let mut duration: i64 = 86400;
     if !subtime.is_empty() {
         let parsed = if let Some(n) = subtime.strip_suffix('d') {
@@ -29,6 +30,8 @@ mod tests {
 
     #[test]
     fn matches_ppgw_semantics() {
+        assert_eq!(parse_subtime("manual", "30"), i64::MAX);
+        assert_eq!(parse_subtime("365d", "30"), 1051200);
         assert_eq!(parse_subtime("1d", "30"), 2880);
         assert_eq!(parse_subtime("2h", "30"), 240);
         assert_eq!(parse_subtime("30m", "30"), 60);

@@ -577,6 +577,7 @@ mod tests {
                 download: 1_073_741_824,
                 expire: 1_700_000_000,
             }),
+            cached_at: None,
             raw_yaml: String::new(),
             error: String::new(),
         };
@@ -687,6 +688,7 @@ mod tests {
             proxies: vec![node("S_HK", "hk.example.com")],
             hosts: Default::default(),
             userinfo: None,
+            cached_at: None,
             raw_yaml: raw,
             error: String::new(),
         };
@@ -750,6 +752,7 @@ mod tests {
             ],
             hosts: Default::default(),
             userinfo: None,
+            cached_at: None,
             raw_yaml: raw,
             error: String::new(),
         };
@@ -817,6 +820,7 @@ mod tests {
             ],
             hosts: Default::default(),
             userinfo: None,
+            cached_at: None,
             raw_yaml: String::new(),
             error: String::new(),
         };
@@ -850,6 +854,7 @@ mod tests {
             proxies,
             hosts,
             userinfo: None,
+            cached_at: None,
             raw_yaml: yaml.to_string(),
             error: String::new(),
         }

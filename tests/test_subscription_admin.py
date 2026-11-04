@@ -10,6 +10,29 @@ import subscription_admin as admin
 
 
 class SubscriptionTests(unittest.TestCase):
+    def test_manual_refresh_rejects_stale_request_before_scheduling(self):
+        from manage_common import Layout, ManagementError
+        from manage_model import settings_revision
+        with tempfile.TemporaryDirectory() as temp:
+            layout = Layout(temp)
+            files = layout.path('etc/paopaogw/files'); files.mkdir(parents=True)
+            config = files / 'ppgw.ini'; config.write_text('#paopao-gateway\nmode=suburl\nsubtime=manual\n')
+            manager = admin.Admin()
+            body = {'kind': 'refresh_nodes', 'base_revision': admin.revision(config.read_bytes()),
+                    'settings_revision': settings_revision(layout), 'operation_id': 'manual-test-001'}
+            with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', files), \
+                 patch.object(admin, 'config_values', return_value={'mode': 'suburl', 'suburl': 'ppsub@https://example.com/config'}), \
+                 patch('subscription_admin.threading.Timer') as timer:
+                stale = dict(body, settings_revision='0' * 64)
+                with self.assertRaisesRegex(ManagementError, 'CONFIG_REVISION_CONFLICT'):
+                    manager.refresh_nodes(stale)
+                timer.assert_not_called()
+                operation = manager.refresh_nodes(body)
+                self.assertEqual(operation['kind'], 'refresh_nodes')
+                self.assertEqual(operation['status'], 'applying')
+                self.assertEqual(manager.refresh_nodes(body), operation)
+                self.assertEqual(timer.call_count, 1)
+
     def test_native_panel_bearer_is_required(self):
         with tempfile.TemporaryDirectory() as temp:
             token = Path(temp) / 'core-token'
@@ -38,7 +61,8 @@ class SubscriptionTests(unittest.TestCase):
                  patch('subscription_admin.subprocess.run') as run:
                 run.return_value.stdout = exported
                 result = admin.Admin().current_config()
-            self.assertEqual(result['config']['subs'][0]['url'], 'https://example.com/sub?token=secret&x=1')
+            self.assertEqual(result['config']['subs'], [])
+            self.assertTrue(result['synthetic_source'])
             self.assertEqual(result['source'], 'clash_runtime')
             self.assertEqual(result['config']['node-groups'][0]['name'], 'G1')
             self.assertEqual(result['config']['node-groups'][0]['include'], ['N1', 'DIRECT'])
@@ -51,6 +75,15 @@ class SubscriptionTests(unittest.TestCase):
             self.assertEqual(config.read_bytes(), original)
             self.assertEqual(run.call_count, 1)
             self.assertIsInstance(run.call_args.args[0], list)
+
+    def test_other_outbound_modes_require_source_switch_before_editing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); config = root / 'ppgw.ini'; config.write_text('#paopao-gateway\nmode=free\n')
+            with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', root), \
+                 patch.object(admin, 'config_values', return_value={'mode': 'free'}):
+                value = admin.Admin().current_config()
+            self.assertFalse(value['write_allowed'])
+            self.assertEqual(value['source'], 'empty')
 
     def test_full_clash_cannot_be_overwritten_by_ppsub_projection(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -6,7 +6,8 @@ from manage_backup import BackupStore
 from manage_runtime import System
 
 JOURNAL = 'var/lib/paopaogw/admin/transaction.json'
-SAFE_RELOAD = {'max_rec', 'net_cleanday', 'admin_cidr', 'proxy_cidr'}
+SAFE_RELOAD = {'max_rec', 'net_cleanday', 'admin_cidr', 'proxy_cidr',
+               'splice_threshold', 'clash_web_password', 'openport_auth'}
 
 
 class ConfigManager:
@@ -31,11 +32,22 @@ class ConfigManager:
             action = 'restart'
         if changes.get('service'): action = 'restart'
         return updates, changes, action
-    def apply(self, patch, base_revision, dry_run=False, reset_source=False, restart=False):
+    def apply(self, patch, base_revision, dry_run=False, reset_source=False, restart=False,
+              policy_update=None, verify=None, ppsub_update=None):
+        if ppsub_update is not None and (not isinstance(ppsub_update, bytes) or len(ppsub_update) > 1024*1024):
+            raise ManagementError('INVALID_PPSUB_UPDATE')
         # Preview does not create a lock, journal or backup.
         updates, changes, action = self.plan(patch, reset_source)
+        if policy_update is not None:
+            if policy_update is not False and not isinstance(policy_update, bytes): raise ManagementError('INVALID_POLICY_UPDATE')
+            updates['etc/paopaogw/files/clash-policy.json'] = None if policy_update is False else policy_update
+            action = 'restart'
+        if ppsub_update is not None:
+            updates['etc/paopaogw/files/ppsub.json'] = ppsub_update
+            action = 'restart'
         if restart: action = 'restart'
         if dry_run:
+            if settings_revision(self.layout) != base_revision: raise ManagementError('CONFIG_REVISION_CONFLICT')
             settings = load_settings(self.layout)
             for namespace, fields in changes.items(): settings[namespace].update(fields)
             self.system.preflight(settings)
@@ -44,24 +56,33 @@ class ConfigManager:
             if self.journal() and self.journal()['phase'] not in {'complete', 'rolled_back'}: raise ManagementError('RECOVERY_REQUIRED')
             if settings_revision(self.layout) != base_revision: raise ManagementError('CONFIG_REVISION_CONFLICT')
             updates, changes, action = self.plan(patch, reset_source)
+            if policy_update is not None:
+                updates['etc/paopaogw/files/clash-policy.json'] = None if policy_update is False else policy_update
+                action = 'restart'
+            if ppsub_update is not None:
+                updates['etc/paopaogw/files/ppsub.json'] = ppsub_update
+                action = 'restart'
             if restart: action = 'restart'
             if not updates and not restart: return {'status': 'unchanged', 'revision': base_revision}
             settings = load_settings(self.layout)
             for namespace, fields in changes.items(): settings[namespace].update(fields)
             self.system.preflight(settings)
             before = self.system.status()
-            if hasattr(self.system, 'prepare'): self.system.prepare(action, before)
             backup = self.backups.create(updates, {'services': before, 'kind': 'config'})
             original = self.backups.index(backup)['files']
             journal = {'kind': 'config', 'phase': 'prepared', 'backup': backup, 'services': before,
                        'expected': {path: [None if raw is None else digest(raw), None if original[path] is None else original[path]['sha256']] for path, raw in updates.items()}}
+            if action == 'none' and set(changes) == {'api'}:
+                journal['restore_services'] = {unit: state for unit, state in before.items() if unit == 'paopaogw-api'}
             write_json(self.layout, JOURNAL, journal)
             try:
+                if hasattr(self.system, 'prepare'): self.system.prepare(action, before)
                 for path, raw in updates.items():
                     if raw is None: self.layout.path(path).unlink(missing_ok=True)
                     else: atomic_write(self.layout, path, raw)
                 journal['phase'] = 'applying'; write_json(self.layout, JOURNAL, journal)
                 running = self.system.apply(action, settings, changes, before)
+                if verify is not None: verify()
                 journal['phase'] = 'complete'; write_json(self.layout, JOURNAL, journal)
                 return {'status': 'applied', 'revision': settings_revision(self.layout), 'backup': backup, 'action': action, 'runtime': running}
             except Exception:
@@ -73,7 +94,7 @@ class ConfigManager:
         except ManagementError:
             journal['phase'] = 'conflict'; write_json(self.layout, JOURNAL, journal)
             raise ManagementError('EXTERNAL_CONFIG_CONFLICT') from None
-        self.system.restore_services(journal['services'])
+        self.system.restore_services(journal.get('restore_services', journal['services']))
         journal['phase'] = 'rolled_back'; write_json(self.layout, JOURNAL, journal)
     def recover(self):
         with operation_lock(self.layout):

@@ -26,6 +26,7 @@ pub mod server;
 pub mod sse;
 pub mod static_files;
 mod subscription;
+mod settings;
 pub mod traffic;
 pub mod ws;
 

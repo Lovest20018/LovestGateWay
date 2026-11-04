@@ -13,6 +13,7 @@ from manage_runtime import System
 from manage_config import ConfigManager, JOURNAL
 from manage_backup import BackupStore
 from manage_deploy import Deployer
+from manage_common import ChineseParser, error_text, choose_startup, STARTUP_LABELS
 from manage_assets import import_asset
 
 
@@ -107,7 +108,7 @@ def menu(layout, system):
             if choice == '1': emit(status(layout, system))
             elif choice == '2': emit(manager.show())
             elif choice == '3':
-                print('配置分组: ini 网关/模式/DNS/认证；service 网卡/IPv6/监听；api HNM；maintenance 历史/自动更新')
+                print('配置分组: ini 网关/模式/DNS/认证；service 网卡/IPv6/监听；api Lovest HomeNet；maintenance 历史/自动更新')
                 namespace = input('分组: ').strip()
                 if namespace not in SCHEMA: raise ManagementError('UNKNOWN_NAMESPACE')
                 print('可设置字段: ' + ', '.join(SCHEMA[namespace]))
@@ -141,8 +142,14 @@ def menu(layout, system):
                 if identifier and input('输入 yes 确认恢复并重启原活动服务: ') == 'yes': emit(restore_backup(layout, system, identifier))
             elif choice == '7':
                 archive = input('本地 tar.gz: ').strip(); sha = input('可信 SHA256: ').strip()
-                interface = input('首次安装网卡（升级可空）: ').strip() or None
-                if input('输入 yes 确认安装/升级: ') == 'yes': emit(Deployer(layout, system).deploy(archive, sha, interface))
+                fresh = not any(layout.path('etc/paopaogw/' + name).exists() for name in ('instance-id', 'files/ppgw.ini'))
+                interface = input('首次安装服务网卡: ').strip() if fresh else None
+                web = (input('Web 监听 [0.0.0.0:80]: ').strip() or '0.0.0.0:80') if fresh else None
+                dns = (input('DNS 监听 [0.0.0.0:53]: ').strip() or '0.0.0.0:53') if fresh else None
+                startup = choose_startup(fresh)
+                print('服务计划: ' + STARTUP_LABELS[startup])
+                if input('输入 yes 确认安装/升级: ').strip().lower() in {'yes', '是'}:
+                    emit(Deployer(layout, system).deploy(archive, sha, interface, startup, web, dns))
             elif choice == '8':
                 emit(manager.journal())
                 if input('输入 yes 确认回退中断事务: ') == 'yes': emit(manager.recover())
@@ -151,7 +158,8 @@ def menu(layout, system):
                 emit(manager.apply({}, revision, dry_run=True, restart=True))
                 if input('输入 yes 确认重启并验收: ') == 'yes': emit(manager.apply({}, revision, restart=True))
             else: print('请选择菜单中的数字。')
-        except (ManagementError, ValueError): print('操作失败；配置未确认生效。请检查字段、资源或使用 status/recover 查看。')
+        except ManagementError as error: print('操作失败：' + error_text(error))
+        except ValueError: print('操作失败：输入格式不正确，请检查字段类型或 JSON。')
 
 
 def status(layout, system):
@@ -164,26 +172,31 @@ def status(layout, system):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = ChineseParser(description=__doc__)
     parser.add_argument('--root', default='/', help='隔离暂存根目录；默认实时系统 /')
-    sub = parser.add_subparsers(dest='command')
+    sub = parser.add_subparsers(dest='command', title='管理命令', description='使用 命令 --help 查看详细用法')
     sub.add_parser('status', help='服务、持久配置与实际运行状态')
-    config = sub.add_parser('config').add_subparsers(dest='action', required=True)
-    for action in ('show', 'schema'): config.add_parser(action)
+    config = sub.add_parser('config', help='查看、校验及应用配置').add_subparsers(dest='action', required=True, title='配置操作')
+    for action, help_text in [('show', '查看脱敏配置'), ('schema', '查看字段类型和范围')]: config.add_parser(action, help=help_text)
     for action in ('check', 'apply'):
-        p = config.add_parser(action); p.add_argument('--file', required=True, help='私有 JSON 文件或 - stdin')
-        p.add_argument('--reset-source', action='store_true'); p.add_argument('--yes', action='store_true')
+        p = config.add_parser(action, help='仅预览校验配置' if action == 'check' else '应用配置并验收'); p.add_argument('--file', required=True, help='私有 JSON 文件或 - stdin')
+        p.add_argument('--reset-source', action='store_true', help='确认备份并清除旧来源策略'); p.add_argument('--yes', action='store_true', help='确认执行操作')
         p.add_argument('--restart', action='store_true', help='显式重启并验证已保存配置/资源，即使补丁无改动')
-        if action == 'apply': p.add_argument('--dry-run', action='store_true')
-    backups = sub.add_parser('backup').add_subparsers(dest='action', required=True)
-    backups.add_parser('list'); backups.add_parser('create')
-    p = sub.add_parser('restore'); p.add_argument('id'); p.add_argument('--yes', action='store_true')
-    p = sub.add_parser('recover'); p.add_argument('--yes', action='store_true')
-    p = sub.add_parser('deploy'); p.add_argument('--archive', required=True); p.add_argument('--sha256', required=True)
-    p.add_argument('--interface'); p.add_argument('--yes', action='store_true')
-    assets = sub.add_parser('assets').add_subparsers(dest='action', required=True)
-    p = assets.add_parser('import'); p.add_argument('--type', choices=('yaml', 'ppsub', 'ovpn', 'cert'), required=True)
-    p.add_argument('--file', required=True); p.add_argument('--name', required=True); p.add_argument('--overwrite', action='store_true'); p.add_argument('--yes', action='store_true')
+        if action == 'apply': p.add_argument('--dry-run', action='store_true', help='只预览，不写入')
+    backups = sub.add_parser('backup', help='创建或列出备份').add_subparsers(dest='action', required=True, title='备份操作')
+    backups.add_parser('list', help='列出备份'); backups.add_parser('create', help='停服务创建一致性备份后恢复服务')
+    p = sub.add_parser('restore', help='恢复指定备份'); p.add_argument('id', help='备份编号'); p.add_argument('--yes', action='store_true', help='确认恢复')
+    p = sub.add_parser('recover', help='恢复中断事务'); p.add_argument('--yes', action='store_true', help='确认恢复')
+    p = sub.add_parser('deploy', help='校验并安装或升级本地发布包')
+    p.add_argument('--archive', required=True, help='本地发布包 tar.gz 路径'); p.add_argument('--sha256', required=True, help='可信外部 SHA256 摘要')
+    p.add_argument('--interface', help='全新安装的服务网卡；升级不填写')
+    p.add_argument('--web-listen', help='全新安装 Web 监听，例如 0.0.0.0:80')
+    p.add_argument('--dns-listen', help='全新安装 DNS 监听，例如 192.0.2.10:53')
+    p.add_argument('--startup', choices=('auto', 'manual', 'disabled', 'preserve'), help='auto 开机自启；manual 仅本次启动；disabled 只安装；preserve 升级保留原状态')
+    p.add_argument('--yes', action='store_true', help='确认执行安装或升级')
+    assets = sub.add_parser('assets', help='导入配置资源').add_subparsers(dest='action', required=True, title='资源操作')
+    p = assets.add_parser('import', help='导入本地文件'); p.add_argument('--type', choices=('yaml', 'ppsub', 'ovpn', 'cert'), required=True, help='资源类型')
+    p.add_argument('--file', required=True, help='本地源文件'); p.add_argument('--name', required=True, help='保存文件名'); p.add_argument('--overwrite', action='store_true', help='备份后覆盖同名资源'); p.add_argument('--yes', action='store_true', help='确认导入')
     args = parser.parse_args(argv)
     try:
         layout = Layout(args.root); system = System(layout); manager = ConfigManager(layout, system)
@@ -203,12 +216,12 @@ def main(argv=None):
             else: result = create_backup(layout, system)
         elif args.command == 'restore': confirm(args); result = restore_backup(layout, system, args.id)
         elif args.command == 'recover': confirm(args); result = manager.recover()
-        elif args.command == 'deploy': confirm(args); result = Deployer(layout, system).deploy(args.archive, args.sha256, args.interface)
+        elif args.command == 'deploy': confirm(args); result = Deployer(layout, system).deploy(args.archive, args.sha256, args.interface, args.startup, args.web_listen, args.dns_listen)
         elif args.command == 'assets': confirm(args); result = import_asset(layout, args.file, args.type, args.name, args.overwrite)
         emit(result); return 0
     except ManagementError as error:
-        print(str(error), file=sys.stderr); return 1
-    except (OSError, ValueError, KeyboardInterrupt):
+        print(error_text(error), file=sys.stderr); return 1
+    except (OSError, ValueError, KeyboardInterrupt, EOFError):
         print('操作未完成；使用 status 检查状态，必要时执行 recover。', file=sys.stderr); return 1
 
 

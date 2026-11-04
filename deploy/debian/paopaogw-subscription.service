@@ -12,7 +12,7 @@ RestartSec=3
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/paopaogw/files /var/lib/paopaogw
+ReadWritePaths=/etc/paopaogw/files /var/lib/paopaogw /var/backups/paopaogw
 UMask=0077
 
 [Install]

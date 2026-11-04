@@ -35,11 +35,11 @@ SCHEMA = {
              'TZ': ('timezone', 'Asia/Shanghai'), 'PPGW_WEB_LISTEN': ('endpoint', '0.0.0.0:80'),
              'PPGW_DNS_LISTEN': ('endpoint', '0.0.0.0:53')},
  'api': {'listen': ('ipv4', '127.0.0.1'), 'port': ('int', 8788, 1, 65535),
-         'name': ('name', 'LovestGateWay'), 'probe_urls': ('probe_urls', [])},
+         'name': ('name', 'LovestGateWay'), 'probe_urls': ('probe_urls', []), 'read_token': ('observer_token', '')},
  'maintenance': {'history_enabled': ('bool', True), 'history_retention_days': ('int', 30, 1, 90),
                  'auto_update': ('bool', True), 'timezone': ('timezone', 'Asia/Shanghai')},
 }
-SECRET_KEYS = {'clash_web_password', 'openport_auth', 'socks5_password', 'ovpn_password', 'suburl'}
+SECRET_KEYS = {'clash_web_password', 'openport_auth', 'socks5_password', 'ovpn_password', 'suburl', 'read_token'}
 BOX = {'route.block_bittorrent': 'bool', 'route.block_quic': 'bool', 'route.block_unknown': 'bool'}
 
 
@@ -103,6 +103,8 @@ def validate(namespace, key, value, stored=False):
             if kind in {'ip', 'optional_ip'} and (value or kind == 'ip'): ipaddress.ip_address(value)
             if kind == 'ipv4': ipaddress.IPv4Address(value)
             if kind == 'name' and not 1 <= len(value) <= 100: raise ValueError()
+            if kind == 'observer_token' and not (stored and value == ''):
+                if not 32 <= len(value) <= 256 or any(not 33 <= ord(c) <= 126 for c in value): raise ValueError()
             if kind == 'optional_uuid' and value: uuid.UUID(value)
             if kind == 'auth' and value:
                 user, sep, password = value.partition(':')
@@ -121,7 +123,7 @@ def validate(namespace, key, value, stored=False):
                 p = urlsplit(value[6:] if key == 'suburl' and value.startswith('ppsub@') else value)
                 if p.scheme not in {'http', 'https'} or not p.hostname or p.fragment or p.username or p.password: raise ValueError()
                 p.port
-            if kind == 'interval' and not re.fullmatch(r'[1-9][0-9]{0,3}[mhd]', value): raise ValueError()
+            if kind == 'interval' and not (key == 'subtime' and value == 'manual') and not re.fullmatch(r'[1-9][0-9]{0,3}[mhd]', value): raise ValueError()
             if kind == 'cron' and value:
                 fields = value.split()
                 if len(fields) != 5: raise ValueError()
@@ -153,6 +155,8 @@ def load_settings(layout):
         try:
             values = parse_assignments(raw) if namespace in {'ini', 'service'} else (json.loads(raw) if raw else {})
             if not isinstance(values, dict): raise ValueError()
+            if namespace == 'api':
+                values['read_token'] = read_bytes(layout, 'etc/paopaogw/read-token', b'').decode('ascii').strip()
             result[namespace] = {}
             for key, spec in SCHEMA[namespace].items():
                 value = values.get(key, spec[1])
@@ -165,8 +169,10 @@ def load_settings(layout):
 
 def public_settings(settings):
     result = copy.deepcopy(settings)
-    for key in SECRET_KEYS:
-        if result.get('ini', {}).get(key): result['ini'][key] = '********'
+    for fields in result.values():
+        if isinstance(fields, dict):
+            for key in SECRET_KEYS:
+                if fields.get(key): fields[key] = '********'
     return result
 
 
@@ -224,6 +230,7 @@ def render_updates(layout, patch):
     for namespace, fields in patch.items():
         if not isinstance(fields, dict) or set(fields) - set(SCHEMA[namespace]): raise ManagementError('UNKNOWN_SETTING:' + namespace)
         for key, value in fields.items():
+            if namespace == 'api' and key == 'read_token' and value == '': continue
             value = validate(namespace, key, value)
             if value != current[namespace][key]: changes.setdefault(namespace, {})[key] = value
     requested_ipv6 = patch.get('service', {}).get('PPGW_IPV6')
@@ -231,6 +238,10 @@ def render_updates(layout, patch):
         network = read_bytes(layout, 'etc/paopaogw/network', b'')
         if (b'eth06' in network) != requested_ipv6: changes.setdefault('service', {})['PPGW_IPV6'] = requested_ipv6
     for namespace, fields in changes.items():
+        fields = dict(fields)
+        if namespace == 'api' and 'read_token' in fields:
+            updates['etc/paopaogw/read-token'] = (fields.pop('read_token') + '\n').encode('ascii')
+            if not fields: continue
         path = PATHS[namespace]; raw = read_bytes(layout, path, b'')
         if namespace in {'ini', 'service'}: updates[path] = render_assignments(raw, fields, namespace)
         else:

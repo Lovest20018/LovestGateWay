@@ -43,6 +43,10 @@ def managed_worker(function):
     return run
 
 
+def management_layout():
+    return Layout(CONFIG.parents[3] if CONFIG.as_posix().endswith('/etc/paopaogw/files/ppgw.ini') else STATE.parent)
+
+
 def revision(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -92,6 +96,8 @@ def validate_subscription(body):
             raise ValueError('YAML_PROXIES_REQUIRED')
         return {'mode': 'yaml', 'yamlfile': 'custom.yaml', 'fast_node': 'no'}, ('custom.yaml', value.encode())
     parsed = json.loads(value)
+    from unified_editor import validate_ppsub
+    validate_ppsub(parsed)
     if (not isinstance(parsed, dict) or not isinstance(parsed.get('subs'), list)
             or not parsed.get('subs') or not parsed.get('exported_at')):
         raise ValueError('INVALID_PPSUB')
@@ -130,20 +136,52 @@ class Admin:
                 'has_local_policy': POLICY.exists(), 'timezone': os.environ.get('TZ', 'Asia/Shanghai'),
                 'log_source': 'instance_controller', 'cloudflared': 'removed'}
 
-    def core_action(self, action):
+    def core_idle(self):
+        if self.operation and self.operation.get('status') == 'applying': raise ValueError('MANAGEMENT_BUSY')
+        for unit in ('paopaogw-maintenance', 'paopaogw-core-action@check', 'paopaogw-core-action@update',
+                     'paopaogw-core-action@rollback', 'paopaogw-core-action@install-local'):
+            state = subprocess.run(['systemctl', 'show', unit, '--property=ActiveState', '--value'],
+                                   capture_output=True, text=True, timeout=5)
+            if state.stdout.strip() in {'active', 'activating', 'deactivating', 'reloading'}: raise ValueError('MANAGEMENT_BUSY')
+        from mihomo_update import STATE as update_state
+        try: pending = json.loads((update_state / 'operation.json').read_bytes())
+        except (OSError, ValueError): pending = {}
+        if pending.get('status') == 'running' and time.time() - pending.get('started_at', 0) < 300:
+            raise ValueError('MANAGEMENT_BUSY')
+
+    def start_core_action(self, action):
         from mihomo_update import atomic_json, STATE as update_state
-        if action not in {'check', 'update', 'rollback'}:
-            raise ValueError('INVALID_OPERATION')
-        with self.lock:
-            if self.operation and self.operation.get('status') == 'applying':
-                raise ValueError('BUSY')
-            for unit in ('paopaogw-maintenance', 'paopaogw-core-action@check',
-                         'paopaogw-core-action@update', 'paopaogw-core-action@rollback'):
-                if subprocess.run(['systemctl', 'is-active', '--quiet', unit]).returncode == 0:
-                    raise ValueError('BUSY')
-            atomic_json(update_state / 'operation.json', {'status': 'running', 'action': action, 'started_at': time.time()})
+        atomic_json(update_state / 'operation.json', {'status': 'running', 'action': action, 'started_at': time.time()})
+        try:
             subprocess.run(['systemctl', 'start', '--no-block', 'paopaogw-core-action@' + action], check=True, timeout=5)
+        except Exception:
+            atomic_json(update_state / 'operation.json', {'status': 'failed', 'action': action,
+                        'error': 'CORE_OPERATION_FAILED', 'message': '维护任务未能启动，请检查系统服务。', 'completed_at': time.time()})
+            raise
         return {'status': 'running', 'action': action}
+
+    def core_action(self, action):
+        if action not in {'check', 'update', 'rollback'}: raise ValueError('INVALID_OPERATION')
+        with self.lock:
+            self.core_idle()
+            return self.start_core_action(action)
+
+    def core_upload(self, body):
+        from mihomo_upload import UploadStore
+        if not isinstance(body, dict): raise ValueError('INVALID_CORE_UPLOAD')
+        operation = body.get('operation')
+        store = UploadStore()
+        with self.lock:
+            # Chunks write private staging under the shared filesystem lock.
+            # Begin/commit still verify systemd state; avoid five subprocesses per 16 KiB.
+            if operation != 'chunk': self.core_idle()
+            if operation == 'begin': return store.begin(body)
+            if operation == 'chunk': return store.chunk(body)
+            if operation in {'commit', 'cancel'} and set(body) == {'operation', 'id'}:
+                if operation == 'cancel': return store.cancel(body['id'])
+                store.commit(body['id'])
+                return self.start_core_action('install-local')
+        raise ValueError('INVALID_CORE_UPLOAD')
 
     def reset_policy(self, body):
         if not isinstance(body, dict) or set(body) != {'base_revision'}:
@@ -188,8 +226,93 @@ class Admin:
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             with self.lock: self.operation.update(status='failed', message='恢复原始策略失败，已保留此前配置。')
 
+    def node_cache(self):
+        try:
+            path = management_layout().path('var/lib/paopaogw/subscriptions/status.json')
+            data = json.loads(path.read_bytes())
+            return {'subscriptions': [{key: row.get(key) for key in
+                    ('name', 'nodes', 'source', 'fetched_at', 'update_failed')}
+                    for row in data.get('subscriptions', []) if isinstance(row, dict)]}
+        except (OSError, ValueError): return {'subscriptions': []}
+
+    def refresh_nodes(self, body):
+        from manage_model import settings_revision
+        if (set(body) - {'kind', 'base_revision', 'settings_revision', 'operation_id', 'providers'}
+                or not {'kind', 'base_revision', 'settings_revision', 'operation_id'} <= set(body)
+                or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', str(body.get('operation_id', '')))):
+            raise ManagementError('INVALID_EDITOR_REQUEST')
+        if not native_ppsub_source(config_values()): raise ManagementError('SOURCE_CHANGE_REQUIRES_SWITCH')
+        if 'providers' in body:
+            from manage_subscription_schedule import providers
+            names = body['providers']
+            if (not isinstance(names, list) or not names or len(names) > 500
+                    or any(not isinstance(name, str) for name in names) or len(set(names)) != len(names)
+                    or set(names) - {row['name'] for row in providers(management_layout())}):
+                raise ManagementError('INVALID_EDITOR_REQUEST')
+        with self.lock:
+            if self.operation and self.operation.get('id') == body['operation_id']: return dict(self.operation)
+            if self.operation and self.operation.get('status') == 'applying': raise ManagementError('MANAGEMENT_BUSY')
+            if (revision(CONFIG.read_bytes()) != body['base_revision']
+                    or settings_revision(management_layout()) != body['settings_revision']):
+                raise ManagementError('CONFIG_REVISION_CONFLICT')
+            self.operation = {'id': body['operation_id'], 'status': 'applying', 'kind': 'refresh_nodes',
+                              'message': '正在手动获取订阅节点；获取失败的提供商继续使用已保存节点…'}
+            task = threading.Timer(.5, self.refresh_nodes_worker, args=(dict(body),))
+            task.daemon = True; task.start()
+            return dict(self.operation)
+
+    @managed_worker
+    def refresh_nodes_worker(self, body):
+        from manage_model import settings_revision, load_settings
+        from manage_runtime import System
+        try:
+            layout = management_layout()
+            if (revision(CONFIG.read_bytes()) != body['base_revision']
+                    or settings_revision(layout) != body['settings_revision']):
+                raise ManagementError('CONFIG_REVISION_CONFLICT')
+            from manage_subscription import refresh_nodes
+            rows = refresh_nodes(layout, System(layout), body.get('providers'))
+            selected = set(body.get('providers', [row['name'] for row in rows]))
+            rows = [row for row in rows if row['name'] in selected]
+            failed = [row['name'] for row in rows if row.get('update_failed') and row.get('nodes', 0) > 0]
+            missing = [row['name'] for row in rows if not row.get('nodes')]
+            message = ('更新完成；以下提供商获取失败，已保留原节点：' + '、'.join(failed)) if failed else '订阅节点已更新并加载；重启继续使用已保存节点。'
+            if missing: message += '；以下提供商尚无可用节点：' + '、'.join(missing)
+            with self.lock: self.operation.update(status='applied', message=message, retained_subscriptions=failed)
+        except Exception:
+            with self.lock: self.operation.update(status='failed', message='订阅更新未完成，已保存节点和原运行配置继续保留。请检查订阅是否已开启，再手动重试。')
+
+    def scheduled_tick(self):
+        from manage_model import load_settings, settings_revision
+        from manage_subscription_schedule import due_providers, source_path
+        layout = management_layout()
+        with management_lock(layout):
+            require_idle(layout)
+            settings = load_settings(layout)
+            if (settings['ini']['mode'] != 'suburl' or not source_path(layout).is_file()
+                    or not settings['ini']['suburl'].startswith('ppsub@')):
+                return
+            with self.lock:
+                if self.operation and self.operation.get('status') == 'applying': return
+                names = due_providers(layout, settings)
+                if not names: return
+                body = {'providers': names, 'base_revision': revision(CONFIG.read_bytes()),
+                        'settings_revision': settings_revision(layout)}
+                self.operation = {'id': 'scheduled_' + str(time.time_ns()), 'kind': 'refresh_nodes',
+                                  'status': 'applying', 'message': '正在按机场计划更新订阅节点…'}
+            self.refresh_nodes_worker(body)
+
+    def schedule_loop(self):
+        while True:
+            try: self.scheduled_tick()
+            except Exception: pass  # Retain the current nodes and retry the scheduler later.
+            time.sleep(30)
+
     def current_config(self):
         raw = CONFIG.read_bytes()
+        from manage_model import settings_revision
+        layout = management_layout()
+        full_revision = settings_revision(layout)
         # Read the Rust parser's quoted assignments without executing a shell.
         values = config_values()
         suburl = values.get('suburl', '')
@@ -200,7 +323,7 @@ class Admin:
             source, notice = 'ppsub', '已载入当前 PPsub 配置，编辑完成后可直接保存并应用。'
         elif values.get('mode') in {'suburl', 'yaml'}:
             document = running_document()
-            data, counts = editor_config(document, suburl if values.get('mode') == 'suburl' else '')
+            data, counts = editor_config(document)
             existing_policy = json.loads(POLICY.read_bytes()) if POLICY.is_file() else None
             if existing_policy and existing_policy.get('source_identity') == source_identity(values):
                 for key in ('global_monitor', 'restart_cron', 'shadowsocks_in'):
@@ -223,13 +346,16 @@ class Admin:
             return {'config': data, 'source': source, 'notice': notice, 'counts': counts,
                     'base_revision': revision(raw), 'write_allowed': True,
                     'edit_kind': 'clash_patch', 'snapshot_id': snapshot_id,
+                    'settings_revision': full_revision, 'source_details': {'url': suburl},
+                    'synthetic_source': not bool(document.get('proxy-providers')),
                     'node_choices': [row['name'] for row in document.get('proxies', [])
                                      if isinstance(row, dict) and isinstance(row.get('name'), str)]}
         else:
             data = {'version': 'PaoPaoGateWay 3.1', 'exported_at': 'new-config',
                     'subs': [], 'node-groups': [], 'rules': []}
-            source, notice = 'empty', '当前没有 PPsub 配置，请添加订阅、节点组和规则后保存。'
-        return {'config': data, 'source': source, 'notice': notice, 'base_revision': revision(raw), 'write_allowed': True}
+            source, notice = 'empty', '当前不是订阅或 YAML 模式，请先在上方切换配置来源。'
+        return {'config': data, 'source': source, 'notice': notice, 'node_cache': self.node_cache(), 'base_revision': revision(raw), 'write_allowed': source != 'empty',
+                'settings_revision': full_revision, 'source_details': {'url': suburl}}
 
     def status(self):
         raw = CONFIG.read_bytes()
@@ -245,11 +371,15 @@ class Admin:
             operation = dict(self.operation) if self.operation else None
         return {'base_revision': revision(raw), 'saved_mode': mode.group(1).decode() if mode else 'unknown',
                 'running_mode': running_mode, 'ready': ready,
-                'mihomo_installed': (CODE / 'bin/clash').is_file(), 'operation': operation,
+                'mihomo_installed': (CODE / 'bin/clash').is_file(), 'operation': operation, 'node_cache': self.node_cache(),
                 'ppsub_write_allowed': ready,
                 'edit_kind': 'clash_patch' if running_mode in {'yaml', 'suburl'} and not info.get('ppsub') else 'ppsub'}
 
     def apply(self, body):
+        if isinstance(body, dict) and body.get('kind') == 'refresh_nodes': return self.refresh_nodes(body)
+        if isinstance(body, dict) and body.get('kind') in {'editor', 'export_yaml'}:
+            from unified_editor import handle
+            return handle(self, body)
         if isinstance(body, dict) and body.get('kind') == 'clash_patch':
             return self.apply_clash(body)
         changes, upload = validate_subscription(body)
@@ -492,12 +622,26 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/subscription':
                 return self.respond(202, self.server.admin.apply(body))
             if self.path in {'/api/core/check', '/api/core/update', '/api/core/rollback'}:
+                if self.path == '/api/core/update' and body != {}:
+                    result = self.server.admin.core_upload(body)
+                    return self.respond(202 if result.get('status') == 'running' else 200, result)
                 if body != {}: raise ValueError('INVALID_REQUEST')
                 return self.respond(202, self.server.admin.core_action(self.path.rsplit('/', 1)[-1]))
             if self.path == '/api/policy/reset':
                 return self.respond(202, self.server.admin.reset_policy(body))
             self.respond(404, {'error': 'NOT_FOUND'})
+        except ManagementError as error:
+            code = str(error).split(':', 1)[0]
+            allowed = {'CONFIG_REVISION_CONFLICT', 'SOURCE_CHANGE_REQUIRES_SWITCH', 'MANAGEMENT_BUSY', 'RECOVERY_REQUIRED',
+                       'INVALID_EDITOR_REQUEST', 'INVALID_PPSUB', 'INVALID_URL', 'CONFIG_CHANGED'}
+            return self.respond(409 if code in {'CONFIG_REVISION_CONFLICT', 'MANAGEMENT_BUSY', 'CONFIG_CHANGED'} else 400,
+                                {'error': code if code in allowed else 'INVALID_EDITOR_REQUEST'})
         except ValueError as error:
+            if self.path.startswith('/api/core/'):
+                from mihomo_update import error_details
+                details = error_details(error)
+                return self.respond(409 if details['error'] in {'MANAGEMENT_BUSY', 'CORE_UPLOAD_BUSY'} else 400,
+                                    {'error': details['error'], 'message': details['message']})
             messages = {
                 'CONFIG_CHANGED': (409, '运行配置已变化或编辑快照已过期，请重新载入“当前配置”。'),
                 'CLASH_GLOBAL_OPTIONS_UNSUPPORTED': (400, '完整配置当前支持节点组、规则和订阅链接编辑；全局监测、定时重启与 Shadowsocks 入站请保留原设置。'),
@@ -521,4 +665,5 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == '__main__':
     server = ThreadingHTTPServer(('127.0.0.1', 8789), Handler)
     server.admin = Admin()
+    threading.Thread(target=server.admin.schedule_loop, daemon=True).start()
     server.serve_forever()

@@ -13,6 +13,7 @@ def generated(path):
 
 ROOTS = ('etc/paopaogw', 'usr/local/lib/paopaogw', 'var/lib/paopaogw')
 UNITS = ('paopaogw.service', 'paopaogw-api.service', 'paopaogw-subscription.service',
+         'paopaogw-settings.service',
          'paopaogw-observe.service', 'paopaogw-maintenance.service', 'paopaogw-maintenance.timer',
          'paopaogw-core-action@.service')
 EXACT = {'usr/local/bin/ppgw-admin', *(f'etc/systemd/system/{name}' for name in UNITS)}

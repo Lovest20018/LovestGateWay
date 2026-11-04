@@ -1,5 +1,6 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
+mod cache;
 mod groups;
 pub(crate) mod hosts;
 pub(crate) mod proxies;
@@ -94,6 +95,7 @@ pub struct SubResult {
     pub(crate) hosts: hosts::SubHosts,
     pub userinfo: Option<UserInfo>,
 
+    pub cached_at: Option<i64>,
     pub raw_yaml: String,
     pub error: String,
 }
@@ -173,6 +175,7 @@ pub fn process_ppsub(
         }
         sub_results.push(r);
     }
+    cache::status(&sub_results);
     if !has_success {
         return Err(PpsubErr::AllSubsFailed);
     }
@@ -212,7 +215,7 @@ pub fn process_ppsub(
         .map(|r| subinfo::Entry {
             name: r.name.clone(),
             info: r.userinfo.clone(),
-            at: if r.success { at } else { 0 },
+            at: if r.success { r.cached_at.unwrap_or(at) } else { 0 },
         })
         .collect();
     if let Err(e) = subinfo::save(&subinfo::file(), &entries) {
@@ -613,6 +616,7 @@ mod tests {
             proxies: vec![Yaml::Hash(h)],
             hosts: hosts::SubHosts::default(),
             userinfo: None,
+            cached_at: None,
             raw_yaml: String::new(),
             error: String::new(),
         }];

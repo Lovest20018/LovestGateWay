@@ -213,7 +213,7 @@ def main():
             operation['requestBody'] = {'required': True, 'content': {'application/json': {
                 'schema': {'$ref': '#/components/schemas/ProbeRequest'}}}}
         paths['/api/v1/' + path] = {'post' if path == 'diagnostics/probe' else 'get': operation}
-    document = {'openapi': '3.1.0', 'info': {'title': 'LovestGateWay HNM Integration API',
+    document = {'openapi': '3.1.0', 'info': {'title': 'LovestGateWay Lovest HomeNet Integration API',
         'version': '1.2.0', 'description': 'Observer API; source semantics are documented in integration-api-v1.md'},
         'security': [{'observerBearer': []}], 'paths': paths,
         'components': {'securitySchemes': {'observerBearer': {'type': 'http', 'scheme': 'bearer'}}, 'schemas': schemas}}
