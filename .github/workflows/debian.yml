@@ -23,7 +23,7 @@ jobs:
           python3 -m unittest discover -s tests -v
           python3 scripts/export-api-contract.py
           python3 scripts/check-api-contract.py
-          git diff --exit-code -- docs/openapi-v1.json integration/fixtures
+          git -c safe.directory="$GITHUB_WORKSPACE" diff --exit-code -- docs/openapi-v1.json integration/fixtures
           sh -n FILES/usr/bin/ppg.sh
           sh -n FILES/usr/bin/nft.sh
           sh -n deploy/debian/install.sh
