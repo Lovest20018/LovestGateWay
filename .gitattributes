@@ -4,4 +4,8 @@
 /integration/** text eol=lf
 /scripts/** text eol=lf
 /tests/** text eol=lf
+/ReadMe.md text eol=lf
+/.gitattributes text eol=lf
+/docs/** text eol=lf
+/sniffbox/**/*.rs text eol=lf
 /.github/workflows/debian.yml text eol=lf
