@@ -18,3 +18,5 @@ sniffbox/target/
 /dist/
 __pycache__/
 *.pyc
+/docs/validation/
+/docs/superpowers/
