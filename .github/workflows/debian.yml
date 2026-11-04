@@ -1,4 +1,4 @@
-name: LovestGateWay Debian core and HNM API
+name: LovestGateWay Debian
 on:
   push:
   pull_request:
@@ -11,6 +11,8 @@ jobs:
     container: rust:bookworm
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Build dependencies
         run: |
           apt-get update
@@ -20,6 +22,7 @@ jobs:
           echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
       - name: API and contract
         run: |
+          python3 scripts/check-public-source.py
           python3 -m unittest discover -s tests -v
           python3 scripts/export-api-contract.py
           python3 scripts/check-api-contract.py

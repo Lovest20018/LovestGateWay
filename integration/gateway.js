@@ -51,7 +51,7 @@
       openport_auth: ['代理认证', '格式为 用户名:密码；留空保留已保存的认证。'],
       admin_cidr: ['管理访问范围', '逗号分隔 CIDR；留空允许所有来源。请保留当前设备所在网段。'],
       proxy_cidr: ['代理访问范围', '逗号分隔 CIDR；留空允许所有来源。'],
-      net_rec: ['核心流量统计', '记录核心流量与分布；与 Lovest HomeNet 历史采集分别控制。'],
+      net_rec: ['核心流量统计', '记录核心流量与分布；与 API 历史采集分别控制。'],
       max_rec: ['流量记录上限', '核心流量统计开启后可以热更新。'],
       net_cleanday: ['每月清理日', '1–31；留空关闭定期清理。'],
       traffic_window_min: ['流量统计窗口（分钟）', '统计近期流量的时间范围；留空使用默认值。'],
@@ -63,13 +63,14 @@
       PPGW_WEB_LISTEN: ['管理页面监听', '格式为 IP:端口；修改后需打开新地址。'],
       PPGW_DNS_LISTEN: ['FakeIP DNS 监听', '格式为 IP:端口；独立 DNS 已占用端口时请指定网关 LAN 地址。'],
       TZ: ['调度时区', '如 Asia/Shanghai；同步用于订阅与维护调度。'],
-      history_enabled: ['Lovest HomeNet 历史采集', '关闭后停止采集，已有历史保留。'],
+      enabled: ['启用对外观测 API', '默认关闭，不监听端口。启用后允许持有专用 Token 的客户端读取状态和执行受限诊断。'],
+      history_enabled: ['API 历史采集', '仅在对外观测 API 开启时采集；关闭后已有历史保留。'],
       history_retention_days: ['历史保留天数', '1–90 天；由历史采集服务执行。'],
       auto_update: ['Mihomo 自动更新', '启用官方稳定版检查与维护定时器。'],
-      name: ['Lovest HomeNet 实例名称', '用于 Lovest HomeNet 中显示的设备名称。'],
-      listen: ['Lovest HomeNet API 监听', '另一台 VM 连接时填写网关的局域网 IP；127.0.0.1 仅限本机。'],
-      port: ['Lovest HomeNet API 端口', ''], probe_urls: ['允许探测的地址', '每行一个公共 HTTP(S) URL，最多 16 个。'],
-      read_token: ['更换 HomeNet Token', '留空保留当前 Token；应用后旧 Token 失效，请同步更新 HomeNet。'],
+      name: ['API 实例名称', '观测客户端中显示的设备名称。'],
+      listen: ['API 监听地址', '另一台设备连接时填写网关的局域网 IP；127.0.0.1 仅限本机。'],
+      port: ['API 端口', ''], probe_urls: ['允许探测的地址', '每行一个公共 HTTP(S) URL，最多 16 个。'],
+      read_token: ['更换 API Token', '留空保留当前 Token；应用后旧 Token 失效，请同步更新使用该 API 的客户端。'],
       subtime: ['订阅更新间隔', '如 30m、6h、1d。'],
       subcron: ['每天定时更新（小时）', '填写 0–23；留空则按间隔更新。'],
       yamlfile: ['本地 YAML 文件', '先在下方导入，再选择文件并预览。'],
@@ -85,14 +86,18 @@
       pplog: ['流量上报地址', '可选 IP:端口；留空停用。'], pplog_uuid: ['流量上报 UUID', '可选。'],
     };
     const helpTopics = {
+      enabled: [
+        ['默认状态', '全新安装和未明确启用 API 的旧配置均关闭此功能，不监听 API 端口。Web 管理、订阅和代理转发可以独立使用。'],
+        ['启停方式', '预览并应用后启停观测 API 及其开机自启。关闭时也停止 API 历史采集，已保存的数据和连接设置保留。'],
+      ],
       listen: [
-        ['局域网连接', 'HomeNet 部署在另一台 VM 时，请填写本机可被该 VM 访问的局域网 IPv4 地址；0.0.0.0 表示监听所有 IPv4 网卡。'],
-        ['HomeNet 配置', '连接地址使用 http://网关局域网IP:端口，Token 使用下面的专用 HomeNet Token。监听 0.0.0.0 时，连接地址仍需填写实际 IP。'],
-        ['生效方式', '预览并应用后，仅重启 HomeNet API；代理转发继续运行。'],
+        ['局域网连接', '客户端在另一台设备时，填写本机可被该设备访问的局域网 IPv4 地址；0.0.0.0 表示监听所有 IPv4 网卡。'],
+        ['客户端配置', '连接地址使用 http://网关局域网IP:端口，认证使用下面的专用 API Token。监听 0.0.0.0 时，连接地址仍需填写实际 IP。'],
+        ['生效方式', 'API 已开启时，预览并应用后仅重启观测 API；关闭时只保存连接设置。代理转发继续运行。'],
       ],
       read_token: [
-        ['作用', 'HomeNet 使用这个独立 Token 读取网关状态和执行允许的诊断，不能凭它修改网关配置。'],
-        ['更换方式', '填写 32–256 个无空格的 ASCII 字符，或点击“生成新 Token”。复制新值到 HomeNet，预览并应用后生效。'],
+        ['作用', '观测客户端使用这个独立 Token 读取网关状态和执行允许的诊断，不能凭它修改网关配置。'],
+        ['更换方式', '填写 32–256 个无空格的 ASCII 字符，或点击“生成新 Token”。复制新值到客户端，预览并应用后生效。'],
       ],
       dns_ip: [
         ['作用', '网关需要本地解析节点等域名时使用的基础 DNS，也会参与节点 DNS 预解析。“信任”表示期望返回真实 IP，程序不会自动验证结果是否无污染。'],
@@ -119,10 +124,10 @@
       ],
       net_rec: [
         ['作用', '记录转发核心中的域名、客户端与流量，供面板的流量记录和分布页面查看。核心重启后，这部分内存记录会清空。'],
-        ['与历史采集的关系', 'Lovest HomeNet 历史采集由独立服务保存历史数据，在“维护与 Lovest HomeNet”中单独控制。'],
+        ['与历史采集的关系', 'API 历史采集由独立服务保存历史数据，在“维护与 API”中单独控制；对外观测 API 关闭时不采集。'],
       ],
       history_enabled: [
-        ['作用', '由独立采集服务保存 Lovest HomeNet 历史数据，保留期限由“历史保留天数”控制。'],
+        ['作用', '由独立采集服务保存 API 历史数据，保留期限由“历史保留天数”控制；需同时开启对外观测 API。'],
         ['关闭后', '停止后续采集，已有历史保留；面板的核心流量统计由另一个开关控制。'],
       ],
       fast_node: [
@@ -159,7 +164,7 @@
       SOURCE_CONFLICT: '更换来源与现有本地策略或 PPsub 冲突。确认清除选项后重新预览。',
       MANAGEMENT_BUSY: '其他管理操作正在进行，请稍后重试。',
       RECOVERY_REQUIRED: '上一次事务需要恢复。请在宿主运行 sudo ppgw-admin recover --yes，再刷新页面。',
-      MIHOMO_REQUIRED: '请先在“维护与 Lovest HomeNet”中安装 Mihomo。',
+      MIHOMO_REQUIRED: '请先在“维护与 API”中安装 Mihomo。',
       SUBSCRIPTION_REQUIRED: '请填写订阅链接，或先导入本地配置。',
       ASSET_REQUIRED: '未找到所选配置文件，请先导入。',
       ASSET_EXISTS: '同名文件已存在，请选择新名称或明确允许覆盖。',
@@ -334,18 +339,21 @@
       try { if (!document.execCommand('copy')) throw Error('复制失败，请手动选择并复制。'); }
       finally { input.remove(); if (focused?.isConnected) focused.focus(); }
     }
-    function homeNetCard() {
-      const section = card('Lovest HomeNet 连接', '供另一台局域网 VM 读取网关状态。连接设置应用后仅重启 API，代理转发继续运行。', '03', []);
-      const connection = el('div', {class:'homenet-address', 'aria-live':'polite'});
+    function observerApiCard() {
+      const section = card('对外观测 API', '可选功能，默认关闭。启停和连接设置独立应用，Web 管理与代理转发继续运行。', '03', []);
+      const connection = el('div', {class:'observer-api-address', 'aria-live':'polite'});
       function showAddress() {
         const host = valueOf('api','listen'), port = valueOf('api','port');
-        connection.replaceChildren(el('strong', {text:'HomeNet 连接地址'}),
+        connection.replaceChildren(el('strong', {text:valueOf('api','enabled') ? '启用后的 API 连接地址' : 'API 已关闭：不监听端口'}),
           el('code', {text:`http://${host === '0.0.0.0' ? '网关局域网IP' : host}:${port}`}),
-          el('small', {text:host.startsWith('127.') ? '当前仅限本机。HomeNet 在另一台 VM 上时，请改为网关的局域网 IP。' : host === '0.0.0.0' ? '监听全部 IPv4 网卡；HomeNet 请填写网关的实际局域网 IP。' : '将此地址与专用 Token 一起填入 HomeNet。'}));
+          el('small', {text:host.startsWith('127.') ? '仅限本机。其他设备连接时，请改为网关的局域网 IP。' : host === '0.0.0.0' ? '监听全部 IPv4 网卡；客户端请填写网关的实际局域网 IP。' : '将此地址与专用 Token 一起填入观测客户端。'}));
       }
-      const grid = fields([['api','name'], ['api','listen'], ['api','port'], ['api','probe_urls']]);
+      const toggle = field('api','enabled',{wide:true});
+      toggle.querySelector('input').addEventListener('change', showAddress);
+      const grid = fields([['api','name'], ['api','listen'], ['api','port'], ['api','probe_urls'],
+        ['maintenance','history_enabled'], ['maintenance','history_retention_days']]);
       for (const key of ['listen','port']) grid.querySelector('#setting-api-'+key).addEventListener('change', showAddress);
-      const saved = el('input', {id:'homenet-current-token',type:'password',readOnly:true,autocomplete:'off',placeholder:'点击查看后显示当前 Token',value:''});
+      const saved = el('input', {id:'observer-api-current-token',type:'password',readOnly:true,autocomplete:'off',placeholder:'点击查看后显示当前 Token',value:''});
       let version = 0;
       const status = el('small', {'aria-live':'polite',text:'当前 Token 默认隐藏，查看后 60 秒自动隐藏。'});
       const reveal = el('button', {type:'button',class:'btn',text:'查看当前 Token',onclick:async()=>{
@@ -364,7 +372,7 @@
       const copy = el('button', {type:'button',class:'btn',text:'复制当前 Token',disabled:true,onclick:async()=>{
         try { await copyValue(saved.value); status.textContent='当前 Token 已复制。'; } catch(error) { status.textContent=error.message; }
       }});
-      const currentField = el('div',{class:'field wide'},[el('label',{htmlFor:saved.id,text:'当前 HomeNet Token'}),saved,el('div',{class:'button-row'},[reveal,copy]),status]);
+      const currentField = el('div',{class:'field wide'},[el('label',{htmlFor:saved.id,text:'当前 API Token'}),saved,el('div',{class:'button-row'},[reveal,copy]),status]);
       const replacement = field('api','read_token',{wide:true});
       const newInput = replacement.querySelector('input');
       const newStatus = el('small',{'aria-live':'polite',text:''});
@@ -378,30 +386,30 @@
           catch(error){newStatus.textContent=error.message;}
         }}),
       ]),newStatus);
-      section.append(connection,grid,el('div',{class:'homenet-token-grid'},[currentField,replacement]));
+      section.append(toggle,connection,grid,el('div',{class:'observer-api-token-grid'},[currentField,replacement]));
       showAddress(); return section;
     }
     function settingsContent() {
-      const result = [tabs([['access', '访问与统计'], ['maintenance', '维护与 Lovest HomeNet'], ['network', '网络与出站'], ['advanced', '高级选项']], category,
+      const result = [tabs([['access', '访问与统计'], ['maintenance', '维护与 API'], ['network', '网络与出站'], ['advanced', '高级选项']], category,
         key => { category = key; render(); })];
       if (category === 'access') {
         result.push(passwordCard());
         result.push(card('管理与代理访问', '管理认证和访问范围统一在这里维护。', '02', [fields([
           ['ini', 'openport_auth'], ['ini', 'admin_cidr'], ['ini', 'proxy_cidr'], ['ini', 'openport'],
         ])]));
-        result.push(card('流量记录', '核心统计与 Lovest HomeNet 持久历史分别控制。', '03', [fields([
+        result.push(card('流量记录', '核心统计与 API 持久历史分别控制。', '03', [fields([
           ['ini', 'net_rec'], ['ini', 'max_rec'], ['ini', 'net_cleanday'], ['ini', 'traffic_window_min'],
         ])]));
       } else if (category === 'maintenance') {
-        result.push(card('维护计划', '按需开启采集与自动更新，不影响已有历史数据。', '01', [fields([
-          ['maintenance', 'history_enabled'], ['maintenance', 'auto_update'], ['maintenance', 'history_retention_days'], ['service', 'TZ'],
+        result.push(card('维护计划', '按需开启 Mihomo 自动更新，调度时区同时用于订阅和维护。', '01', [fields([
+          ['maintenance', 'auto_update'], ['service', 'TZ'],
         ])]));
         const status = el('p', {class: 'subtext', id: 'maintenance-state', text: (model.mihomo_installed ? 'Mihomo 已安装' : '尚未安装 Mihomo') + ' · 尚未检查官方版本，可点击下方“检查稳定版”；安装按钮也会先检查版本。'});
         const actions = el('div', {class: 'button-row'}, [['检查稳定版', 'check'], ['安装 / 更新 Mihomo', 'update'], ['回退上一版本', 'rollback']].map(([label, action]) => el('button', {
           class: 'button secondary', type: 'button', text: label, onclick: () => coreAction(action),
         })));
         result.push(card('Mihomo 核心', '从官方稳定版更新；版本检查与网关配置分别应用。', '02', [status, el('div', {class: 'divider'}), actions, localCoreForm()]));
-        result.push(homeNetCard());
+        result.push(observerApiCard());
       } else if (category === 'network') {
         result.push(card('网卡与监听', 'Debian 继续管理宿主 IP、默认路由和时钟。', '01', [fields([
           ['service', 'PPGW_INTERFACE'], ['service', 'PPGW_IPV6'], ['service', 'PPGW_WEB_LISTEN'], ['service', 'PPGW_DNS_LISTEN'],
@@ -578,7 +586,7 @@
       const action = data.effects?.core || data.action;
       items.push(el('div', {class: 'notice', text: action === 'restart' ? '将重启网关并验证新配置，现有连接可能中断。' :
         action === 'reload' ? '将热更新转发核心，保留核心进程和现有 Mihomo 配置。' : '无需重启转发核心。'}));
-      if (data.effects?.services?.length) items.push(el('p', {class: 'subtext', text: '调整辅助服务：' + data.effects.services.map(v => ({api: 'Lovest HomeNet API', history: '历史采集', maintenance_timer: '自动维护', subscription: '订阅服务'})[v]).join('、')}));
+      if (data.effects?.services?.length) items.push(el('p', {class: 'subtext', text: '调整辅助服务：' + data.effects.services.map(v => ({api: '对外观测 API', history: '历史采集', maintenance_timer: '自动维护', subscription: '订阅服务'})[v]).join('、')}));
       if (kind === 'config') {
         const list = el('ul', {class: 'change-list'});
         for (const [ns, fields] of Object.entries(data.changes || {})) for (const [key, value] of Object.entries(fields)) {

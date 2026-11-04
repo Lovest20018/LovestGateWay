@@ -56,6 +56,7 @@ class InstallerTests(unittest.TestCase):
             self.assertNotIn('openport_auth="ppgw:', defaults)
             self.assertIn('PPGW_IPV6=no', (stage / 'etc/paopaogw/service.env').read_text())
             maintenance = __import__('json').loads((stage / 'etc/paopaogw/maintenance.json').read_text())
+            self.assertFalse(__import__('json').loads((stage / 'etc/paopaogw/api.json').read_text())['enabled'])
             self.assertFalse(maintenance['auto_update']); self.assertFalse(maintenance['history_enabled'])
             config.write_text(config.read_text() + 'net_cleanday=15\n')
             state = stage / 'var/lib/paopaogw/clash/retained.json'

@@ -73,8 +73,9 @@ class System:
         if not self.layout.live: return
         endpoints = [(settings['service']['PPGW_WEB_LISTEN'], socket.SOCK_STREAM),
                      (settings['service']['PPGW_DNS_LISTEN'], socket.SOCK_DGRAM),
-                     (f"{settings['api']['listen']}:{settings['api']['port']}", socket.SOCK_STREAM),
                      ('127.0.0.1:8789', socket.SOCK_STREAM), ('127.0.0.1:8790', socket.SOCK_STREAM)]
+        if settings['api']['enabled']:
+            endpoints.append((f"{settings['api']['listen']}:{settings['api']['port']}", socket.SOCK_STREAM))
         with ExitStack() as stack:
             for endpoint, kind in endpoints:
                 host, port = endpoint.rsplit(':', 1); host = host.strip('[]')
@@ -181,6 +182,7 @@ class System:
             except Exception: time.sleep(.5)
         raise ManagementError('READINESS_TIMEOUT')
     def wait_api(self, settings):
+        if not settings['api']['enabled']: return
         from gateway_api import NoRedirect
         from urllib.request import build_opener, ProxyHandler, Request
         api = settings['api']; host = api['listen']
@@ -211,17 +213,25 @@ class System:
             else: self.command('systemctl', 'restart', 'paopaogw')
             result = self.wait(settings, old, action)
         else: result = {'status': 'saved', 'reason': 'core_unchanged' if before.get('paopaogw', {}).get('active') else 'core_inactive'}
-        if 'api' in changes and before.get('paopaogw-api', {}).get('active'):
-            self.command('systemctl', 'restart', 'paopaogw-api'); self.wait_api(settings)
+        api = changes.get('api', {})
+        if api:
+            enabled = settings['api']['enabled']
+            if 'enabled' in api or (not enabled and before.get('paopaogw-api', {}).get('active')):
+                self.command('systemctl', 'enable' if enabled else 'disable', '--now', 'paopaogw-api')
+                if enabled: self.wait_api(settings)
+            elif enabled and before.get('paopaogw-api', {}).get('active'):
+                self.command('systemctl', 'restart', 'paopaogw-api'); self.wait_api(settings)
         if 'TZ' in changes.get('service', {}):
             for unit in ('paopaogw-subscription', 'paopaogw-observe'):
                 if before.get(unit, {}).get('active'): self.command('systemctl', 'restart', unit)
         maintenance = changes.get('maintenance', {})
-        for field, unit in (('history_enabled', 'paopaogw-observe'), ('auto_update', 'paopaogw-maintenance.timer')):
-            if field in maintenance:
-                enabled = maintenance[field]
-                self.command('systemctl', 'enable' if enabled else 'disable', '--now', unit)
-        if 'history_retention_days' in maintenance and settings['maintenance']['history_enabled'] and before.get('paopaogw-observe', {}).get('active'):
+        if 'enabled' in api or 'history_enabled' in maintenance:
+            collect = settings['api']['enabled'] and settings['maintenance']['history_enabled']
+            self.command('systemctl', 'enable' if collect else 'disable', '--now', 'paopaogw-observe')
+        if 'auto_update' in maintenance:
+            self.command('systemctl', 'enable' if maintenance['auto_update'] else 'disable', '--now', 'paopaogw-maintenance.timer')
+        if ('history_retention_days' in maintenance and settings['api']['enabled']
+                and settings['maintenance']['history_enabled'] and before.get('paopaogw-observe', {}).get('active')):
             self.command('systemctl', 'restart', 'paopaogw-observe')
         return result
     def stop_all(self):

@@ -62,8 +62,8 @@ def main():
         payload = {'base_revision': show()['revision'], 'patch': patch}
         preview = call(web, '/sniffbox/settings/preview', admin, payload)[0]
         assert preview['effects']['core'] == 'none'
-        assert preview['effects']['services'] == ['api']
-        if 'read_token' in patch['api']:
+        assert preview['effects']['services'] == (['api', 'history'] if 'enabled' in patch.get('api', {}) else ['api'])
+        if 'read_token' in patch.get('api', {}):
             assert patch['api']['read_token'] not in json.dumps(preview)
         identifier = uuid.uuid4().hex
         call(web, '/sniffbox/settings/apply', admin,
@@ -79,6 +79,9 @@ def main():
         raise AssertionError('settings job timeout')
 
     assert show()['settings']['api']['read_token'] == '********'
+    assert not show()['settings']['api']['enabled'], 'requires the default-off fixture'
+    assert not system.status()['paopaogw-api']['active']
+    record('default_off_no_api_service_web_settings_available')
     for token in (original, 'incorrect'):
         call(web, '/sniffbox/settings/observer-token', token, {}, expected=401)
     call(web, '/sniffbox/settings/observer-token', admin, expected=405)
@@ -92,7 +95,10 @@ def main():
     replacement = secrets.token_hex(32)
     with socket.socket() as available:
         available.bind((address, 0)); port = available.getsockname()[1]
-    apply({'api': {'listen': address, 'port': port, 'read_token': replacement}})
+    apply({'api': {'enabled': True, 'listen': address, 'port': port, 'read_token': replacement},
+           'maintenance': {'history_enabled': True}})
+    for unit in ('paopaogw-api', 'paopaogw-observe'):
+        assert system.status()[unit] == {'active': True, 'enabled': True}
     api = f'http://{address}:{port}'
     call(api, '/api/v1/instance', original, expected=401)
     call(api, '/api/v1/instance', replacement)
@@ -118,12 +124,26 @@ def main():
     call(api, '/api/v1/instance', rejected, expected=401)
     record('occupied_lan_port_restores_listener_token_without_core_worker_restart')
 
+    apply({'api': {'enabled': False}})
+    for unit in ('paopaogw-api', 'paopaogw-observe'):
+        assert system.status()[unit] == {'active': False, 'enabled': False}
+    with socket.socket() as released:
+        released.bind((address, port))
+    assert Path('/etc/paopaogw/read-token').read_bytes() == previous_token
+    record('disable_releases_port_disables_api_collector_preserves_token_core_worker')
+    with socket.socket() as occupied:
+        occupied.bind((address, port)); occupied.listen()
+        job = apply({'api': {'enabled': True}}, success=False)
+    assert job['error'] == 'APPLY_FAILED_ROLLED_BACK'
+    assert not show()['settings']['api']['enabled'] and not system.status()['paopaogw-api']['active']
+    record('failed_enable_restores_default_off_without_core_worker_restart')
+
     jobs = Path('/var/lib/paopaogw/admin/web-jobs')
     assert all(not any(token in p.read_text() for token in (original, replacement, rejected)) for p in jobs.glob('*.json'))
     record('public_configuration_previews_and_persistent_jobs_redacted')
     report['complete'] = True
     args.report.write_text(json.dumps(report, indent=2) + '\n')
-    print('COMPLETE HomeNet real Debian fixture', flush=True)
+    print('COMPLETE observer API real Debian fixture', flush=True)
 
 
 if __name__ == '__main__': main()

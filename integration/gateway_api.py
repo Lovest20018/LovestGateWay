@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Versioned, read-only Lovest HomeNet facade for the local sniffbox management API.
+"""Optional, versioned observer facade for the local sniffbox management API.
 
 Python 3.11+, standard library only. Never proxies a caller-selected API path.
 """
@@ -83,8 +83,11 @@ class Settings:
     listen: str = "127.0.0.1"
     port: int = 8788
     probe_urls: tuple[str, ...] = ()
+    enabled: bool = False
 
     def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError("enabled must be a boolean")
         uuid.UUID(self.instance_id)
         if len(self.read_token) < 32 or len(self.read_token) > 256:
             raise ValueError("read-token must contain 32..256 characters")
@@ -725,7 +728,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def load_settings(path: Path) -> Settings:
     config = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(config, dict) or set(config) - {"name", "listen", "port", "probe_urls"}:
+    if not isinstance(config, dict) or set(config) - {"enabled", "name", "listen", "port", "probe_urls"}:
         raise ValueError("unknown API setting")
     urls = config.pop("probe_urls", [])
     if not isinstance(urls, list):
@@ -743,6 +746,9 @@ def main():
     args = parser.parse_args()
     try:
         settings = load_settings(args.config)
+        if not settings.enabled:
+            print("Observer API is disabled. Enable it in gateway settings to listen.", flush=True)
+            return
         server = ApiServer((settings.listen, settings.port), Application(settings,
             CoreClient(Path("/var/lib/paopaogw/core-token")), StagedProbe()))
     except (OSError, ValueError, KeyError, TypeError):

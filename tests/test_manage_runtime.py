@@ -34,11 +34,75 @@ class RuntimeTests(unittest.TestCase):
 
     def test_auxiliary_changes_do_not_restart_the_forwarder(self):
         settings = load_settings(self.layout)
+        settings['api']['enabled'] = True
         self.system.wait_api = lambda settings: None
         result = self.system.apply('none', settings, {'api': {'name': 'Fixture'}},
                                   {'paopaogw': {'active': True}, 'paopaogw-api': {'active': True}})
         self.assertEqual(result['reason'], 'core_unchanged')
         self.assertEqual(self.commands, [('systemctl', 'restart', 'paopaogw-api')])
+
+    def test_api_toggle_controls_only_listener_and_collector(self):
+        settings = load_settings(self.layout)
+        self.system.wait_api = lambda _: self.commands.append(('api-ready',))
+        before = {'paopaogw': {'active': True}, 'paopaogw-api': {'active': False}}
+        for enabled in (True, False):
+            with self.subTest(enabled=enabled):
+                self.commands.clear(); settings['api']['enabled'] = enabled
+                settings['maintenance']['history_enabled'] = True
+                self.system.apply('none', settings, {'api': {'enabled': enabled}}, before)
+                verb = 'enable' if enabled else 'disable'
+                expected = [('systemctl', verb, '--now', 'paopaogw-api')]
+                if enabled: expected.append(('api-ready',))
+                expected.append(('systemctl', verb, '--now', 'paopaogw-observe'))
+                self.assertEqual(self.commands, expected)
+
+    def test_disabled_api_saves_connection_settings_and_blocks_collection(self):
+        settings = load_settings(self.layout)
+        self.assertFalse(settings['api']['enabled'])
+        self.system.apply('none', settings, {'api': {'name': 'Fixture'}},
+                          {'paopaogw': {'active': True}, 'paopaogw-api': {'active': False}})
+        self.assertEqual(self.commands, [])
+        self.system.apply('none', settings, {'maintenance': {'history_enabled': True}}, {})
+        self.assertEqual(self.commands, [('systemctl', 'disable', '--now', 'paopaogw-observe')])
+
+    def test_api_toggle_failure_restores_auxiliary_services_without_core_restart(self):
+        from manage_common import ManagementError
+        from manage_config import ConfigManager
+        from manage_model import settings_revision
+        self.layout.require_root = lambda: None
+        self.system.preflight = lambda _: None
+        before = {unit: {'active': unit == 'paopaogw', 'enabled': unit == 'paopaogw'}
+                  for unit in ('paopaogw', 'paopaogw-api', 'paopaogw-observe', 'paopaogw-settings')}
+        self.system.status = lambda: before
+        self.system.wait_api = lambda _: (_ for _ in ()).throw(ManagementError('API_READINESS_TIMEOUT'))
+        with self.assertRaisesRegex(ManagementError, 'APPLY_FAILED_ROLLED_BACK'):
+            ConfigManager(self.layout, self.system).apply({'api': {'enabled': True}}, settings_revision(self.layout))
+        self.assertFalse(load_settings(self.layout)['api']['enabled'])
+        self.assertFalse(any('paopaogw' in command or 'paopaogw-settings' in command for command in self.commands))
+        self.assertIn(('systemctl', 'disable', 'paopaogw-api'), self.commands)
+        self.assertIn(('systemctl', 'stop', 'paopaogw-observe'), self.commands)
+
+    def test_disabled_api_does_not_reserve_a_listener(self):
+        import socket
+        from unittest.mock import patch
+        from manage_common import ManagementError
+        settings = load_settings(self.layout)
+        with socket.socket() as occupied:
+            occupied.bind(('127.0.0.1', 0)); occupied.listen()
+            settings['api']['port'] = occupied.getsockname()[1]
+            self.system.command = lambda *args, **kw: SimpleNamespace(returncode=1 if args[0] == 'nft' else 0, stdout='[]')
+            # Other listeners use their own synthetic sockets; only the API port is occupied.
+            class Listener:
+                def __enter__(self): return self
+                def __exit__(self, *args): pass
+                def bind(self, address):
+                    if address == ('127.0.0.1', settings['api']['port']): raise OSError('occupied')
+                def listen(self, *args): pass
+            with patch('manage_runtime.socket.socket', side_effect=lambda *args: Listener()):
+                self.system.preflight_listeners(settings)
+                settings['api']['enabled'] = True
+                with self.assertRaisesRegex(ManagementError, 'LISTENER_UNAVAILABLE'):
+                    self.system.preflight_listeners(settings)
 
     def test_reload_uses_core_only_endpoint_and_falls_back_when_old_state_unknown(self):
         requests = []

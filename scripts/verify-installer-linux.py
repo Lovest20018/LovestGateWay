@@ -10,8 +10,8 @@ import subprocess
 import sys
 import time
 
-PRIMARY = ('paopaogw', 'paopaogw-api', 'paopaogw-subscription', 'paopaogw-settings')
-OPTIONAL = ('paopaogw-observe', 'paopaogw-maintenance.timer')
+PRIMARY = ('paopaogw', 'paopaogw-subscription', 'paopaogw-settings')
+OPTIONAL = ('paopaogw-api', 'paopaogw-observe', 'paopaogw-maintenance.timer')
 
 
 def run(*args, check=True, timeout=150):
@@ -74,7 +74,7 @@ def main():
             for key in ('openport', 'udp_enable', 'net_rec'): assert not settings['ini'][key]
             assert not settings['service']['PPGW_IPV6']
             assert not settings['maintenance']['history_enabled'] and not settings['maintenance']['auto_update']
-            assert settings['api']['listen'] == '127.0.0.1'
+            assert not settings['api']['enabled'] and settings['api']['listen'] == '127.0.0.1'
             assert len(settings['ini']['clash_web_password']) == 8
             assert settings['ini']['clash_web_password'] not in result.stdout + result.stderr
             passed('fresh_disabled_installs_minimal_defaults_without_starting_or_enabling_services')
@@ -83,7 +83,7 @@ def main():
             assert '升级完成' in result.stdout and 'http://' in result.stdout
             assert_states(True, False)
             assert config_digest() == report['configuration']
-            passed('manual_starts_and_verifies_all_four_primary_services_without_boot_links')
+            passed('manual_starts_three_primary_services_without_boot_links_optional_api_off')
         elif args.phase == 'manual-boot':
             assert_states(False, False)
             passed('manual_services_stay_stopped_after_systemd_container_restart')
@@ -98,7 +98,7 @@ def main():
             from manage_runtime import System
             system = System(Layout()); system.wait(load_settings(Layout())); system.wait_api(load_settings(Layout()))
             assert_states(True, True)
-            passed('auto_services_start_and_pass_core_api_readiness_after_systemd_restart')
+            passed('auto_primary_services_start_and_pass_core_readiness_optional_api_off')
             run('systemctl', 'stop', 'paopaogw-settings')
             before = states()
             result = install('--yes')

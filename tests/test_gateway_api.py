@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import threading
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -52,6 +53,38 @@ class FakeCore:
         if path == '/sniffbox/probe':
             return copy.deepcopy(self.result)
         raise AssertionError('Unexpected core path: ' + path)
+
+
+class ObserverStartupTests(unittest.TestCase):
+    def test_disabled_api_does_not_construct_a_listener(self):
+        settings = api.Settings(IDENTITY, TOKEN)
+        self.assertFalse(settings.enabled)
+        with patch.object(api, 'load_settings', return_value=settings), \
+             patch.object(api, 'ApiServer') as server, patch.object(sys, 'argv', ['gateway_api.py']), patch('builtins.print'):
+            api.main()
+        server.assert_not_called()
+
+    def test_enabled_api_constructs_and_serves_its_listener(self):
+        settings = api.Settings(IDENTITY, TOKEN, enabled=True)
+        with patch.object(api, 'load_settings', return_value=settings), \
+             patch.object(api, 'ApiServer') as server, patch.object(sys, 'argv', ['gateway_api.py']), patch('builtins.print'):
+            api.main()
+        self.assertEqual(server.call_args.args[0], ('127.0.0.1', 8788))
+        server.return_value.serve_forever.assert_called_once()
+
+    def test_legacy_configuration_defaults_off_and_opt_in_is_strict(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'instance-id').write_text(IDENTITY); (root / 'read-token').write_text(TOKEN)
+            build = root / 'build.json'; build.write_text(json.dumps({'version': 'fixture', 'build_commit': 'a' * 40}))
+            config = root / 'api.json'
+            for data, enabled in [({}, False), ({'enabled': True}, True), ({'enabled': False}, False)]:
+                config.write_text(json.dumps(data))
+                with patch.object(api, 'Path', return_value=build):
+                    self.assertEqual(api.load_settings(config).enabled, enabled)
+            config.write_text('{"enabled":"true"}')
+            with patch.object(api, 'Path', return_value=build), self.assertRaises(ValueError):
+                api.load_settings(config)
 
 
 class ApiTests(unittest.TestCase):
@@ -150,9 +183,9 @@ class ApiTests(unittest.TestCase):
 
     def test_probe_mapping_no_redirects_and_no_response_leak(self):
         result = self.request(api.PROBE_PATH, 'POST', {'url': URL, 'timeout_ms': 2000,
-                                                     'correlation_id': 'hnm-run-1'})['data']
+                                                     'correlation_id': 'api-run-1'})['data']
         self.assertEqual(result['status'], 'passed')
-        self.assertEqual(result['correlation_id'], 'hnm-run-1')
+        self.assertEqual(result['correlation_id'], 'api-run-1')
         call = next(c for c in self.core.calls if c[0] == '/sniffbox/probe')
         self.assertEqual(call[1], {'url': URL, 'method': 'HEAD', 'follow': False,
                                   'timeoutMs': 2000, 'maxBody': 1})
@@ -209,11 +242,11 @@ class ApiTests(unittest.TestCase):
             for token, status in (('', 401), ('bad', 401), (TOKEN, 200)):
                 conn = HTTPConnection('127.0.0.1', server.server_port, timeout=2)
                 conn.request('GET', '/api/v1/runtime', headers={'Authorization': 'Bearer ' + token,
-                             'X-Request-ID': 'hnm-test-123'})
+                             'X-Request-ID': 'api-test-123'})
                 response = conn.getresponse()
                 body = json.loads(response.read())
                 self.assertEqual(response.status, status)
-                self.assertEqual(body['request_id'], 'hnm-test-123')
+                self.assertEqual(body['request_id'], 'api-test-123')
                 self.assertEqual(response.getheader('X-Request-ID'), body['request_id'])
                 self.assertEqual(response.getheader('Cache-Control'), 'no-store')
                 conn.close()

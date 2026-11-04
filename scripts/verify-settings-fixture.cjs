@@ -110,7 +110,7 @@ async function main() {
     const navigation = page.locator('aside');
     assert.equal(await navigation.count(), 1);
     assert.equal(await navigation.locator('a[href="#/settings"].active').count(), 1);
-    await page.getByRole('tab', {name: '维护与 Lovest HomeNet', exact: true}).click();
+    await page.getByRole('tab', {name: '维护与 API', exact: true}).click();
     await page.getByRole('button', {name: '检查稳定版', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('RELEASE_NETWORK_TIMEOUT'));
     assert.match(await page.locator('#maintenance-state').innerText(), /未取得版本信息.*连接 GitHub 超时/);
@@ -185,12 +185,12 @@ async function main() {
     await page.locator('#preview').click(); await page.getByText('配置已被其他操作修改。请刷新配置后重新编辑。', {exact: true}).waitFor();
     assert.equal(await page.locator('#preview-dialog').isVisible(), false);
     stale = false; await page.locator('#discard').click();
-    await page.getByRole('tab', {name: '维护与 Lovest HomeNet', exact: true}).click();
-    await page.getByLabel('Lovest HomeNet 实例名称', {exact: true}).waitFor();
+    await page.getByRole('tab', {name: '维护与 API', exact: true}).click();
+    await page.getByLabel('API 实例名称', {exact: true}).waitFor();
     for (const label of ['检查稳定版', '安装 / 更新 Mihomo', '回退上一版本']) {
       assert.equal(await page.getByRole('button', {name: label, exact: true}).isVisible(), true);
     }
-    assert.doesNotMatch(await page.locator('.ppgw-gateway').innerText(), /HNM/);
+    assert.doesNotMatch(await page.locator('.ppgw-gateway').innerText(), /HomeNet|HNM/i);
     for (const title of ['网络与出站', '高级选项', '访问与统计']) await page.getByRole('tab', {name: title, exact: true}).click();
     await page.evaluate(() => scrollTo(0, 0));
     const themeButton = navigation.locator('.theme-wrap > button');
@@ -304,7 +304,7 @@ async function main() {
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
       sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, themeEditor: true, mobileMenu: true,
-      unmountDuringFetch: true, homeNetBrand: true, coreNetworkFailureAndRetry: true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
+      unmountDuringFetch: true, observerApiSettings: true, coreNetworkFailureAndRetry: true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
