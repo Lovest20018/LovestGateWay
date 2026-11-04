@@ -41,6 +41,12 @@ class InstallWizardTests(unittest.TestCase):
     def tearDownClass(cls): cls.fixture.cleanup()
 
     def setUp(self):
+        # The installed CLI uses -B; in-process imports must also leave the
+        # verified package unchanged when the test runner enables bytecode.
+        bytecode = patch.object(sys, 'dont_write_bytecode', True)
+        bytecode.start(); self.addCleanup(bytecode.stop)
+        original_path = list(sys.path)
+        self.addCleanup(lambda: sys.path.__setitem__(slice(None), original_path))
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / 'root'
 
@@ -88,8 +94,7 @@ class InstallWizardTests(unittest.TestCase):
     def test_fresh_interactive_network_list_plan_and_chinese_confirmation(self):
         spec = importlib.util.spec_from_file_location('wizard_under_test', self.package / 'deploy.py')
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-        output = io.StringIO(); original_path = list(sys.path)
-        self.addCleanup(lambda: sys.path.__setitem__(slice(None), original_path))
+        output = io.StringIO()
         answers = iter(['2', '127.0.0.1:18080', '127.0.0.1:1053', '3', '是'])
         with patch.object(module, 'interfaces', return_value=[('ens18', '192.0.2.1'), ('ens19', '192.0.2.2')]), \
              patch('sys.stdin.isatty', return_value=True), patch.object(module.getpass, 'getpass', return_value=''), patch('builtins.input', side_effect=lambda _: next(answers)), redirect_stdout(output):
