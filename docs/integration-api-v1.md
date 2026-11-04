@@ -1,8 +1,10 @@
-# LovestGateWay · Lovest HomeNet Integration API v1
+# LovestGateWay · 可选观测 API v1
 
-依据 Lovest HomeNet `paopaogw-api-requirements-v1.md`（2026-10-26）实现 provider，当前契约修订 1.2。HTTP 契约为 [openapi-v1.json](openapi-v1.json)，确定性样例位于 `integration/fixtures/`。Lovest HomeNet adapter/Agent/页面由 Lovest HomeNet 仓库实现，本仓库交付 provider。
+这是供第三方客户端按需使用的独立观测接口，默认关闭；Web 管理、订阅和代理转发不依赖它。当前契约修订 1.2，HTTP 契约为 [openapi-v1.json](openapi-v1.json)，确定性样例位于 `integration/fixtures/`。
 
-项目品牌为 LovestGateWay，实例默认 `name` 随之更新；为兼容既有 Lovest HomeNet adapter，`kind="paopaogateway"`、实例 UUID、认证和 API 路径保持稳定。
+在“网关设置 → 维护与 API”开启“启用对外观测 API”，或通过脚本将 `api.enabled` 设置为 `true`；关闭时不监听端口，并停止 API 历史采集。旧配置没有该字段时按关闭处理，升级会取消相关服务自启。启停不重启转发核心。
+
+实例默认 `name` 为 LovestGateWay；`kind="paopaogateway"`、实例 UUID、认证和 API 路径保持稳定，供通用观测客户端使用。
 
 所有路径使用 `Authorization: Bearer <read-token>`。Token 不在 URL、日志、错误正文里使用。`X-Request-ID` 接收 8–64 个 ASCII 字母/数字/下划线/短横线；无效/缺少时生成 UUID，所有业务响应都返回对应 header 和 `request_id`。`correlation_id` 单独用于探测关联（1–64 字符），不充当授权。
 
@@ -55,4 +57,4 @@ runtime.mihomo_configuration 单独报告 source_revision、policy_revision、ef
 | yaml / suburl | 支持，需 mihomo | 缓存快照 + 网关侧 TCP 缓冲 | 白名单开启后支持 | 实际缓存 / mihomo 规则节点 unavailable |
 | ovpn | 支持，需 OpenVPN | 快照 + 有界 TCP 缓冲 | 白名单开启后支持 | 实际缓存 / 模式派发与建连结果 |
 
-此表是代码能力；实际验收矩阵记录在独立 validation 文档，不把未测试模式列为已验收。API 不依赖网页 DOM，Lovest HomeNet 只依赖 v1 契约。
+此表描述代码能力，不把未测试模式列为已验收。观测客户端依赖 v1 契约，不依赖网页 DOM；测试与验证方法见 [testing.md](testing.md)。

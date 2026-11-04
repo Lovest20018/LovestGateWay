@@ -48,7 +48,7 @@ def effects(preview):
     services = []
     if changes.get('api'): services.append('api')
     maintenance = changes.get('maintenance', {})
-    if set(maintenance) & {'history_enabled', 'history_retention_days'}: services.append('history')
+    if 'enabled' in changes.get('api', {}) or set(maintenance) & {'history_enabled', 'history_retention_days'}: services.append('history')
     if 'auto_update' in maintenance: services.append('maintenance_timer')
     if 'TZ' in changes.get('service', {}): services.extend(['subscription', 'history'])
     return {'core': preview['action'], 'services': list(dict.fromkeys(services)),

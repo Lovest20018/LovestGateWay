@@ -177,17 +177,25 @@ class Deployer:
                     if actual is None or digest(actual) != digest(raw): raise ManagementError('INSTALLED_FILE_MISMATCH')
                 startup = startup or ('auto' if fresh else 'preserve')
                 desired = {unit: dict(state) for unit, state in before.items()}
-                primary = ('paopaogw', 'paopaogw-api', 'paopaogw-subscription', 'paopaogw-settings')
+                settings = load_settings(self.layout)
+                primary = ('paopaogw', 'paopaogw-subscription', 'paopaogw-settings')
                 if startup != 'preserve':
                     active, enabled = startup != 'disabled', startup == 'auto'
                     for unit in primary: desired[unit] = {'active': active, 'enabled': enabled}
-                    maintenance = load_settings(self.layout)['maintenance']
-                    for unit, selected in (('paopaogw-observe', maintenance['history_enabled']),
+                    maintenance = settings['maintenance']
+                    for unit, selected in (('paopaogw-api', settings['api']['enabled']),
+                                           ('paopaogw-observe', settings['api']['enabled'] and maintenance['history_enabled']),
                                            ('paopaogw-maintenance.timer', maintenance['auto_update'])):
                         desired[unit] = {'active': active and selected, 'enabled': enabled and selected}
                 elif not had_settings_service:
                     core = before.get('paopaogw', {})
                     desired['paopaogw-settings'] = {'active': core.get('active', False), 'enabled': core.get('enabled', False)}
+                # Old installations did not have an explicit API opt-in. Keep the
+                # optional listener and its collector stopped until enabled in settings.
+                if not settings['api']['enabled']:
+                    desired['paopaogw-api'] = {'active': False, 'enabled': False}
+                if not settings['api']['enabled'] or not settings['maintenance']['history_enabled']:
+                    desired['paopaogw-observe'] = {'active': False, 'enabled': False}
                 self.system.restore_services(desired)
                 if desired.get('paopaogw', {}).get('active'): self.system.wait(load_settings(self.layout))
                 if desired.get('paopaogw-api', {}).get('active') and hasattr(self.system, 'wait_api'): self.system.wait_api(load_settings(self.layout))

@@ -9,3 +9,4 @@
 /docs/** text eol=lf
 /sniffbox/**/*.rs text eol=lf
 /.github/workflows/debian.yml text eol=lf
+/.githooks/* text eol=lf

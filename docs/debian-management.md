@@ -22,7 +22,7 @@ sudo sh install.sh --interface eth0 --install-deps --yes
 | `--startup disabled` | 否，只安装 | 否 |
 | `--startup preserve` | 沿用原状态，仅升级 | 沿用原状态，仅升级 |
 
-启动计划同时应用于网关核心、Lovest HomeNet API、订阅管理及设置服务。历史采集和自动更新还受配置开关控制，新安装默认关闭。安装会核对实际运行和自启状态；验收失败时恢复安装前文件与服务状态。只安装模式未做运行验收，成功提示会明确说明，之后可以手动启动或启用服务。
+启动计划应用于网关核心、订阅管理及设置服务。可选观测 API 受 `api.enabled` 控制，默认关闭；API 历史采集还受独立开关控制，关闭 API 时一并停止。旧配置未明确设置 `api.enabled=true` 时，升级会停止 API 及其采集并取消自启。自动更新也按配置开启。安装会核对实际运行和自启状态；验收失败时恢复安装前文件与服务状态。只安装模式未做运行验收，成功提示会明确说明。
 
 全新安装可传入 `--web-listen 0.0.0.0:8080 --dns-listen 192.0.2.10:53`；将文档示例地址替换为实际 LAN 地址。未指定时默认使用 `0.0.0.0:80` 和 `0.0.0.0:53`，启动前检查监听占用及网关保留网络资源。API 默认 `127.0.0.1:8788`，内部订阅/设置服务为 `127.0.0.1:8789/8790`。升级保留已有网卡和监听配置，不能借安装选项修改它们，日常修改请使用 Web 或配置管理命令。
 
@@ -33,14 +33,14 @@ sudo sh install.sh --interface eth0 --install-deps --yes
 ```sh
 sudo sh install.sh --interface ens18 --startup disabled --install-deps --yes
 # 稍后启动（仅本次运行）
-sudo systemctl start paopaogw paopaogw-api paopaogw-subscription paopaogw-settings
+sudo systemctl start paopaogw paopaogw-subscription paopaogw-settings
 # 或启动并设为开机自启
-sudo systemctl enable --now paopaogw paopaogw-api paopaogw-subscription paopaogw-settings
+sudo systemctl enable --now paopaogw paopaogw-subscription paopaogw-settings
 ```
 
 安装确认、帮助、完成提示、管理菜单与错误说明均使用中文；错误后保留稳定诊断码，批量管理 JSON 的字段名和状态值保持不变。apt/systemd 的系统原生输出由 Debian 的语言设置决定。
 
-日常管理使用[Web 网关设置与订阅策略](debian-web-settings.md)，脚本继续负责批量配置、安装升级、备份恢复和救援。Mihomo 在 Web 的“维护与 Lovest HomeNet”中单独安装、更新和回退。
+日常管理使用[Web 网关设置与订阅策略](debian-web-settings.md)，脚本继续负责批量配置、安装升级、备份恢复和救援。Mihomo 在 Web 的“维护与 API”中单独安装、更新和回退，使用它不要求开启观测 API。
 
 已安装系统可直接升级，无需手动停止服务：
 
@@ -88,7 +88,7 @@ sudo ppgw-admin config apply --file patch.json --yes
 | --- | --- |
 | ini | free/socks5/ovpn/yaml/suburl 五模式；DNS/FakeIP；UDP 配额；代理/管理 CIDR 与认证；上游/VPN/订阅；调度；统计；受限 box 设置 |
 | service | PPGW_INTERFACE、PPGW_IPV6、TZ、PPGW_WEB_LISTEN、PPGW_DNS_LISTEN；IPv6 同步兼容 network 标记 |
-| api | Lovest HomeNet listen、port、name、probe_urls（最多16个公共HTTP(S)地址） |
+| api | enabled（默认 false）、listen、port、name、probe_urls（最多16个公共HTTP(S)地址）、read_token（专用观测凭据） |
 | maintenance | 历史采集/保留天数、官方 Mihomo 自动更新、时区 |
 
 准确类型、范围和 `box` 白名单以 schema/校验结果为准。不支持 Cloudflared 或 Debian 禁用的 NIC/RPS 调优。更换模式/订阅源时，现存本地 PPsub/策略会触发冲突；确实要清除旧源时先备份，增加 `--reset-source`，其删除也参与失败回退。

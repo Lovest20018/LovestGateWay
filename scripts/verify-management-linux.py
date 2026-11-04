@@ -38,6 +38,7 @@ def main():
     def apply(patch, **kwargs): return manager.apply(patch, settings_revision(layout), **kwargs)
     ini = Path('/etc/paopaogw/files/ppgw.ini')
     def initial():
+        if not load_settings(layout)['api']['enabled']: apply({'api': {'enabled': True}})
         system.wait(load_settings(layout)); system.wait_api(load_settings(layout))
         result = subprocess.run(['runuser', '-u', 'paopaogw-api', '--', 'python3', '-c',
              "import sys;sys.path.insert(0,'/usr/local/lib/paopaogw');from gateway_api import CoreClient;from pathlib import Path;CoreClient(Path('/var/lib/paopaogw/core-token')).request('/sniffbox/info')"], capture_output=True)

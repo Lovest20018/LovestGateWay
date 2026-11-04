@@ -74,7 +74,7 @@ class StagedProbe:
                 path += '?' + target.query
             authority = host if target.port is None else f'{host}:{port}'
             request = (f'HEAD {path} HTTP/1.1\r\nHost: {authority}\r\n'
-                       'User-Agent: LovestGateWay-HNM/1\r\nConnection: close\r\n\r\n').encode('ascii')
+                       'User-Agent: LovestGateWay-Observer/1\r\nConnection: close\r\n\r\n').encode('ascii')
             stream.settimeout(remaining())
             stream.sendall(request)
             header = bytearray()

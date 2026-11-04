@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only collection independent of core and Lovest HomeNet lifetimes."""
+"""Read-only history collection for the optional observer API."""
 from pathlib import Path
 import json
 import time
@@ -8,11 +8,13 @@ from history_store import store
 
 
 def main():
+    api = json.loads(Path('/etc/paopaogw/api.json').read_bytes())
+    if api.get('enabled') is not True: return
     client = CoreClient(Path('/var/lib/paopaogw/core-token'))
     while True:
         try:
             config = json.loads(Path('/etc/paopaogw/maintenance.json').read_bytes())
-            if config.get('history_enabled', True):
+            if config.get('history_enabled', False):
                 info = client.request('/sniffbox/info')
                 boot = info['integration']['boot_id']
                 response = client.request('/sniffbox/evidence', {'resource': 'connections', 'limit': 200})

@@ -124,7 +124,7 @@ def main():
     write_new(config / 'instance-id', str(uuid.uuid4()) + '\n', 0o640)
     write_new(config / 'read-token', secrets.token_hex(32) + '\n', 0o640)
     write_new(config / 'revision-key', secrets.token_hex(32) + '\n', 0o600)
-    write_new(config / 'api.json', json.dumps({'listen': '127.0.0.1', 'port': 8788, 'probe_urls': []}, indent=2) + '\n', 0o640)
+    write_new(config / 'api.json', json.dumps({'enabled': False, 'listen': '127.0.0.1', 'port': 8788, 'probe_urls': []}, indent=2) + '\n', 0o640)
     write_new(config / 'service.env', 'PPGW_INTERFACE=\nPPGW_IPV6=no\n', 0o640)
     write_new(config / 'network', '# Debian: IPv6 disabled unless configured explicitly\n', 0o640)
     write_new(config / 'maintenance.json', json.dumps({'auto_update': False, 'history_enabled': False,

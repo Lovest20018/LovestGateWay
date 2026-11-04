@@ -67,6 +67,7 @@ class InstallWizardTests(unittest.TestCase):
         for key in ('openport', 'net_rec', 'udp_enable'): self.assertFalse(settings['ini'][key])
         self.assertFalse(settings['maintenance']['history_enabled']); self.assertFalse(settings['maintenance']['auto_update'])
         self.assertFalse(settings['service']['PPGW_IPV6'])
+        self.assertFalse(settings['api']['enabled'])
         self.assertEqual(len(settings['ini']['clash_web_password']), 8)
         self.assertNotIn(settings['ini']['clash_web_password'], result.stdout + result.stderr)
 
@@ -166,19 +167,35 @@ class StartupPlanTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 self.states.clear(); self.waits.clear()
                 result = self.apply(mode)
-                for unit in ('paopaogw', 'paopaogw-api', 'paopaogw-subscription', 'paopaogw-settings'):
+                for unit in ('paopaogw', 'paopaogw-subscription', 'paopaogw-settings'):
                     self.assertEqual(result['services'][unit], {'active': active, 'enabled': enabled})
-                for unit in ('paopaogw-observe', 'paopaogw-maintenance.timer'):
+                for unit in ('paopaogw-api', 'paopaogw-observe', 'paopaogw-maintenance.timer'):
                     self.assertEqual(result['services'][unit], {'active': False, 'enabled': False})
-                self.assertEqual(self.waits, ['core', 'api'] if active else [])
+                self.assertEqual(self.waits, ['core'] if active else [])
                 self.assertEqual(self.original['paopaogw'], {'active': False, 'enabled': True})
 
-    def test_upgrade_preserves_stopped_but_enabled_core_and_adds_worker(self):
+    def test_upgrade_preserves_core_and_disables_legacy_api_without_opt_in(self):
         result = self.apply(fresh=False)
         self.assertEqual(result['startup'], 'preserve')
         self.assertEqual(result['services']['paopaogw'], self.original['paopaogw'])
-        self.assertEqual(result['services']['paopaogw-api'], self.original['paopaogw-api'])
+        self.assertEqual(result['services']['paopaogw-api'], {'active': False, 'enabled': False})
+        self.assertEqual(result['services']['paopaogw-observe'], {'active': False, 'enabled': False})
         self.assertEqual(result['services']['paopaogw-settings'], {'active': False, 'enabled': True})
+
+    def test_upgrade_preserves_explicitly_opted_in_api_state(self):
+        self.candidates['etc/paopaogw/api.json'] = b'{"enabled":true}'
+        result = self.apply(fresh=False)
+        self.assertEqual(result['services']['paopaogw-api'], self.original['paopaogw-api'])
+        self.assertEqual(self.waits, ['api'])
+
+    def test_fresh_optional_api_obeys_startup_plan_only_after_opt_in(self):
+        self.candidates['etc/paopaogw/api.json'] = b'{"enabled":true}'
+        self.candidates['etc/paopaogw/maintenance.json'] = b'{"history_enabled":true,"auto_update":false}'
+        for mode, active, enabled in [('auto', True, True), ('manual', True, False), ('disabled', False, False)]:
+            with self.subTest(mode=mode):
+                result = self.apply(mode)
+                for unit in ('paopaogw-api', 'paopaogw-observe'):
+                    self.assertEqual(result['services'][unit], {'active': active, 'enabled': enabled})
 
     def test_failed_startup_verification_restores_original_service_states(self):
         self.system.verify_services = lambda _: (_ for _ in ()).throw(ManagementError('SERVICE_STATE_MISMATCH'))

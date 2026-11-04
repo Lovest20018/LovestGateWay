@@ -72,8 +72,14 @@ class ConfigManager:
             original = self.backups.index(backup)['files']
             journal = {'kind': 'config', 'phase': 'prepared', 'backup': backup, 'services': before,
                        'expected': {path: [None if raw is None else digest(raw), None if original[path] is None else original[path]['sha256']] for path, raw in updates.items()}}
-            if action == 'none' and set(changes) == {'api'}:
-                journal['restore_services'] = {unit: state for unit, state in before.items() if unit == 'paopaogw-api'}
+            if action == 'none' and set(changes) <= {'api', 'maintenance'}:
+                affected = set()
+                if changes.get('api'): affected.add('paopaogw-api')
+                maintenance = changes.get('maintenance', {})
+                if 'enabled' in changes.get('api', {}) or set(maintenance) & {'history_enabled', 'history_retention_days'}:
+                    affected.add('paopaogw-observe')
+                if 'auto_update' in maintenance: affected.add('paopaogw-maintenance.timer')
+                journal['restore_services'] = {unit: state for unit, state in before.items() if unit in affected}
             write_json(self.layout, JOURNAL, journal)
             try:
                 if hasattr(self.system, 'prepare'): self.system.prepare(action, before)

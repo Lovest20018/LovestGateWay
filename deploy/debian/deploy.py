@@ -122,7 +122,7 @@ def completion(layout, result):
         from manage_common import STARTUP_LABELS
         print('服务计划: ' + STARTUP_LABELS[result['startup']])
         if not result['services'].get('paopaogw', {}).get('active'):
-            print('网关尚未启动；需要时运行 sudo systemctl start paopaogw paopaogw-api paopaogw-subscription paopaogw-settings。')
+            print('网关尚未启动；需要时运行 sudo systemctl start paopaogw paopaogw-subscription paopaogw-settings。')
         host, port = settings['service']['PPGW_WEB_LISTEN'].rsplit(':', 1)
         if host in {'0.0.0.0', '[::]'}:
             found = dict(interfaces()).get(settings['service']['PPGW_INTERFACE'], '').split(', ')[0]
@@ -131,8 +131,9 @@ def completion(layout, result):
     print('管理菜单: sudo ppgw-admin')
     print('管理密码保存在 /etc/paopaogw/files/ppgw.ini 的 clash_web_password（仅管理员可读）；升级沿用原密码。')
     print('修改密码：Web 网关设置 → 访问与统计 → 修改管理密码。')
-    print('首次使用请在 Web 的“维护与 Lovest HomeNet”安装 Mihomo，再到“订阅与策略”配置来源。')
+    print('首次使用请在 Web 的“维护与 API”安装 Mihomo，再到“订阅与策略”配置来源。')
     print('全新安装采用直连模式；显式代理、UDP、统计、IPv6、历史采集和自动更新默认关闭，可在 Web 按需开启。')
+    print('对外观测 API: ' + ('已启用' if settings['api']['enabled'] else '已关闭；需要时在 Web“维护与 API”中开启'))
 
 
 def main(argv=None):
@@ -193,7 +194,7 @@ def main(argv=None):
         print('服务启动: ' + STARTUP_LABELS[args.startup])
         print('管理密码: ' + ('沿用原密码' if not fresh else '手动设置（不显示内容）' if initial_password is not None else '自动生成随机密码'))
         print('系统依赖: ' + ('通过 apt 更新索引并安装' if args.install_deps else '使用已安装依赖'))
-        if fresh: print('初始功能: 直连；代理、UDP、统计、IPv6、历史和自动更新关闭；HNM API 仅监听本机。')
+        if fresh: print('初始功能: 直连；代理、UDP、统计、IPv6、对外观测 API、历史和自动更新关闭。')
         if interactive and input('以上为待执行内容，输入 yes 或“是”确认安装: ').strip().lower() not in {'yes', '是'}:
             print('已取消安装。'); return 1
         if args.install_deps:

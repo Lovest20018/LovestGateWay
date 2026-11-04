@@ -26,13 +26,13 @@ FakeIP DNS 默认监听 `0.0.0.0:53`。与其他服务共用宿主时，可设�
 `free`、`socks5` 不需要 mihomo。`yaml`、`suburl` 模式先运行 `sudo python3 /usr/local/lib/paopaogw/mihomo_update.py install`，直接从 MetaCubeX/mihomo 官方 GitHub 稳定版下载 amd64-compatible 资产，验证官方 SHA256、ELF、版本和现有配置后安装。Geo 数据按规则需要放入 `/var/lib/paopaogw/clash/`，可用原生面板 Geo 更新入口维护。配置文件放 `/etc/paopaogw/files/custom.yaml` 或填订阅地址；依赖远端配置的模式需要目标可达。`ovpn` 的 openvpn/openssl 已列为安装依赖，配置和证书放同一 files 目录；优先使用内嵌证书的单个 .ovpn 文件。Cloudflared 已从 Debian 运行路径、API 和导航入口移除，旧 token 不再启用进程或 nft UID 规则。
 
 ```sh
-sudo systemctl enable --now paopaogw.service paopaogw-api.service paopaogw-subscription.service paopaogw-settings.service
-# 历史采集和自动更新按需在 Web 开启
-sudo systemctl status paopaogw.service paopaogw-api.service
+sudo systemctl enable --now paopaogw.service paopaogw-subscription.service paopaogw-settings.service
+# 对外观测 API、历史采集和自动更新按需在 Web 开启
+sudo systemctl status paopaogw.service paopaogw-settings.service
 sudo journalctl -u paopaogw.service --since '10 minutes ago'
 ```
 
-API 默认仅监听 `127.0.0.1:8788`。Lovest HomeNet 连接时，在 `/etc/paopaogw/api.json` 将 `listen` 改成专用管理网地址，并用已有防火墙仅允许 Lovest HomeNet 主机访问该端口；跨不可信网络使用 TLS 反向代理。把 `/etc/paopaogw/read-token` 作为 Lovest HomeNet observer 凭据，保留在服务端，不给 Lovest HomeNet 面板管理凭据。
+对外观测 API 默认关闭，不监听端口。确需接入通用观测客户端时，在“网关设置 → 维护与 API”开启，或通过脚本设置 `api.enabled=true`。默认监听配置为 `127.0.0.1:8788`；其他设备连接时将 `listen` 改成专用管理网地址，并限制允许访问的来源；跨不可信网络使用 TLS 反向代理。客户端使用 `/etc/paopaogw/read-token` 中的专用观测凭据，不能使用它修改网关配置。Web 管理和订阅功能不依赖这个 API。
 
 `probe_urls` 是管理员预配置的精确公开 HTTP(S) URL 列表，新安装为空；单次 HEAD、禁用重定向、最多 10 秒、并发 2。配置修改后重启 API 服务。无法强制地址族/固定本次 DNS 地址/指定节点，调用这些选项返回 unsupported。
 
@@ -44,7 +44,7 @@ API 默认仅监听 `127.0.0.1:8788`。Lovest HomeNet 连接时，在 `/etc/paop
 sudo systemctl enable --now paopaogw-subscription.service
 ```
 
-该服务仅监听 `127.0.0.1:8789`。面板经已认证的 `/sniffbox/subscription/config`、`status`、`apply` 固定路由读取和写入，浏览器不需要访问 8789 或再次输入密码。Lovest HomeNet observer Token 不能使用这些管理路由。
+该服务仅监听 `127.0.0.1:8789`。面板经已认证的 `/sniffbox/subscription/config`、`status`、`apply` 固定路由读取和写入，浏览器不需要访问 8789 或再次输入密码。观测 API Token 不能使用这些管理路由。
 
 原生 PPsub 和完整 Clash 配置在打开“订阅与策略”时自动读取，也可通过“重新读取”刷新；完成编辑后选择“保存并应用”。保存前比较配置版本；重启加载失败且配置未被外部修改时恢复原文件。原有 JSON 导入、导出功能保留。
 
@@ -56,7 +56,7 @@ sudo systemctl enable --now paopaogw-subscription.service
 
 发布时 `scripts/prepare_dashboard.py` 将设置、来源与 PPsub 编辑器接入统一路由，并增加读取、保存及草稿保护钩子；PPsub 导入和导出 JSON 继续可用。上游 bundle 的钩子位置变化会使打包失败，需人工核对；生成资源使用内容摘要文件名，避免旧缓存。
 
-更新时同时停止正在运行的 `paopaogw-subscription`，安装后再启动。该服务不属于 Lovest HomeNet observer API。
+更新时同时停止正在运行的 `paopaogw-subscription`，安装后再启动。该服务独立于可选观测 API。
 
 ## 与宿主隔离
 
@@ -68,13 +68,13 @@ Debian 模式按本服务的 cgroup 识别 sniffbox、mihomo 和 OpenVPN 进程�
 
 主路由的 FakeIP/真实地址段静态路由、DNS 转发以及终端实际访问需独立验收。本机代理探测通过不代表透明入口或终端路径通过。
 
-API 独立运行于 `paopaogw-api` 用户。停止 API/Lovest HomeNet 不重启核心；无 `Requires`、`BindsTo` 或自动维护接口。核心停止时 API 返回 `CORE_UNAVAILABLE`，不会尝试修复或重启。管理器通过核心专用 reload 路径更新访问 CIDR、认证、转发阈值和已开启的统计上限，检查 boot-id 保持及 revision 变化；该路径不重新加载 Mihomo。真实长连接保持需单独验收；版本与观测采样受同一配置锁保护。监听、出站模式、记录开关等需 `systemctl restart paopaogw`。持久历史独立存储，内存计数仍会随核心重启清零。不要直接编辑私有 /tmp 文件；持久输入始终位于 files/ppgw.ini。
+观测 API 独立运行于 `paopaogw-api` 用户。启停 API 不重启核心；无 `Requires`、`BindsTo` 或自动维护接口。核心停止时 API 返回 `CORE_UNAVAILABLE`，不会尝试修复或重启。管理器通过核心专用 reload 路径更新访问 CIDR、认证、转发阈值和已开启的统计上限，检查 boot-id 保持及 revision 变化；该路径不重新加载 Mihomo。真实长连接保持需单独验收；版本与观测采样受同一配置锁保护。监听、出站模式、记录开关等需 `systemctl restart paopaogw`。持久历史独立存储，内存计数仍会随核心重启清零。不要直接编辑私有 /tmp 文件；持久输入始终位于 files/ppgw.ini。
 
 ## 更新、克隆与卸载
 
-更新前备份 `/etc/paopaogw`、`/var/lib/paopaogw` 和原安装包，先停止维护 timer 和所有本项目服务，安装新包后启动。`install.py --root /临时目录` 可在 staging 目录验证安装，不触碰运行服务。新包不替换已有配置、Token、revision key、UUID 和运行数据；mihomo 单独维护。
+更新前备份 `/etc/paopaogw`、`/var/lib/paopaogw` 和原安装包，先停止维护 timer 和所有本项目服务，安装新包后启动。`install.py --root /临时目录` 可在 staging 目录验证安装，不触碰运行服务。新包不替换已有配置、Token、revision key、UUID 和运行数据；mihomo 单独维护。旧 API 配置没有 `enabled` 字段时按关闭处理；正常升级会停止 API 及其采集服务、取消自启，之后可在 Web 明确开启。
 
-普通重启保留 instance-id，核心每次启动生成 boot-id。克隆后先停止 API，在克隆机重新生成 `/etc/paopaogw/instance-id` 和 `read-token`，再启动并重新绑定 Lovest HomeNet；不要把克隆作为同一实例。
+普通重启保留 instance-id，核心每次启动生成 boot-id。克隆后先停止 API，在克隆机重新生成 `/etc/paopaogw/instance-id` 和 `read-token`，再按需启用 API 并更新观测客户端配置；不要把克隆作为同一实例。
 
 `sudo sh uninstall.sh` 停止/禁用本项目核心、API、订阅、设置、历史采集和维护服务、移除服务定义与项目程序。配置、身份、凭据和数据保留，便于恢复；固定 UID 用户也保留。其他服务及宿主网络配置不动。
 
@@ -83,13 +83,13 @@ API 独立运行于 `paopaogw-api` 用户。停止 API/Lovest HomeNet 不重启�
 
 ## 官方核心维护与冲突恢复
 
-`paopaogw-maintenance.timer` 启动后每天检查官方稳定版；新安装 maintenance.json 的 auto_update 默认 false。可在“网关设置 → 维护与 Lovest HomeNet”检查、在线更新和回退；订阅与策略编辑器负责配置编辑与保存应用。下载不经过第三方镜像；官方 digest 缺失、下载校验不符或配置校验失败时不替换。新核心加载失败自动恢复旧二进制，上一成功核心保留为 bin/clash.previous。首次安装核心也可执行上面的 install 命令。该维护权限独立于 Lovest HomeNet observer。
+`paopaogw-maintenance.timer` 启动后每天检查官方稳定版；新安装 maintenance.json 的 auto_update 默认 false。可在“网关设置 → 维护与 API”检查、在线更新和回退；订阅与策略编辑器负责配置编辑与保存应用。下载不经过第三方镜像；官方 digest 缺失、下载校验不符或配置校验失败时不替换。新核心加载失败自动恢复旧二进制，上一成功核心保留为 bin/clash.previous。首次安装核心也可执行上面的 install 命令。该维护权限独立于观测 API。
 
 每次订阅刷新都会校验最终配置，成功配置保存于 admin/clash.last-good.yaml。相同来源的无效候选继续使用最后成功版本；切换来源不会套用旧来源的备份。“恢复订阅原策略”备份本地覆盖后撤销并重新加载，失败时恢复覆盖。runtime API 单独提供源订阅、本地策略和最终配置摘要。
 
 所有服务调度使用 Asia/Shanghai。控制器日志写入 /var/lib/paopaogw/logs/controller.log，保留一个 1 MiB 轮转文件；启动屏页面读取本实例日志。URL 在展示和控制器日志中脱敏。核心输出仍通过 journalctl 查询。
 
-历史采集由 paopaogw-observe 独立运行，默认 30 天、最多 100000 条；Lovest HomeNet 通过 /api/v1/history 查询。mihomo 原生决策快照通过 /api/v1/mihomo/connections 查询。两者都有采样缺口，不能证明完整流量历史或远端 DNS。
+API 历史采集由 paopaogw-observe 独立运行，需同时开启 API 和历史采集开关，默认保留 30 天、最多 100000 条；客户端通过 /api/v1/history 查询。关闭 API 会停止采集并保留已有数据。Mihomo 原生决策快照通过 /api/v1/mihomo/connections 查询。两者都有采样缺口，不能证明完整流量历史或远端 DNS。
 
 升级服务顺序示例（先备份配置、状态和旧包）：
 
@@ -97,8 +97,8 @@ API 独立运行于 `paopaogw-api` 用户。停止 API/Lovest HomeNet 不重启�
 sudo systemctl stop paopaogw-maintenance.timer
 sudo systemctl stop paopaogw-maintenance paopaogw-core-action@check paopaogw-core-action@update paopaogw-core-action@rollback paopaogw-observe paopaogw-settings paopaogw-subscription paopaogw-api paopaogw
 sudo python3 install.py
-sudo systemctl enable --now paopaogw paopaogw-api paopaogw-subscription paopaogw-settings
-# 按更新前记录恢复历史采集与维护 timer 的启用状态
+sudo systemctl enable --now paopaogw paopaogw-subscription paopaogw-settings
+# 观测 API 和历史采集通过 Web 开关管理；按更新前记录恢复维护 timer 状态
 ```
 
 

@@ -14,7 +14,7 @@ from manage_model import load_settings, public_settings, render_updates, setting
 from manage_web import Handler
 
 
-class HomeNetSettingsTests(unittest.TestCase):
+class ObserverApiSettingsTests(unittest.TestCase):
     request = web_tests.WebSettingsTests.request
     job = web_tests.WebSettingsTests.job
 
@@ -25,6 +25,16 @@ class HomeNetSettingsTests(unittest.TestCase):
         self.api = self.layout.path('etc/paopaogw/api.json')
         self.api.write_text(json.dumps({'listen':'127.0.0.1','port':8788,'name':'Original'}))
         self.new_token = 'new-observer-' + 'b' * 40
+
+    def test_default_off_and_switch_preview_include_only_auxiliary_services(self):
+        self.assertFalse(load_settings(self.layout)['api']['enabled'])
+        preview = self.admin.preview(self.request({'api': {'enabled': True}}))
+        self.assertEqual(preview['effects']['core'], 'none')
+        self.assertEqual(preview['effects']['services'], ['api', 'history'])
+        self.assertEqual(preview['changes']['api']['enabled'], True)
+        for invalid in (1, None, 'on'):
+            with self.subTest(value=invalid), self.assertRaises(ManagementError):
+                render_updates(self.layout, {'api': {'enabled': invalid}})
 
     def test_token_redaction_blank_preservation_and_separate_file(self):
         self.assertEqual(public_settings(load_settings(self.layout))['api']['read_token'], '********')

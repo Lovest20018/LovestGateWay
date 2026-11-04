@@ -108,7 +108,7 @@ def menu(layout, system):
             if choice == '1': emit(status(layout, system))
             elif choice == '2': emit(manager.show())
             elif choice == '3':
-                print('配置分组: ini 网关/模式/DNS/认证；service 网卡/IPv6/监听；api Lovest HomeNet；maintenance 历史/自动更新')
+                print('配置分组: ini 网关/模式/DNS/认证；service 网卡/IPv6/监听；api 可选观测 API；maintenance 历史/自动更新')
                 namespace = input('分组: ').strip()
                 if namespace not in SCHEMA: raise ManagementError('UNKNOWN_NAMESPACE')
                 print('可设置字段: ' + ', '.join(SCHEMA[namespace]))
