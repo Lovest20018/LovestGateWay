@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Versioned, read-only HNM facade for the local sniffbox management API.
+"""Versioned, read-only Lovest HomeNet facade for the local sniffbox management API.
 
 Python 3.11+, standard library only. Never proxies a caller-selected API path.
 """

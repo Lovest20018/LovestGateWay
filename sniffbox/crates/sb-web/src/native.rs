@@ -25,6 +25,15 @@ pub async fn handle(
         return Ok(ka);
     }
     match req.path_only() {
+        path if path.starts_with("/sniffbox/settings/") => {
+            if std::env::var("PPGW_DEBIAN").as_deref() != Ok("1") {
+                respond::not_found(stream, ka).await?;
+            } else {
+                let token = cfg.token.load_full();
+                crate::settings::handle(stream, req, token.as_str(), ka, body).await?;
+            }
+            Ok(ka)
+        }
         path if path.starts_with("/sniffbox/subscription/") => {
             if std::env::var("PPGW_DEBIAN").as_deref() != Ok("1") {
                 respond::not_found(stream, ka).await?;
@@ -120,7 +129,17 @@ pub async fn handle(
             Ok(ka)
         }
         "/sniffbox/reload" => {
-            reload(stream, cfg, ka).await?;
+            reload(stream, cfg, ka, false).await?;
+            Ok(ka)
+        }
+        "/sniffbox/reload/core" => {
+            if std::env::var("PPGW_DEBIAN").as_deref() != Ok("1") {
+                respond::not_found(stream, ka).await?;
+            } else if req.method != "POST" || body != b"{}" {
+                respond::send(stream, 400, "Bad Request", &[], b"invalid request\n", ka).await?;
+            } else {
+                reload(stream, cfg, ka, true).await?;
+            }
             Ok(ka)
         }
         "/sniffbox/clash/up" => {
@@ -500,7 +519,7 @@ async fn info_get(
     .await
 }
 
-async fn reload(stream: &mut TcpStream, cfg: &ServerConfig, ka: bool) -> io::Result<()> {
+async fn reload(stream: &mut TcpStream, cfg: &ServerConfig, ka: bool, core_only: bool) -> io::Result<()> {
     let Some(argv) = cfg.reload_cmd.as_ref().filter(|a| !a.is_empty()) else {
 
         return respond::send(
@@ -531,7 +550,8 @@ async fn reload(stream: &mut TcpStream, cfg: &ServerConfig, ka: bool) -> io::Res
         .await;
     }
     let mut cmd = tokio::process::Command::new(&argv[0]);
-    cmd.args(&argv[1..])
+    let args = if core_only { vec!["reload-core".to_string()] } else { argv[1..].to_vec() };
+    cmd.args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

@@ -336,6 +336,7 @@ mod tests {
             proxies: Vec::new(),
             hosts: Default::default(),
             userinfo: None,
+            cached_at: None,
             raw_yaml: String::new(),
             error: String::new(),
         }

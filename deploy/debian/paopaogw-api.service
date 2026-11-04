@@ -1,5 +1,5 @@
 [Unit]
-Description=LovestGateWay HNM observer API
+Description=LovestGateWay Lovest HomeNet observer API
 After=network.target
 
 [Service]

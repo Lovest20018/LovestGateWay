@@ -284,8 +284,9 @@ def merge_editor(document, baseline, submitted):
     for group in result.get('proxy-groups', []):
         if 'proxies' in group:
             group['proxies'] = [group_renames.get(name, name) for name in group['proxies']]
-    result['rules'] = [rename_rule(line, group_renames) for line in result.get('rules', [])]
-    for index, line in enumerate(result['rules']):
+    if 'rules' in result:
+        result['rules'] = [rename_rule(line, group_renames) for line in result['rules']]
+    for index, line in enumerate(result.get('rules', [])):
         parts = line.split(',')
         if len(parts) > 1 and parts[0].strip().upper() == 'RULE-SET' and 'RULE-SET:' + parts[1].strip() in renames:
             parts[1] = renames['RULE-SET:' + parts[1].strip()]

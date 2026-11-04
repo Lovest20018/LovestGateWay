@@ -1,0 +1,21 @@
+<header class="page-head">
+  <h1 id="page-title" class="page-title">网关设置</h1>
+  <span id="mode-label" class="pill">连接中</span>
+  <span class="spacer"></span>
+  <button type="button" class="btn" id="reload">刷新配置</button>
+</header>
+<p id="page-description" class="page-description">按需配置网关，应用前查看生效方式与影响。</p>
+<div id="notice" role="status" aria-live="polite" hidden></div>
+<div id="draft-conflict" class="notice draft-conflict" role="status" hidden></div>
+<div id="reconnect" class="notice" hidden></div>
+<div id="content" aria-busy="true"><div class="card glass empty-state">正在读取网关配置…</div></div>
+<div id="policy-actions" hidden><button type="button" class="btn" id="reset-policy">恢复订阅原策略</button></div>
+<footer class="savebar glass" id="savebar" hidden>
+  <div><strong id="dirty-count">没有未保存的修改</strong><span id="save-hint">先预览生效方式，再确认应用。</span></div>
+  <div class="button-row"><button class="btn" id="discard">放弃修改</button><button class="btn btn-brand" id="preview">预览变更</button></div>
+</footer>
+<dialog id="preview-dialog" aria-labelledby="preview-title">
+  <div class="dialog-body"><h2 id="preview-title">预览应用结果</h2><div id="preview-content"></div>
+    <div class="button-row dialog-actions"><button class="btn" id="cancel-preview">返回修改</button><button class="btn btn-brand" id="apply">确认应用</button></div>
+  </div>
+</dialog>

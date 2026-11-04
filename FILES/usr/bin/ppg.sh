@@ -800,12 +800,6 @@ get_conf() {
             log "[Succ] Get ""$down_url" succ
             ppsub_output="/tmp/paopao_custom.yaml"
             ppsub_cpy="/tmp/ppgw.yaml.down"
-            if [ -f "$ppsub_output" ]; then
-                rm "$ppsub_output"
-            fi
-            if [ -f "$ppsub_cpy" ]; then
-                rm "$ppsub_cpy"
-            fi
             load_ini
             if [ "$dns_burn" != "no" ]; then
                 export dns_burn="yes"
@@ -813,8 +807,10 @@ get_conf() {
             fi
             export dns_ip="$dns_ip"
             export dns_port="$dns_port"
-            ppgw -ppsub "$file_down_tmp" -output "$ppsub_output" >"$PPGWTTY" 2>&1
-            if grep -q "proxies:" "$ppsub_output"; then
+            ppgw_cache_only=0
+            if { [ "$subtime" = "manual" ] || [ -n "${PPGW_SUB_CACHE_DIR:-}" ]; } && [ "${PPGW_SUB_REFRESH:-0}" != "1" ]; then ppgw_cache_only=1; fi
+            if PPGW_SUB_CACHE_ONLY=$ppgw_cache_only ppgw -ppsub "$file_down_tmp" -output "$ppsub_output" >"$PPGWTTY" 2>&1 &&
+                grep -q "proxies:" "$ppsub_output"; then
                 cp "$ppsub_output" "$ppsub_cpy"
                 return 0
             fi
@@ -1090,6 +1086,15 @@ if [ "${PPGW_DEBIAN:-0}" = "1" ]; then
     . /usr/local/lib/paopaogw/runtime.sh
 fi
 
+# The transactional manager has already restricted this request to safe fields.
+# Keep Mihomo, its loaded subscription and existing connections untouched.
+if [ "$1" = "reload-core" ] && [ "${PPGW_DEBIAN:-0}" = "1" ]; then
+    prepare_core_reload || exit 1
+    try_conf "ppgw.ini" "ini" || exit 1
+    hot_reload_box
+    exit $?
+fi
+
 if [ "$1" = "reload" ]; then
     log "Force reload gateway..." warn
     load_baseline
@@ -1186,6 +1191,11 @@ while true; do
         continue
     fi
     gen_hash_into
+    if [ "${PPGW_DEBIAN:-0}" = "1" ] && [ "$last_hash" != "empty" ]; then
+        accept_core_reload
+        core_reload_rc=$?
+        if [ "$core_reload_rc" = "2" ]; then sleep 1; continue; fi
+    fi
     log "[OLD PPGW HASH]: ""$last_hash"
     log "[NEW PPGW HASH]: ""$hash"
     if [ "$hash" != "$last_hash" ]; then
@@ -1405,6 +1415,14 @@ while true; do
     fi
     if [ "$mode" = "suburl" ]; then
         reload_env
+        # Debian native PPsub uses the serialized per-provider scheduler.
+        if [ -n "${PPGW_SUB_CACHE_DIR:-}" ] && is_ppsub_url "$suburl"; then
+            continue
+        fi
+        if [ "$subtime" = "manual" ]; then
+            log "[SUBTIME] manual updates only; keeping saved subscription nodes."
+            continue
+        fi
         read_hour_date
         case "$subcron" in [0-9] | 1[0-9] | 2[0-3]) subcron_ok=1 ;; *) subcron_ok=0 ;; esac
         if [ "$subcron_ok" = "1" ]; then

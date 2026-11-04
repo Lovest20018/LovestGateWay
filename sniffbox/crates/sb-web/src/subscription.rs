@@ -22,10 +22,10 @@ fn target(method: &str, path: &str) -> Option<&'static str> {
     }
 }
 
-async fn request(method: &str, target: &str, token: &str, body: &[u8]) -> io::Result<Vec<u8>> {
-    let mut upstream = TcpStream::connect("127.0.0.1:8789").await?;
+async fn request(method: &str, target: &str, token: &str, body: &[u8], port: u16) -> io::Result<Vec<u8>> {
+    let mut upstream = TcpStream::connect(("127.0.0.1", port)).await?;
     let head = format!(
-        "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:8789\r\nOrigin: http://127.0.0.1:8789\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     upstream.write_all(head.as_bytes()).await?;
@@ -48,7 +48,14 @@ pub(crate) async fn handle(
     let Some(path) = target(&req.method, &req.path) else {
         return respond::send(stream, 405, "Method Not Allowed", &[], b"", ka).await;
     };
-    let result = tokio::time::timeout(Duration::from_secs(12), request(&req.method, path, token, body)).await;
+    forward(stream, &req.method, path, token, ka, body, 8789).await
+}
+
+pub(crate) async fn forward(
+    stream: &mut TcpStream, method: &str, path: &str, token: &str,
+    ka: bool, body: &[u8], port: u16,
+) -> io::Result<()> {
+    let result = tokio::time::timeout(Duration::from_secs(12), request(method, path, token, body, port)).await;
     if let Ok(Ok(raw)) = result {
         if let Some(end) = raw.windows(4).position(|v| v == b"\r\n\r\n").map(|v| v + 4) {
             if let Ok(head) = http::parse_response(&raw[..end]) {

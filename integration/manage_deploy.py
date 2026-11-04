@@ -17,12 +17,12 @@ from manage_runtime import System
 from manage_config import JOURNAL
 
 LIB = {'runtime.sh', 'network.py', 'launch.py', 'test_profile.py', 'ppg.sh', 'nft.sh', 'gateway_api.py',
-       'staged_probe.py', 'subscription_admin.py', 'clash_ppsub.py', 'clash_policy.py', 'mihomo_update.py',
-       'maintenance.py', 'history_store.py', 'observe.py', 'base.yaml', 'build.json', 'bin/sniffbox',
+       'staged_probe.py', 'subscription_admin.py', 'unified_editor.py', 'clash_ppsub.py', 'clash_policy.py', 'mihomo_update.py',
+       'maintenance.py', 'mihomo_upload.py', 'history_store.py', 'observe.py', 'base.yaml', 'build.json', 'bin/sniffbox',
        'manage.py', 'manage_common.py', 'manage_model.py', 'manage_runtime.py', 'manage_config.py',
-       'manage_backup.py', 'manage_deploy.py', 'manage_assets.py', 'ppgw-admin'}
+       'manage_backup.py', 'manage_deploy.py', 'manage_assets.py', 'manage_web.py', 'manage_policy.py', 'manage_subscription.py', 'manage_subscription_schedule.py', 'ppgw-admin'}
 TOP = {'install.py', 'uninstall.sh', 'install.sh', 'deploy.py', 'LICENSE'}
-DOCS = {'debian-deployment.md', 'debian-management.md', 'integration-api-v1.md', 'openapi-v1.json'}
+DOCS = {'debian-deployment.md', 'debian-management.md', 'debian-web-settings.md', 'integration-api-v1.md', 'openapi-v1.json'}
 
 
 def allowed(name):
@@ -86,7 +86,7 @@ class Deployer:
                                     capture_output=True, timeout=120, **inherited)
         if result.returncode: raise ManagementError('INSTALLER_FAILED')
     @contextmanager
-    def candidate(self, package, fresh, interface):
+    def candidate(self, package, fresh, interface, web_listen=None, dns_listen=None, startup=None, initial_password=None):
         """Precompute generated credentials/defaults in a staging root, before live writes."""
         from manage_common import Layout, atomic_write
         from manage_model import render_updates
@@ -102,7 +102,12 @@ class Deployer:
             result = subprocess.run([os.sys.executable, '-B', str(package.path / 'install.py'), '--root', str(stage.root)], capture_output=True, timeout=120)
             if result.returncode: raise ManagementError('INSTALLER_PREFLIGHT_FAILED')
             if fresh:
-                updates, _ = render_updates(stage, {'service': {'PPGW_INTERFACE': interface}})
+                service = {'PPGW_INTERFACE': interface}
+                if web_listen is not None: service['PPGW_WEB_LISTEN'] = web_listen
+                if dns_listen is not None: service['PPGW_DNS_LISTEN'] = dns_listen
+                patch = {'service': service}
+                if initial_password is not None: patch['ini'] = {'clash_web_password': initial_password}
+                updates, _ = render_updates(stage, patch)
                 for path, raw in updates.items(): atomic_write(stage, path, raw)
             candidates = {}
             for name in package.manifest:
@@ -117,20 +122,33 @@ class Deployer:
                     if source.is_file(): candidates[source.relative_to(stage.root).as_posix()] = source.read_bytes()
             hosts = stage.path('var/lib/paopaogw/hosts')
             if hosts.exists() and not self.layout.path('var/lib/paopaogw/hosts').exists(): candidates['var/lib/paopaogw/hosts'] = hosts.read_bytes()
-            if self.layout.live: self.system.preflight(load_settings(stage))
+            if self.layout.live:
+                self.system.preflight(load_settings(stage))
+                if fresh and startup != 'disabled': self.system.preflight_listeners(load_settings(stage))
             yield candidates
-    def deploy(self, archive, sha256, interface=None):
+    def deploy(self, archive, sha256, interface=None, startup=None, web_listen=None, dns_listen=None, initial_password=None):
         with verify_package(archive, sha256) as package, operation_lock(self.layout):
             current = read_bytes(self.layout, JOURNAL)
             if current and json.loads(current)['phase'] not in {'complete', 'rolled_back'}: raise ManagementError('RECOVERY_REQUIRED')
             fresh = not any(self.layout.path('etc/paopaogw/' + p).exists() for p in ('files/ppgw.ini', 'instance-id'))
             if fresh and not interface: raise ManagementError('FIRST_INSTALL_INTERFACE_REQUIRED')
-            with self.candidate(package, fresh, interface) as candidates:
-                return self._apply(package, candidates, fresh)
+            if startup not in {None, 'auto', 'manual', 'disabled', 'preserve'}: raise ManagementError('INVALID_STARTUP')
+            if fresh and startup == 'preserve': raise ManagementError('FRESH_STARTUP_REQUIRED')
+            if not fresh and (interface is not None or web_listen is not None or dns_listen is not None or initial_password is not None):
+                raise ManagementError('FRESH_OPTIONS_ON_UPGRADE')
+            if initial_password is not None:
+                from manage_model import validate
+                validate('ini', 'clash_web_password', initial_password)
+                if len(initial_password) < 8: raise ManagementError('DASHBOARD_PASSWORD_TOO_SHORT')
+            startup = startup or ('auto' if fresh else 'preserve')
+            if hasattr(self.system, 'install_preflight'): self.system.install_preflight()
+            with self.candidate(package, fresh, interface, web_listen, dns_listen, startup, initial_password) as candidates:
+                return self._apply(package, candidates, fresh, startup)
 
-    def _apply(self, package, candidates, fresh):
+    def _apply(self, package, candidates, fresh, startup=None):
             from manage_common import atomic_write
             before = self.system.status()
+            had_settings_service = self.layout.path('etc/systemd/system/paopaogw-settings.service').exists()
             # All new files are included as absent records so rollback removes a partial install.
             paths = set(self.store.paths()) | set(candidates)
             # Persist rollback intent before stopping services. Snapshot after stop for SQLite consistency.
@@ -157,16 +175,26 @@ class Deployer:
                 for path, raw in candidates.items():
                     actual = read_bytes(self.layout, path, limit=512*1024*1024)
                     if actual is None or digest(actual) != digest(raw): raise ManagementError('INSTALLED_FILE_MISMATCH')
-                if fresh:
-                    before = {unit: dict(state) for unit,state in before.items()}
-                    if self.layout.live:
-                        for unit in ('paopaogw', 'paopaogw-api', 'paopaogw-subscription', 'paopaogw-observe', 'paopaogw-maintenance.timer'):
-                            before[unit] = {'active': True, 'enabled': True}
-                self.system.restore_services(before)
-                if before.get('paopaogw', {}).get('active'): self.system.wait(load_settings(self.layout))
-                if before.get('paopaogw-api', {}).get('active') and hasattr(self.system, 'wait_api'): self.system.wait_api(load_settings(self.layout))
+                startup = startup or ('auto' if fresh else 'preserve')
+                desired = {unit: dict(state) for unit, state in before.items()}
+                primary = ('paopaogw', 'paopaogw-api', 'paopaogw-subscription', 'paopaogw-settings')
+                if startup != 'preserve':
+                    active, enabled = startup != 'disabled', startup == 'auto'
+                    for unit in primary: desired[unit] = {'active': active, 'enabled': enabled}
+                    maintenance = load_settings(self.layout)['maintenance']
+                    for unit, selected in (('paopaogw-observe', maintenance['history_enabled']),
+                                           ('paopaogw-maintenance.timer', maintenance['auto_update'])):
+                        desired[unit] = {'active': active and selected, 'enabled': enabled and selected}
+                elif not had_settings_service:
+                    core = before.get('paopaogw', {})
+                    desired['paopaogw-settings'] = {'active': core.get('active', False), 'enabled': core.get('enabled', False)}
+                self.system.restore_services(desired)
+                if desired.get('paopaogw', {}).get('active'): self.system.wait(load_settings(self.layout))
+                if desired.get('paopaogw-api', {}).get('active') and hasattr(self.system, 'wait_api'): self.system.wait_api(load_settings(self.layout))
+                if hasattr(self.system, 'verify_services'): self.system.verify_services(desired)
                 journal['phase'] = 'complete'; write_json(self.layout, JOURNAL, journal)
-                return {'status': 'installed' if fresh else 'upgraded', 'backup': backup, 'version': package.build['version']}
+                return {'status': 'installed' if fresh else 'upgraded', 'backup': backup, 'version': package.build['version'],
+                        'startup': startup, 'services': desired, 'runtime_verified': bool(self.layout.live and desired.get('paopaogw', {}).get('active'))}
             except Exception:
                 self.recover()
                 raise ManagementError('DEPLOY_FAILED_ROLLED_BACK') from None

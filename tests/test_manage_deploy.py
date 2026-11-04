@@ -10,9 +10,10 @@ import tarfile
 import tempfile
 import unittest
 import time
+from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from manage_common import Layout, ManagementError
+from manage_common import Layout, ManagementError, operation_lock, atomic_write
 from manage_deploy import verify_package, Deployer
 from test_manage_config import FakeSystem
 
@@ -73,6 +74,24 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(config.read_text(), 'external-id')
         journal = json.loads(layout.path('var/lib/paopaogw/admin/transaction.json').read_bytes())
         self.assertEqual(journal['phase'], 'conflict')
+
+    def test_upgrade_starts_new_settings_worker_and_keeps_existing_service_choices(self):
+        layout = Layout(self.base / 'root'); system = FakeSystem()
+        system.states.update({'paopaogw-observe': {'active': False, 'enabled': False},
+                              'paopaogw-maintenance.timer': {'active': True, 'enabled': True}})
+        system.stop_all = lambda: None; system.wait = lambda *args: None
+        restored = []
+        system.restore_services = lambda states: restored.append(states)
+        candidates = {'etc/systemd/system/paopaogw-settings.service': b'fixture unit',
+                      'usr/local/lib/paopaogw/manage_web.py': b'fixture worker'}
+        def install(package):
+            for name, raw in candidates.items(): atomic_write(layout, name, raw)
+        deployer = Deployer(layout, system, installer=install)
+        with operation_lock(layout):
+            self.assertEqual(deployer._apply(SimpleNamespace(build={'version': 'fixture'}), candidates, False)['status'], 'upgraded')
+        self.assertEqual(restored[-1]['paopaogw-settings'], {'active': True, 'enabled': False})
+        self.assertEqual(restored[-1]['paopaogw-observe'], system.states['paopaogw-observe'])
+        self.assertEqual(restored[-1]['paopaogw-maintenance.timer'], system.states['paopaogw-maintenance.timer'])
 
     @unittest.skipUnless(os.name == 'posix', 'Debian installer FD inheritance requires POSIX')
     def test_orphan_installer_blocks_recovery_until_its_last_write(self):

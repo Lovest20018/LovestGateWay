@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only collection independent of core and HNM lifetimes."""
+"""Read-only collection independent of core and Lovest HomeNet lifetimes."""
 from pathlib import Path
 import json
 import time

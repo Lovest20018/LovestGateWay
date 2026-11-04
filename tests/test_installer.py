@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / 'integration'))
 
 
 class InstallerTests(unittest.TestCase):
@@ -14,10 +15,17 @@ class InstallerTests(unittest.TestCase):
             work = Path(temporary)
             binary = work / 'sniffbox'
             # Staging only: not claimed as executable validation.
-            binary.write_bytes(b'\x7fELF\x02' + bytes(13) + b'\x3e\x00' + bytes(12))
+            binary.write_bytes(b'\x7fELF\x02\x01' + bytes(12) + b'\x3e\x00' + bytes(12))
             subprocess.run([sys.executable, str(ROOT / 'scripts/package-debian.py'),
                 '--binary', str(binary), '--version', 'test', '--commit', 'a' * 40,
                 '--source-sha256', 'b' * 64, '--arch', 'amd64', '--output', str(work)], check=True, capture_output=True)
+            from manage_deploy import verify_package
+            archive_path = work / 'lovestgateway-test-debian-amd64.tar.gz'
+            import hashlib
+            with verify_package(archive_path, hashlib.sha256(archive_path.read_bytes()).hexdigest()) as verified:
+                for name in ('lib/manage_web.py', 'lib/manage_policy.py', 'lib/manage_subscription.py', 'lib/manage_subscription_schedule.py', 'units/paopaogw-settings.service',
+                             'ui/gateway.html', 'docs/debian-web-settings.md'):
+                    self.assertIn(name, verified.manifest)
             with tarfile.open(work / 'lovestgateway-test-debian-amd64.tar.gz') as archive:
                 for name in ('lib/bin/sniffbox', 'lib/network.py', 'lib/ppg.sh', 'uninstall.sh', 'install.py'):
                     self.assertEqual(archive.getmember('lovestgateway-test-debian-amd64/' + name).mode, 0o755)
@@ -41,11 +49,14 @@ class InstallerTests(unittest.TestCase):
             token = (stage / 'etc/paopaogw/read-token').read_text()
             config = stage / 'etc/paopaogw/files/ppgw.ini'
             defaults = config.read_text()
-            for key in ('openport', 'udp_enable', 'net_rec', 'dns_burn'):
-                self.assertIn(key + '="yes"', defaults)
+            for key in ('openport', 'udp_enable', 'net_rec'):
+                self.assertIn(key + '=no', defaults)
             self.assertIn('proxy_cidr="127.0.0.0/8,10.0.0.0/8', defaults)
-            self.assertIn('openport_auth="ppgw:', defaults)
-            self.assertIn('PPGW_IPV6="yes"', (stage / 'etc/paopaogw/service.env').read_text())
+            self.assertIn('admin_cidr="127.0.0.0/8,10.0.0.0/8', defaults)
+            self.assertNotIn('openport_auth="ppgw:', defaults)
+            self.assertIn('PPGW_IPV6=no', (stage / 'etc/paopaogw/service.env').read_text())
+            maintenance = __import__('json').loads((stage / 'etc/paopaogw/maintenance.json').read_text())
+            self.assertFalse(maintenance['auto_update']); self.assertFalse(maintenance['history_enabled'])
             config.write_text(config.read_text() + 'net_cleanday=15\n')
             state = stage / 'var/lib/paopaogw/clash/retained.json'
             state.write_text('{"keep":true}')

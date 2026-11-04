@@ -1,0 +1,18 @@
+[Unit]
+Description=LovestGateWay settings and policy transactions
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -B /usr/local/lib/paopaogw/manage_web.py
+Environment=TZ=UTC
+Restart=on-failure
+RestartSec=3
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/paopaogw /var/lib/paopaogw /var/backups/paopaogw
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

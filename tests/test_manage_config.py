@@ -43,6 +43,25 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(self.system.calls, ['reload'])
         self.apply({'ini': {'udp_enable': True}})
         self.assertEqual(self.system.calls[-1], 'restart')
+    def test_credentials_reload_but_quic_firewall_changes_restart(self):
+        self.assertEqual(self.apply({'ini': {'clash_web_password': 'changed-private-password'}}, dry_run=True)['action'], 'reload')
+        self.assertEqual(self.apply({'ini': {'openport_auth': 'alice:private-password'}}, dry_run=True)['action'], 'reload')
+        self.assertEqual(self.apply({'ini': {'box': 'route.block_quic=false'}}, dry_run=True)['action'], 'restart')
+
+    def test_reload_fence_precedes_persistent_write_and_failure_recovers(self):
+        prepared = []
+        def prepare(action, before):
+            self.assertEqual(action, 'reload')
+            self.assertEqual(self.ini.read_bytes(), self.original)
+            self.assertEqual(self.manager.journal()['phase'], 'prepared')
+            prepared.append(True)
+        self.system.prepare = prepare
+        self.system.fail = True
+        with self.assertRaisesRegex(ManagementError, 'APPLY_FAILED_ROLLED_BACK'):
+            self.apply({'ini': {'max_rec': 9}})
+        self.assertEqual(prepared, [True])
+        self.assertEqual(self.ini.read_bytes(), self.original)
+        self.assertEqual(self.manager.journal()['phase'], 'rolled_back')
     def test_failed_health_restores_original_and_records_journal(self):
         self.system.fail = True
         with self.assertRaises(ManagementError): self.apply({'ini': {'max_rec': 9}})

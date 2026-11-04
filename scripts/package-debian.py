@@ -54,10 +54,12 @@ def main():
         copy(ROOT / 'integration/gateway_api.py', 'lib/gateway_api.py')
         copy(ROOT / 'integration/staged_probe.py', 'lib/staged_probe.py')
         copy(ROOT / 'integration/subscription_admin.py', 'lib/subscription_admin.py')
+        copy(ROOT / 'integration/unified_editor.py', 'lib/unified_editor.py')
         copy(ROOT / 'integration/clash_ppsub.py', 'lib/clash_ppsub.py')
         copy(ROOT / 'integration/clash_policy.py', 'lib/clash_policy.py')
         copy(ROOT / 'integration/mihomo_update.py', 'lib/mihomo_update.py', True)
         copy(ROOT / 'integration/maintenance.py', 'lib/maintenance.py', True)
+        copy(ROOT / 'integration/mihomo_upload.py', 'lib/mihomo_upload.py')
         copy(ROOT / 'integration/history_store.py', 'lib/history_store.py')
         copy(ROOT / 'integration/observe.py', 'lib/observe.py')
         copy(ROOT / 'FILES/etc/config/clash/base.yaml', 'lib/base.yaml')
@@ -67,7 +69,7 @@ def main():
         prepare_dashboard(stage / 'ui')
         for filename in ('LICENSE',):
             copy(ROOT / filename, filename)
-        for filename in ('debian-deployment.md', 'debian-management.md', 'integration-api-v1.md', 'openapi-v1.json'):
+        for filename in ('debian-deployment.md', 'debian-management.md', 'debian-web-settings.md', 'integration-api-v1.md', 'openapi-v1.json'):
             copy(ROOT / 'docs' / filename, 'docs/' + filename)
         (stage / 'lib/build.json').write_text(json.dumps({'version': args.version,
             'build_commit': args.commit, 'source_sha256': args.source_sha256,
