@@ -4,6 +4,8 @@
 Requires root and --run. Preserves saved configuration, proxy selections and foreign
 firewall rules. Documentation addresses prove local transport, not public IPv6 or
 QUIC protocol compatibility. A real subscription HTTPS case runs before the fixture.
+--fixture-only requires a marked disposable gateway, permits local YAML, and skips
+public HTTPS. Its synthetic results do not establish production business access.
 """
 import argparse
 import copy
@@ -110,10 +112,14 @@ print(json.dumps(out))
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run', action='store_true')
+    parser.add_argument('--fixture-only', action='store_true',
+                        help='require a marked disposable fixture; skip public HTTPS and allow local YAML')
     parser.add_argument('--report', type=Path, required=True)
     args = parser.parse_args()
     if not args.run or os.geteuid() != 0:
         parser.error('requires root and explicit --run')
+    if args.fixture_only and not Path('/run/management-validation-only').is_file():
+        parser.error('--fixture-only requires a marked disposable fixture')
     sys.path.insert(0, '/usr/local/lib/paopaogw')
     import yaml
     from manage_common import Layout, operation_lock
@@ -122,7 +128,8 @@ def main():
     from gateway_api import CoreClient
     layout = Layout()
     settings = load_settings(layout)
-    assert settings['ini']['mode'] == 'suburl' and settings['ini']['udp_enable']
+    allowed_modes = {'suburl', 'yaml'} if args.fixture_only else {'suburl'}
+    assert settings['ini']['mode'] in allowed_modes and settings['ini']['udp_enable']
     assert settings['service']['PPGW_IPV6'] is True
     existing_ns = run('ip', 'netns', 'list').stdout.splitlines()
     assert not any(line.split()[0] in {CLIENT, TARGET} for line in existing_ns)
@@ -136,8 +143,10 @@ def main():
                 continue
             existing = ipaddress.ip_network(route['dst'], strict=False)
             assert not any(existing.overlaps(ipaddress.ip_network(network)) for network in networks), 'Fixture subnet is already in use'
-    report = {'environment': 'native gateway with disposable netns clients', 'checks': {},
-              'coverage': 'real subscription HTTPS; local IPv4/IPv6 TCP and UDP echo, including UDP/443; not public IPv6 or full QUIC'}
+    report = {'environment': 'marked disposable gateway fixture' if args.fixture_only else 'native gateway with disposable netns clients',
+              'synthetic_only': args.fixture_only, 'checks': {},
+              'coverage': ('local FakeIP DNS; local IPv4/IPv6 TCP and UDP echo, including UDP/443; no public traffic' if args.fixture_only else
+                           'real subscription HTTPS; local IPv4/IPv6 TCP and UDP echo, including UDP/443; not public IPv6 or full QUIC')}
     with operation_lock(layout), tempfile.TemporaryDirectory(prefix='ppgw-native-') as temporary:
         system = System(layout)
         before = system.wait(settings)
@@ -203,11 +212,13 @@ def main():
             answers = json.loads(run('ip', 'netns', 'exec', CLIENT, 'python3', '-c', DNS, dns_address, dns_port).stdout)
             fake = answers[0]
             assert ipaddress.ip_address(fake) in ipaddress.ip_network(settings['ini']['fake_cidr'] or '7.0.0.0/8')
-            result = run('ip', 'netns', 'exec', CLIENT, 'curl', '--noproxy', '*', '--silent', '--show-error',
-                         '--max-time', '20', '--resolve', 'example.com:443:' + fake, '--output', '/dev/null',
-                         '--write-out', '%{http_code}', 'https://example.com/')
-            assert result.stdout == '200'
-            report['checks']['real_subscription_fakeip_https'] = {'http_status': 200, 'fakeip': fake}
+            report['checks']['fakeip_dns'] = {'fakeip': fake}
+            if not args.fixture_only:
+                result = run('ip', 'netns', 'exec', CLIENT, 'curl', '--noproxy', '*', '--silent', '--show-error',
+                             '--max-time', '20', '--resolve', 'example.com:443:' + fake, '--output', '/dev/null',
+                             '--write-out', '%{http_code}', 'https://example.com/')
+                assert result.stdout == '200'
+                report['checks']['real_subscription_fakeip_https'] = {'http_status': 200, 'fakeip': fake}
             # Use documentation targets and a temporary DIRECT rule for transport proof.
             config = yaml.safe_load((private_tmp / 'clash.yaml').read_text())
             config['mode'] = 'rule'
