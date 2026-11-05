@@ -88,6 +88,7 @@ class BackupStore:
                     actual = None if raw is None else digest(raw)
                     if actual not in allowed: raise ManagementError('EXTERNAL_CONFIG_CONFLICT')
             for path, record in value['files'].items():
+                if generated(path): continue  # old snapshots may contain disposable bytecode
                 target = self.layout.path(path)
                 if record is None: target.unlink(missing_ok=True); continue
                 raw = read_bytes(self.layout, f'{self.base}/{identifier}/data/{record["data"]}', limit=512 * 1024 * 1024)

@@ -11,7 +11,9 @@ RestartSec=3
 PrivateTmp=yes
 ProtectHome=yes
 ProtectSystem=strict
-ReadWritePaths=/etc/paopaogw /var/lib/paopaogw /var/backups/paopaogw
+# Full restore atomically replaces only BackupStore's fixed managed files.
+# Replacing a file needs its parent writable, including the admin entry and units.
+ReadWritePaths=/etc/paopaogw /var/lib/paopaogw /var/backups/paopaogw /usr/local/lib/paopaogw /usr/local/bin /etc/systemd/system
 UMask=0077
 
 [Install]

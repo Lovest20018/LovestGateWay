@@ -23,12 +23,13 @@ export async function build(output=join(here,'dist')) {
   await emit('theme.css',styles);
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
   for(const name of ['model.js','auth.js'])await emit(name,await textFile(join(here,'src',name)));
-  for(const name of ['editor.js','shell.js']) {
+  for(const name of ['editor.js','diagnostics.js','shell.js']) {
     let source=await textFile(join(here,'src',name));
     for(const [label,hashed] of Object.entries(assets)) source=source.replaceAll('./'+label,'./'+hashed);
     await emit(name,source);
   }
   await emit('shell.css',await textFile(join(here,'src/shell.css')));
+  await emit('diagnostics.css',await textFile(join(here,'src/diagnostics.css')));
   await emit('legacy-bridge.js',await textFile(join(here,'src/legacy-bridge.js')));
   await writeFile(join(output,'legacy.html'),html.replace('</head>',`<script defer src="/ui/${assets['legacy-bridge.js']}"></script></head>`));
   let index=await textFile(join(here,'src/index.html'));

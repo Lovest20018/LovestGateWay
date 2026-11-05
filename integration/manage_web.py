@@ -4,18 +4,21 @@ from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
+import os
 from pathlib import Path
 import re
+import secrets
 import tempfile
 import threading
 import time
-from manage_common import Layout, ManagementError, read_bytes, write_json
+from manage_common import Layout, ManagementError, read_bytes, write_json, operation_lock
 from manage_config import ConfigManager
 from manage_model import SCHEMA, SECRET_KEYS, load_settings, settings_revision, RevisionSample
 from manage_runtime import System
 from manage_assets import import_asset
 from manage_policy import PolicyManager
 from manage_preview import effects, complete_preview, source_details, native_summary
+from manage_diagnostics import Diagnostics, public_code
 
 JOBS = 'var/lib/paopaogw/admin/web-jobs/'
 IDENTIFIER = re.compile(r'^[0-9a-f]{32}$')
@@ -50,6 +53,7 @@ class SettingsAdmin:
         self.system = system or System(self.layout, preserve_units={'paopaogw-settings'})
         self.manager = ConfigManager(self.layout, self.system)
         self.policy = PolicyManager(self.layout, self.system, policy_reader)
+        self.diagnostics = Diagnostics(self.layout, self.system)
         self.lock = threading.Lock()
         self.active = None
         self.revision_sample = RevisionSample()
@@ -170,32 +174,64 @@ class SettingsAdmin:
         if raw is None: raise ManagementError('JOB_NOT_FOUND')
         value = json.loads(raw)
         value.pop('request_digest', None)
+        value.pop('request_key_version', None)
         from manage_operations import public
         contract = public(value)
         value.update({key: contract[key] for key in ('phase', 'recovery')})
         value['operation_result'] = contract['result']
         return value
 
+    def request_key(self):
+        """Restoring historical credentials must not break durable job retries."""
+        relative = 'var/lib/paopaogw/admin/job-request-key'
+        key = read_bytes(self.layout, relative)
+        # Established keys are immutable. Idempotent retries must keep working
+        # while their original transaction holds the management lock.
+        if key is not None and len(key) == 32: return key
+        with operation_lock(self.layout):
+            key = read_bytes(self.layout, relative)
+            if not key:
+                if not read_bytes(self.layout, 'etc/paopaogw/revision-key'): raise ManagementError('REVISION_KEY_REQUIRED')
+                key = secrets.token_bytes(32)
+                # Incomplete first publication falls through the lock above;
+                # exclusive creation refuses to replace externally created keys.
+                path = self.layout.path(relative)
+                try:
+                    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                except FileExistsError:
+                    raise ManagementError('JOB_REQUEST_KEY_INVALID') from None
+                with os.fdopen(fd, 'wb') as stream:
+                    stream.write(key); stream.flush(); os.fsync(stream.fileno())
+            if len(key) != 32: raise ManagementError('JOB_REQUEST_KEY_INVALID')
+            return key
+
     def submit(self, body):
         if (not isinstance(body, dict) or set(body) != {'id', 'kind', 'payload'}
                 or not isinstance(body['id'], str) or not IDENTIFIER.fullmatch(body['id'])
-                or body['kind'] not in {'config', 'policy', 'policy_reset', 'asset'}):
+                or not isinstance(body['kind'], str)
+                or body['kind'] not in {'config', 'policy', 'policy_reset', 'asset', 'backup', 'restore', 'recover'}):
             raise ManagementError('INVALID_JOB_REQUEST')
         body = deepcopy(body)
         # A keyed digest detects accidental ID reuse without persisting request credentials.
-        key = read_bytes(self.layout, 'etc/paopaogw/revision-key')
-        if not key: raise ManagementError('REVISION_KEY_REQUIRED')
-        digest = hmac.new(key, json.dumps(body, sort_keys=True, ensure_ascii=False).encode(), 'sha256').hexdigest()
+        encoded = json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
         identifier = body['id']; relative = JOBS + identifier + '.json'
         with self.lock:
             previous = read_bytes(self.layout, relative)
             if previous:
-                if json.loads(previous).get('request_digest') != digest: raise ManagementError('JOB_ID_REUSED')
+                value = json.loads(previous)
+                key = self.request_key() if value.get('request_key_version') == 1 else read_bytes(self.layout, 'etc/paopaogw/revision-key')
+                if not key: raise ManagementError('REVISION_KEY_REQUIRED')
+                digest = hmac.new(key, encoded, 'sha256').hexdigest()
+                if value.get('request_digest') != digest: raise ManagementError('JOB_ID_REUSED')
                 return self.job(identifier)
             if self.active: raise ManagementError('MANAGEMENT_BUSY')
             if body['kind'] == 'config': envelope(body['payload'])
+            if body['kind'] == 'backup' and body['payload'] != {}: raise ManagementError('INVALID_RECOVERY_REQUEST')
+            if body['kind'] in {'restore', 'recover'}:
+                with operation_lock(self.layout): self.diagnostics.validate_execution(body['kind'], body['payload'])
+            digest = hmac.new(self.request_key(), encoded, 'sha256').hexdigest()
             value = {'id': identifier, 'kind': body['kind'], 'status': 'queued',
-                     'stage': 'queued', 'created_at': time.time(), 'request_digest': digest}
+                     'stage': 'queued', 'created_at': time.time(), 'request_digest': digest, 'request_key_version': 1}
             from manage_operations import execution
             value['execution'] = execution('paopaogw-settings.service')
             write_json(self.layout, relative, value)
@@ -218,12 +254,16 @@ class SettingsAdmin:
             value.update(status='running', started_at=time.time())
             progress('validating')
             self.manager.progress = progress
+            self.diagnostics.progress = progress
             payload = body['payload']
             if body['kind'] == 'config':
                 patch, revision, reset, restart = envelope(payload)
                 result = self.manager.apply(patch, revision, reset_source=reset, restart=restart, **source_options(payload))
             elif body['kind'] == 'policy': result = self.policy.apply(payload)
             elif body['kind'] == 'policy_reset': result = self.policy.reset(payload)
+            elif body['kind'] == 'backup': result = self.diagnostics.execute_backup(payload)
+            elif body['kind'] == 'restore': result = self.diagnostics.execute_restore(payload)
+            elif body['kind'] == 'recover': result = self.diagnostics.execute_recover(payload)
             else:
                 if (not isinstance(payload, dict) or set(payload) != {'type', 'name', 'content', 'overwrite'}
                         or not isinstance(payload['content'], str) or len(payload['content'].encode()) > 1024*1024
@@ -235,7 +275,8 @@ class SettingsAdmin:
                     result = import_asset(self.layout, source, payload['type'], payload['name'], payload['overwrite'])
             value.update(status='succeeded', result=result)
         except Exception as error:
-            value.update(status='failed', error=public_error(error))
+            code = public_error(error)
+            value.update(status='failed', error=public_code(code) if body['kind'] in {'backup', 'restore', 'recover'} else code)
         finally:
             value['finished_at'] = time.time()
             value['stage'] = 'complete'
@@ -246,6 +287,7 @@ class SettingsAdmin:
             write_json(self.layout, relative, value)
             record(self.layout, 'settings', value)
             self.manager.progress = lambda stage: None
+            self.diagnostics.progress = lambda stage: None
             with self.lock: self.active = None
 
 
@@ -268,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/config': value = self.server.admin.show()
             elif self.path == '/api/status': value = self.server.admin.status()
             elif self.path == '/api/policy': value = self.server.admin.policy.show()
+            elif self.path == '/api/diagnostics': value = self.server.admin.diagnostics.report()
+            elif self.path == '/api/backups': value = self.server.admin.diagnostics.backups({})
             elif self.path.startswith('/api/jobs/'): value = self.server.admin.job(self.path[len('/api/jobs/'):])
             else: return self.respond(404, {'error': 'NOT_FOUND'})
             self.respond(200, value)
@@ -291,11 +335,15 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/api/policy/preview': value = self.server.admin.policy.preview(body)
             elif self.path == '/api/apply': return self.respond(202, self.server.admin.submit(body))
             elif self.path == '/api/observer-token': value = self.server.admin.observer_token(body)
+            elif self.path == '/api/backups/list': value = self.server.admin.diagnostics.backups(body)
+            elif self.path == '/api/restore/preview': value = self.server.admin.diagnostics.preview_restore(body)
+            elif self.path == '/api/recover/preview': value = self.server.admin.diagnostics.preview_recover(body)
             else: return self.respond(404, {'error': 'NOT_FOUND'})
             self.respond(200, value)
         except Exception as error:
             code = public_error(error)
-            self.respond(409 if code in {'CONFIG_REVISION_CONFLICT', 'STALE_POLICY_SNAPSHOT', 'MANAGEMENT_BUSY', 'JOB_ID_REUSED'} else 400,
+            self.respond(409 if code in {'CONFIG_REVISION_CONFLICT', 'STALE_POLICY_SNAPSHOT', 'MANAGEMENT_BUSY', 'JOB_ID_REUSED',
+                                        'PREVIEW_EXPIRED', 'STALE_RECOVERY_PREVIEW', 'EXTERNAL_CONFIG_CONFLICT', 'RECOVERY_REQUIRED'} else 400,
                          {'error': code})
 
 

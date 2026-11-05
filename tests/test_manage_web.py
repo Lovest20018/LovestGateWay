@@ -143,6 +143,30 @@ class WebSettingsTests(unittest.TestCase):
         self.assertEqual(denied.exception.code, 404)
         denied.exception.close()
         with self.assertRaises(ManagementError): self.admin.job('../config')
+        from manage_backup import BackupStore
+        backup = BackupStore(self.layout).create(metadata={'kind': 'manual', 'services': self.system.status()})
+        for path in ('/api/diagnostics', '/api/backups'):
+            with self.assertRaises(HTTPError) as denied: call(path)
+            self.assertEqual(denied.exception.code, 401); denied.exception.close()
+            with call(path, token='a' * 64) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                self.assertNotIn('private', response.read().decode())
+            with self.assertRaises(HTTPError) as denied: call(path + '?path=/etc/passwd', token='a' * 64)
+            self.assertEqual(denied.exception.code, 404); denied.exception.close()
+        for path, body in (('/api/restore/preview', {'backup': backup}),
+                           ('/api/recover/preview', {}), ('/api/backups/list', {'offset': 0, 'limit': 1})):
+            with self.assertRaises(HTTPError) as denied: call(path, body)
+            self.assertEqual(denied.exception.code, 401); denied.exception.close()
+            with self.assertRaises(HTTPError) as denied: call(path, body, 'a' * 64, 'https://foreign.test')
+            self.assertEqual(denied.exception.code, 403); denied.exception.close()
+        with call('/api/restore/preview', {'backup': backup}, 'a' * 64) as response:
+            preview = json.load(response)
+            self.assertIn('preview_token', preview)
+        with call('/api/backups/list', {'offset': 0, 'limit': 1}, 'a' * 64) as response:
+            self.assertEqual(len(json.load(response)['backups']), 1)
+        with self.assertRaises(HTTPError) as denied: call('/api/backups/download', token='a' * 64)
+        self.assertEqual(denied.exception.code, 404); denied.exception.close()
 
 
 if __name__ == '__main__': unittest.main()

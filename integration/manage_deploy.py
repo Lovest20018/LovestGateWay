@@ -19,7 +19,7 @@ from manage_config import JOURNAL
 LIB = {'runtime.sh', 'network.py', 'launch.py', 'test_profile.py', 'ppg.sh', 'nft.sh', 'gateway_api.py',
        'staged_probe.py', 'subscription_admin.py', 'unified_editor.py', 'clash_ppsub.py', 'clash_policy.py', 'mihomo_update.py',
        'maintenance.py', 'mihomo_upload.py', 'history_store.py', 'observe.py', 'base.yaml', 'build.json', 'bin/sniffbox',
-       'manage.py', 'manage_common.py', 'manage_model.py', 'manage_runtime.py', 'manage_config.py', 'manage_preview.py',
+       'manage.py', 'manage_common.py', 'manage_model.py', 'manage_runtime.py', 'manage_config.py', 'manage_preview.py', 'manage_diagnostics.py',
        'manage_backup.py', 'manage_deploy.py', 'manage_assets.py', 'manage_web.py', 'manage_policy.py', 'manage_subscription.py', 'manage_subscription_schedule.py', 'manage_operations.py', 'ppgw-admin'}
 TOP = {'install.py', 'uninstall.sh', 'install.sh', 'deploy.py', 'LICENSE'}
 DOCS = {'debian-deployment.md', 'debian-management.md', 'debian-web-settings.md', 'integration-api-v1.md', 'openapi-v1.json'}
@@ -224,7 +224,11 @@ class Deployer:
                     settings = load_settings(self.layout)
                     if journal['services'].get('paopaogw', {}).get('active'):
                         self.system.wait(settings)
-                    if settings['api']['enabled'] and journal['services'].get('paopaogw-api', {}).get('active'):
+                    if journal['services'].get('paopaogw-api', {}).get('active'):
+                        # Historical programs can serve the API without the new
+                        # opt-in field. Verify the restored service's endpoint;
+                        # this in-memory probe never changes persisted opt-in.
+                        settings['api']['enabled'] = True
                         self.system.wait_api(settings)
                 except Exception:
                     journal['phase'] = 'rollback_unconfirmed'; write_json(self.layout, JOURNAL, journal)

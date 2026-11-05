@@ -18,7 +18,7 @@ API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板�
 
 ```sh
 node frontend/build.mjs
-node --test frontend/tests/model.test.mjs
+node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs
 ```
 
 ```sh
@@ -39,6 +39,7 @@ node scripts/verify-runtime-navigation.cjs dist/test-ui
 node scripts/verify-subscription-flow.cjs dist/test-ui
 node scripts/verify-subscription-drafts.cjs dist/test-ui
 node scripts/verify-source-editor.cjs dist/test-ui
+node scripts/verify-diagnostics-fixture.cjs dist/test-ui
 node scripts/verify-observer-api-fixture.cjs dist/test-ui
 ```
 
@@ -47,6 +48,12 @@ node scripts/verify-observer-api-fixture.cjs dist/test-ui
 订阅草稿验证同时检查结构化变化预览、来源覆盖说明、敏感内容隐藏、名称按文本显示、后台生效计划及手机预览尺寸；API 使用合成响应，不触碰真实订阅或服务。
 
 源码编辑器验证在非安全 HTTP 合成地址上检查登录、重新认证保留草稿、偏好保留和消息来源校验，并将实际表单提交交给后端 PPsub 校验或 Clash 合并函数，验证未编辑字段和隐藏凭据保留。`tests/test_dashboard.py` 检查构建清单、原兼容 bundle 字节不变和重复构建结果一致。
+
+诊断恢复验证检查分页备份校验、损坏备份禁用、脱敏报告固定字段、签名预览与确认、过期预览拒绝、网络断开与刷新后按原任务号续查、待核实任务的导航保护，以及历史密码恢复后的重新登录。明确被拒绝的提交与查询时认证失效分别处理；成功结果区分真实验收、目标未启用和暂存环境，并验证管理任务服务保留状态的例外提示。所有操作均使用合成响应，同时检查 320px 手机布局、主题和文本安全。
+
+未知任务的 404 不会自动解锁或重放：页面保留任务号并展示只读诊断；存在待恢复事务时不能解除。只有人工明确确认已通过管理脚本或状态核对，且点击时再次读取诊断确认无待恢复事务，才停止本浏览器追踪；测试同时断言该步骤不会创建、取消或重新提交服务端任务。
+
+诊断 fixture 还会延迟旧任务完成后的运行信息请求，在此期间提交第二个备份任务，验证新任务无需人工操作即可继续查询至终态；桌面导航按 free 模式完整可见项集合、文字与位置边界验收，避免空集合检查误通过。
 
 ## 隔离运行验证
 

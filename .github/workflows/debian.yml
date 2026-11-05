@@ -24,7 +24,7 @@ jobs:
       - name: API and contract
         run: |
           python3 scripts/check-public-source.py
-          node --test frontend/tests/model.test.mjs
+          node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs
           python3 -m unittest discover -s tests -v
           python3 scripts/export-api-contract.py
           python3 scripts/check-api-contract.py

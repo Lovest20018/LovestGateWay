@@ -39,7 +39,32 @@ def confirm(args):
     if not args.yes: raise ManagementError('CONFIRMATION_REQUIRED:review config check output, then use --yes')
 
 
-def restore_backup(layout, system, identifier):
+def verify_service_restore(layout, system, desired):
+    """A successful start command alone is not a running-state acceptance."""
+    if hasattr(system, 'verify_services'): system.verify_services(desired)
+    acceptance = {'services': 'verified' if layout.live else 'staged',
+                  'core': 'inactive', 'api': 'inactive'}
+    if not layout.live:
+        acceptance.update(core='staged', api='staged')
+        return acceptance
+    settings = load_settings(layout)
+    if desired.get('paopaogw', {}).get('active'):
+        runtime = system.wait(settings)
+        if isinstance(runtime, dict):
+            from manage_operations import remember_loaded
+            remember_loaded(layout, settings_revision(layout), runtime)
+        acceptance['core'] = 'verified'
+    if desired.get('paopaogw-api', {}).get('active'):
+        # Probe the recorded active endpoint even when a restored historical
+        # program/configuration predates explicit opt-in. Do not persist it.
+        settings['api']['enabled'] = True
+        system.wait_api(settings)
+        acceptance['api'] = 'verified'
+    return acceptance
+
+
+def restore_backup(layout, system, identifier, progress=None):
+    progress = progress or (lambda stage: None)
     with operation_lock(layout):
         require_idle(layout)
         store = BackupStore(layout)
@@ -48,6 +73,7 @@ def restore_backup(layout, system, identifier):
         journal = {'kind': 'restore', 'phase': 'stopping', 'services': before, 'backup': None}
         write_json(layout, JOURNAL, journal)
         try:
+            progress('stopping')
             system.stop_all()
             # Include paths absent in the target snapshot in a rescue snapshot.
             rescue = store.create(set(store.paths()) | set(store.index(identifier)['files']), {'services': before, 'kind': 'restore-rescue'})
@@ -59,6 +85,7 @@ def restore_backup(layout, system, identifier):
                 for path in set(expected) - set(target['files']): expected[path].append(None)
             journal.update(phase='restoring', backup=rescue, expected=expected)
             write_json(layout, JOURNAL, journal)
+            progress('restoring')
             if target.get('full'):
                 for path in store.paths():
                     if path not in target['files']:
@@ -66,32 +93,39 @@ def restore_backup(layout, system, identifier):
             store.restore(identifier)
             desired = target.get('metadata', {}).get('services', before) if target.get('full') else before
             system.restore_services(desired)
-            if desired.get('paopaogw', {}).get('active'): system.wait(load_settings(layout))
-            if desired.get('paopaogw-api', {}).get('active') and hasattr(system, 'wait_api'): system.wait_api(load_settings(layout))
+            progress('verifying')
+            acceptance = verify_service_restore(layout, system, desired)
             journal['phase'] = 'complete'; write_json(layout, JOURNAL, journal)
-            return {'status': 'restored', 'backup': identifier, 'rescue_backup': rescue}
+            return {'status': 'restored', 'backup': identifier, 'rescue_backup': rescue, 'acceptance': acceptance}
         except Exception:
+            progress('rolling_back')
             from manage_deploy import Deployer
             Deployer(layout, system).recover()
             raise ManagementError('RESTORE_FAILED_PREVIOUS_STATE_RESTORED') from None
 
 
-def create_backup(layout, system):
+def create_backup(layout, system, progress=None):
+    progress = progress or (lambda stage: None)
     with operation_lock(layout):
         require_idle(layout)
         states = system.status()
         journal = {'kind': 'backup', 'phase': 'stopping', 'services': states, 'backup': None}
         write_json(layout, JOURNAL, journal)
         try:
+            progress('stopping')
             system.stop_all()
+            progress('saving')
             identifier = BackupStore(layout).create(metadata={'services': states, 'kind': 'manual'})
             # No persistent files are modified; recovery only needs to restore service states.
             journal['created_backup'] = identifier
             write_json(layout, JOURNAL, journal)
             system.restore_services(states)
+            progress('verifying')
+            acceptance = verify_service_restore(layout, system, states)
             journal['phase'] = 'complete'; write_json(layout, JOURNAL, journal)
-            return {'backup': identifier}
+            return {'status': 'backed_up', 'backup': identifier, 'acceptance': acceptance}
         except Exception:
+            progress('rolling_back')
             from manage_deploy import Deployer
             Deployer(layout, system).recover()
             raise ManagementError('BACKUP_FAILED_SERVICES_RESTORED') from None
