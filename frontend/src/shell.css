@@ -37,3 +37,11 @@ html,body,#app{min-height:100%;margin:0}#app{display:flex}.shell-main{margin-lef
 @media(max-width:760px){#shell-content{padding:18px 14px}.ppgw-workspace.page{padding:0}.source-editor .item>.row.editor-grid{grid-template-columns:1fr}.source-editor .monitor{padding:16px}.shell-theme{padding:18px}.source-editor .item{padding:16px}}
 
 .ppgw-workspace>.ppgw-gateway {max-width:none;margin:0}
+
+#shell-nav a,#shell-nav>.btn {display:flex;align-items:center;gap:12px}
+#shell-nav a.shell-brand {gap:8px;padding:8px 4px 24px;font-size:17px;white-space:nowrap;letter-spacing:-.4px}
+.shell-brand>img {flex:none;object-fit:contain;filter:drop-shadow(0 3px 7px #f9832a33)}
+.shell-wordmark {min-width:0;font-weight:500}
+.shell-wordmark b {font-weight:750;color:var(--brand-text)}
+.shell-icon {flex:none;vertical-align:middle}
+.shell-bar>img {object-fit:contain;margin-right:-6px}

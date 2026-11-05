@@ -66,6 +66,8 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     const runtime=page.locator('#runtime-panel');await runtime.locator('main').waitFor();
     await page.evaluate(()=>{window.documentIdentity='same-document';});
     const pages=[];
+    assert.equal(await page.locator('#shell-nav [data-route]>.shell-icon').count(),11);
+    const brandLogo=page.locator('#shell-nav .shell-brand img');assert.equal(await brandLogo.getAttribute('src'),'/ui/lovestgateway.svg');await page.waitForFunction(()=>document.querySelector('.shell-brand img')?.naturalWidth>0);
     for(const key of ['proxies','rules','connections','traffic','distribution','logs','region','overview']){
       await page.locator('#shell-nav [data-route="'+key+'"]').click();
       await page.waitForURL('**/#/'+key);
