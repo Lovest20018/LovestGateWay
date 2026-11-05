@@ -38,6 +38,7 @@ async function main() {
     let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreSuperseded=false;
     const management={state:'unknown',policy_state:'saved_unconfirmed',recent:[],latest:null};
     model.management=management;
+    model.latest_job={id:'f'.repeat(32),kind:'config',status:'failed',error:'MANAGEMENT_BUSY',created_at:1700000000,finished_at:1700000001};
     await page.route(origin + '/**', async route => {
       const req = route.request(), target = new URL(req.url()).pathname;
       if (target === '/sniffbox/subscription/core/update') {
@@ -77,7 +78,7 @@ async function main() {
         if (target.endsWith('/status')) {
           managementPolls++;
           if(managementOffline)return route.abort('failed');
-          data={management:coreSuperseded?{...management,recent:[{id:coreId,source:'mihomo',status:coreGate?'running':'complete',action:'rollback'}]}:management,runtime:{status:'staged'},running_mode:null,source:{local_policy:true}};
+          data={management:coreSuperseded?{...management,recent:[{id:coreId,source:'mihomo',status:coreGate?'running':'complete',action:'rollback'}]}:management,runtime:model.runtime||{status:'staged'},running_mode:model.running_mode||null,source:{local_policy:true}};
         }
         else if (target.endsWith('/config')) { configReads++; if (configDelay) await new Promise(resolve => setTimeout(resolve, configDelay)); data = model; }
         else if (target.endsWith('/preview')) {
@@ -117,6 +118,7 @@ async function main() {
     const saved = () => page.getByText('配置已应用，运行状态验收通过。', {exact: true}).waitFor();
     await page.goto(origin + '/ui/gateway.html#/settings');
     await page.locator('.ppgw-management [role=status]').waitFor();
+    assert.equal(await page.locator('#notice').isVisible(),false,'a historical failure must not become a current busy alert');
     const originalHeading=await page.locator('.ppgw-management [role=status]').textContent();
     const initialReads=configReads;
     managementOffline=true;
@@ -125,9 +127,23 @@ async function main() {
     await page.waitForFunction(text=>document.querySelector('.ppgw-management [role=status]')?.textContent===text,originalHeading,{timeout:15000});
     assert.equal(configReads,initialReads,'status polls must not read full config');
     assert.ok(managementPolls>=2);
+    const pastFailure={...model.latest_job,source:'settings',phase:'complete',updated_at:1700000001};
+    management.state='saved_pending';management.recent=[pastFailure];
+    model.runtime={configuration_state:'loaded',last_load_result:'success'};
+    await page.locator('#reload').click();
+    await page.waitForFunction(()=>document.querySelector('.ppgw-management [role=status]')?.textContent.includes('核心配置已加载'));
+    assert.equal(await page.locator('#notice').isVisible(),false);
+    assert.match(await page.locator('.ppgw-management [role=status]').textContent(),/核心配置已加载.*当前保存版本尚无匹配的整体验收记录/);
+    assert.doesNotMatch(await page.locator('.ppgw-management [role=status]').textContent(),/尚未确认加载|当前保存版本已通过管理验收/);
+    await page.screenshot({path:path.join(root,'dist/historical-alert-20261105/current-state.png')});
+    model.recovery_required=true;await page.locator('#reload').click();
+    await page.getByText('上一次事务需要恢复。请在宿主运行 sudo ppgw-admin recover --yes，再刷新页面。',{exact:true}).waitFor();
+    model.recovery_required=false;const rechecked=page.waitForResponse(response=>new URL(response.url()).pathname==='/sniffbox/settings/config');await page.locator('#reload').click();await rechecked;
+    assert.equal(await page.locator('#notice').isVisible(),false,'an actual recovery warning clears only after a new read confirms no recovery is required');
     await page.getByRole('tab',{name:'最近操作',exact:true}).click();
     assert.equal(await page.locator('.management-history').isVisible(),true);
     assert.equal(await page.locator('.management-history details').count(),0);
+    await page.getByText(/该次操作因其他管理任务占用未执行/).waitFor();
     await page.screenshot({path:path.join(root,'dist/settings-recent-desktop.png')});
     await page.getByRole('tab',{name:'访问与统计',exact:true}).click();
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();

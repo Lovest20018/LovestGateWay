@@ -573,20 +573,23 @@
     let statusFingerprint = '';
     function renderManagement() {
       const data = model?.management;
-      const fingerprint=JSON.stringify([data,model?.running_mode,model?.source.local_policy]);
+      const runtime = model?.runtime?.data || model?.runtime || {};
+      const coreLoaded=runtime.configuration_state==='loaded'&&runtime.last_load_result==='success';
+      const fingerprint=JSON.stringify([data,model?.running_mode,model?.source.local_policy,coreLoaded]);
       if(fingerprint===statusFingerprint&&statusHost.childElementCount)return;
       statusFingerprint=fingerprint;
-      const names = {loaded:'已生效（本次管理操作已验证）',saved_pending:'已保存，尚未确认加载',retained:'候选校验未通过，沿用上次成功配置',recovery_required:'需要恢复，请检查管理事务',unknown:'暂时无法确认配置是否已全部生效'};
-      const runtime = model?.runtime?.data || model?.runtime || {};
+      const names = {loaded:'当前保存版本已通过管理验收',saved_pending:'当前保存版本尚无匹配的整体验收记录',retained:'候选校验未通过，沿用上次成功配置',recovery_required:'需要恢复，请检查管理事务',unknown:'整体设置生效情况尚待核对'};
       const rows = data?.recent || [];
       const policyText = data?.policy_state==='loaded'?' · 本地覆盖策略已加载':model?.source.local_policy?' · 已保存本地覆盖策略，加载结果待确认':'';
-      const heading = el('p',{role:'status',text:'运行模式：' + (modeNames[model?.running_mode] || model?.running_mode || '暂时无法确认') + ' · ' + (names[data?.state] || names.unknown) + policyText});
+      const coreText=coreLoaded?' · 核心配置已加载':'';
+      const heading = el('p',{role:'status',text:'运行模式：' + (modeNames[model?.running_mode] || model?.running_mode || '暂时无法确认') + coreText + ' · ' + (names[data?.state] || names.unknown) + policyText});
       const records = el('ol',{class:'operation-list'});
       for (const row of rows) {
         const kind = {config:'配置修改',policy:'策略保存',policy_reset:'恢复原策略',asset:'资源导入',refresh_nodes:'订阅更新',check:'Mihomo 检查',update:'Mihomo 更新',rollback:'Mihomo 回退',scheduled:'自动维护'}[row.kind] || '订阅与策略';
         const when = new Date((row.started_at || row.created_at || row.updated_at)*1000).toLocaleString();
         const outcome={core_inactive:'已保存待加载',staged:'已暂存待加载',retained:'部分获取失败，沿用旧节点',unchanged:'内容未变，无需重启',updated:'已更新并加载'}[row.outcome];
-        records.append(el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:kind}),el('span',{class:'operation-state',text:statusNames[row.status] || '待核对'})]),el('p',{class:'subtext',text:`${when} · ${phaseNames[row.phase || row.stage] || '已记录'}${outcome?' · '+outcome:''}${row.error?' · '+message(row.error):''}${row.recovery==='check_required'?' · 请核实运行与恢复状态':''}${row.backup?' · 备份 '+row.backup:''}`})]));
+        const errorText=row.error==='MANAGEMENT_BUSY'?'该次操作因其他管理任务占用未执行':row.error?message(row.error):'';
+        records.append(el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:kind}),el('span',{class:'operation-state',text:statusNames[row.status] || '待核对'})]),el('p',{class:'subtext',text:`${when} · ${phaseNames[row.phase || row.stage] || '已记录'}${outcome?' · '+outcome:''}${errorText?' · '+errorText:''}${row.recovery==='check_required'?' · 请核实运行与恢复状态':''}${row.backup?' · 备份 '+row.backup:''}`})]));
       }
       statusHost.replaceChildren(heading);
       recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'展示最近 '+rows.length+' 条已记录的配置、订阅与核心维护操作。'})]),rows.length?records:el('p',{class:'empty-state',text:'暂无操作记录。'}));
@@ -943,7 +946,6 @@
         else if (value.source_details) sourceDetails = {...value.source_details, url:sourceDetails?.url};
         render();
         if (model.recovery_required) notice(message('RECOVERY_REQUIRED'), 'error');
-        else if (model.latest_job?.status === 'failed' && !pending()) notice(message(model.latest_job.error), 'error');
         return true;
       } catch (error) {
         notice(error.status === 401 ? message('LOGIN_REQUIRED') : error.message, 'error');

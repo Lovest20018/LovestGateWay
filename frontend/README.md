@@ -23,6 +23,8 @@ Apply, source switching and backup/recovery previews appear inline at full conte
 
 Subscription management uses shared page tabs for policy editing, configuration sources, and recent operations. The source form and operation lists display directly in their tabs. Settings include a recent-operations tab; diagnostics use the same tabs and card spacing for runtime checks, backups/recovery, and recent operations. Switching tabs keeps editor/source drafts and pending task tracking. Tab controls support arrow keys, Home, and End, and scroll horizontally on narrow screens.
 
+Historical failed settings jobs remain in Recent operations; reading configuration does not replay them as current error banners. Current submissions and resumed browser tasks still report their failures inline, and recovery-required warnings remain persistent. The runtime strip distinguishes the core's reported successful configuration load from a matching acceptance receipt for all saved management settings; a missing or outdated receipt does not assert that the core failed to load.
+
 ## Synthetic browser acceptance
 
 These scripts intercept all requests on synthetic origins and never contact a deployed gateway. Install Playwright separately or set `PPGW_PLAYWRIGHT_MODULE` to the existing Playwright module. Chrome is used through Playwright's `chrome` channel. Set `PPGW_PYTHON` to the Python interpreter that can import the repository's backend dependencies.
