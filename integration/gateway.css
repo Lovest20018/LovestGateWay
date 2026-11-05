@@ -289,3 +289,11 @@
 .ppgw-gateway #observer-api-current-token {font-family:monospace;overflow-wrap:anywhere}
 .ppgw-gateway .clipboard-helper {position:fixed;left:-9999px;top:0}
 @media(max-width:639.5px){.ppgw-provider-plan {gap:8px}.ppgw-provider-plan select {min-width:130px}.ppgw-provider-plan button {width:100%}}
+/* Shared operation summary and per-provider update evidence. */
+.ppgw-management { margin-bottom: 16px; padding: 16px 20px; }
+.ppgw-workspace[data-page="subscriptions"] .ppgw-management { grid-column: 1/-1; order: 2; margin: 0 0 4px; min-width: 0; }
+.ppgw-management p { margin: 6px 0; overflow-wrap: anywhere; }
+.ppgw-management details { margin-top: 8px; }
+.ppgw-management summary { cursor: pointer; }
+.ppgw-provider-status { flex-basis: 100%; margin: 4px 0; white-space: pre-line; color: var(--text-2); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.ppgw-provider-plan { flex-wrap: wrap; }

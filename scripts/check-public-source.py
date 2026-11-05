@@ -38,10 +38,17 @@ def main():
                 revisions.append(parts[1])
     try:
         paths = set()
+        trees = set()
         for revision in set(revisions):
-            for row in git('rev-list', '--objects', revision).decode('utf-8').splitlines():
-                _, sep, name = row.partition(' ')
-                if sep and private_path(name): paths.add(name)
+            trees.update(git('rev-list', '--format=%T', '--no-commit-header', revision).decode('ascii').splitlines())
+            # Git also allows tags that point directly to a tree rather than a commit.
+            if git('cat-file', '-t', revision + '^{}').strip() == b'tree':
+                trees.add(git('rev-parse', revision + '^{}').decode('ascii').strip())
+        # Only deduplicate root trees: blobs and subtrees can occur at multiple
+        # paths, while rev-list --objects reports just one name per object.
+        for tree in sorted(trees):
+            paths.update(name for name in git('ls-tree', '-r', '--name-only', '-z', tree).decode('utf-8').split('\0')
+                         if name and private_path(name))
         if not args.pre_push:
             paths.update(name for name in git('ls-files', '-z').decode('utf-8').split('\0') if name and private_path(name))
         if paths:

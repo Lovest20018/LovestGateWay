@@ -5,6 +5,8 @@ import json
 import re
 import shlex
 import uuid
+import threading
+import time
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from manage_common import ManagementError, read_bytes, digest
@@ -187,6 +189,41 @@ def settings_revision(layout):
                 relative = path.relative_to(layout.root).as_posix()
                 records[relative] = digest(read_bytes(layout, relative, limit=2*1024*1024))
     return digest(json.dumps(records, sort_keys=True).encode())
+
+
+class RevisionSample:
+    """Hash contents only on metadata change; bound cache age covers metadata-preserving edits."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.signature = None
+        self.revision = None
+        self.checked = 0
+
+    def metadata(self, layout):
+        names = set((*PATHS.values(), *EXTRA_PATHS))
+        directory = layout.path('etc/paopaogw/files')
+        if directory.exists():
+            for path in directory.rglob('*'):
+                layout.check(path)
+                names.add(path.relative_to(layout.root).as_posix())
+        rows = []
+        for name in sorted(names):
+            path = layout.path(name)
+            try:
+                value = path.stat()
+                rows.append((name, value.st_mode, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns))
+            except FileNotFoundError: rows.append((name, None))
+        return rows
+
+    def sample(self, layout):
+        with self.lock:
+            signature = self.metadata(layout)
+            if signature != self.signature or time.monotonic() - self.checked >= 60:
+                revision = settings_revision(layout)
+                if signature != self.metadata(layout):
+                    raise ManagementError('CONFIG_CHANGED_DURING_SAMPLE')
+                self.revision, self.signature, self.checked = revision, signature, time.monotonic()
+            return self.revision
 
 
 def render_assignments(raw, changes, namespace):

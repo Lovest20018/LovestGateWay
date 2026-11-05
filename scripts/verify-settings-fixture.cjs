@@ -34,6 +34,9 @@ async function main() {
     });
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
     let stale = false, fail = false, expireLogin = false, runningJob, polls = 0, configDelay = 0, coreFailed = true, coreLimited = false, localUpload = null, localInstalled = false, localOperations = [];
+    let managementOffline=false, managementPolls=0, configReads=0;
+    const management={state:'unknown',policy_state:'saved_unconfirmed',recent:[],latest:null};
+    model.management=management;
     await page.route(origin + '/**', async route => {
       const req = route.request(), target = new URL(req.url()).pathname;
       if (target === '/sniffbox/subscription/core/update') {
@@ -61,7 +64,12 @@ async function main() {
         assert.equal(req.headers().authorization, 'Bearer fixture-token');
         const body = req.method() === 'POST' ? req.postDataJSON() : undefined;
         let data, status = 200;
-        if (target.endsWith('/config')) { if (configDelay) await new Promise(resolve => setTimeout(resolve, configDelay)); data = model; }
+        if (target.endsWith('/status')) {
+          managementPolls++;
+          if(managementOffline)return route.abort('failed');
+          data={management,runtime:{status:'staged'},running_mode:null,source:{local_policy:true}};
+        }
+        else if (target.endsWith('/config')) { configReads++; if (configDelay) await new Promise(resolve => setTimeout(resolve, configDelay)); data = model; }
         else if (target.endsWith('/preview')) {
           if (stale) { status = 409; data = {error: 'CONFIG_REVISION_CONFLICT'}; }
           else {
@@ -98,6 +106,15 @@ async function main() {
     const apply = async () => { await page.locator('#preview').click(); await page.locator('#preview-dialog').waitFor({state: 'visible'}); await page.locator('#apply').click(); };
     const saved = () => page.getByText('配置已应用，运行状态验收通过。', {exact: true}).waitFor();
     await page.goto(origin + '/ui/gateway.html#/settings');
+    await page.locator('.ppgw-management [role=status]').waitFor();
+    const originalHeading=await page.locator('.ppgw-management [role=status]').textContent();
+    const initialReads=configReads;
+    managementOffline=true;
+    await page.getByText('运行状态暂时无法读取，正在重新连接…',{exact:true}).waitFor({timeout:15000});
+    managementOffline=false;
+    await page.waitForFunction(text=>document.querySelector('.ppgw-management [role=status]')?.textContent===text,originalHeading,{timeout:15000});
+    assert.equal(configReads,initialReads,'status polls must not read full config');
+    assert.ok(managementPolls>=2);
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     assert.equal(new URL(page.url()).pathname, '/ui/');
     await page.getByRole('heading', {name:'修改管理密码',exact:true}).waitFor();

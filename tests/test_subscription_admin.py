@@ -7,9 +7,47 @@ import unittest
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 import subscription_admin as admin
+from manage_common import Layout
 
 
 class SubscriptionTests(unittest.TestCase):
+    def test_maintenance_legacy_statuses_preserve_unknown_contract(self):
+        from mihomo_update import atomic_json
+        with tempfile.TemporaryDirectory() as temp:
+            layout=Layout(temp); state=Path(temp)/'mihomo'; state.mkdir()
+            manager=admin.Admin(layout)
+            for status,expected in [('queued','running'),('interrupted','failed')]:
+                value={'id':'compat_task','kind':'check','status':status,'created_at':__import__('time').time()}
+                if status=='interrupted':value['stage']='interrupted'
+                atomic_json(state/'operation.json',value)
+                with patch('mihomo_update.STATE',state), patch('mihomo_update.Updater'):
+                    data=manager.maintenance()['operation']
+                self.assertEqual(data['status'],expected)
+                if status=='interrupted':
+                    self.assertEqual((data['phase'],data['result'],data['recovery']),('interrupted','unknown','check_required'))
+                    self.assertIn('尚未确认',data['message'])
+
+    def test_provider_status_http_requires_admin_and_does_not_fetch_full_configuration(self):
+        from http.client import HTTPConnection
+        from http.server import ThreadingHTTPServer
+        import threading
+        with tempfile.TemporaryDirectory() as temp:
+            token=Path(temp)/'token';token.write_text('a'*64)
+            manager=admin.Admin(Layout(temp))
+            server=ThreadingHTTPServer(('127.0.0.1',0),admin.Handler);server.admin=manager
+            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            try:
+                with patch.object(admin,'CORE_TOKEN',token), \
+                     patch.object(manager,'node_cache',return_value={'subscriptions':[]}) as node_cache, \
+                     patch.object(manager,'current_config',side_effect=AssertionError('full config')), \
+                     patch.object(manager.core,'request',side_effect=AssertionError('duplicate core request')):
+                    for authorization,expected in [(None,401),('Bearer observer-token',401),('Bearer '+'a'*64,200)]:
+                        connection=HTTPConnection('127.0.0.1',server.server_port,timeout=3)
+                        connection.request('GET','/api/providers',headers={} if authorization is None else {'Authorization':authorization})
+                        response=connection.getresponse();self.assertEqual(response.status,expected);response.read();connection.close()
+                    self.assertEqual(node_cache.call_count,1)
+            finally:server.shutdown();server.server_close();thread.join(2)
+
     def test_manual_refresh_rejects_stale_request_before_scheduling(self):
         from manage_common import Layout, ManagementError
         from manage_model import settings_revision
@@ -17,7 +55,7 @@ class SubscriptionTests(unittest.TestCase):
             layout = Layout(temp)
             files = layout.path('etc/paopaogw/files'); files.mkdir(parents=True)
             config = files / 'ppgw.ini'; config.write_text('#paopao-gateway\nmode=suburl\nsubtime=manual\n')
-            manager = admin.Admin()
+            manager = admin.Admin(Layout(temp))
             body = {'kind': 'refresh_nodes', 'base_revision': admin.revision(config.read_bytes()),
                     'settings_revision': settings_revision(layout), 'operation_id': 'manual-test-001'}
             with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', files), \
@@ -38,7 +76,7 @@ class SubscriptionTests(unittest.TestCase):
             token = Path(temp) / 'core-token'
             digest = hashlib.sha256(b'panel-password').hexdigest()
             token.write_text(digest)
-            manager = admin.Admin()
+            manager = admin.Admin(Layout(temp))
             with patch.object(admin, 'CORE_TOKEN', token):
                 self.assertTrue(manager.authenticated('Bearer ' + digest))
                 self.assertFalse(manager.authenticated(None))
@@ -60,7 +98,7 @@ class SubscriptionTests(unittest.TestCase):
                  patch.object(admin, 'running_document', return_value=document), \
                  patch('subscription_admin.subprocess.run') as run:
                 run.return_value.stdout = exported
-                result = admin.Admin().current_config()
+                result = admin.Admin(Layout(temp)).current_config()
             self.assertEqual(result['config']['subs'], [])
             self.assertTrue(result['synthetic_source'])
             self.assertEqual(result['source'], 'clash_runtime')
@@ -81,7 +119,7 @@ class SubscriptionTests(unittest.TestCase):
             root = Path(temp); config = root / 'ppgw.ini'; config.write_text('#paopao-gateway\nmode=free\n')
             with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', root), \
                  patch.object(admin, 'config_values', return_value={'mode': 'free'}):
-                value = admin.Admin().current_config()
+                value = admin.Admin(Layout(temp)).current_config()
             self.assertFalse(value['write_allowed'])
             self.assertEqual(value['source'], 'empty')
 
@@ -92,7 +130,7 @@ class SubscriptionTests(unittest.TestCase):
                  patch.object(admin, 'config_values', return_value={'mode': 'suburl', 'suburl': 'https://example.com/sub'}):
                 payload = {'kind': 'ppsub', 'value': json.dumps({'exported_at': 'snapshot', 'subs': [{'name': 'S', 'url': 'https://example.com/sub'}]})}
                 with self.assertRaisesRegex(ValueError, 'CLASH_PPSUB_NOT_EQUIVALENT'):
-                    admin.Admin().apply(payload)
+                    admin.Admin(Layout(temp)).apply(payload)
 
     def test_update_preserves_password_and_business_config(self):
         raw = b'#paopao-gateway\nmode=free\nclash_web_password="private-secret"\nfake_cidr=7.0.0.0/8\n'
@@ -132,7 +170,7 @@ class SubscriptionTests(unittest.TestCase):
             config.write_bytes(original)
             (files / 'ppsub.json').write_bytes(b'{"private":"old"}')
             candidate = admin.update_config(original, {'mode':'yaml'})
-            manager = admin.Admin()
+            manager = admin.Admin(Layout(temp))
             manager.operation = {'id':'test','status':'applying'}
             with patch.object(admin,'CONFIG',config), patch.object(admin,'FILES',files), patch.object(admin,'STATE',root/'state'), patch('subscription_admin.subprocess.run',side_effect=RuntimeError()):
                 manager.worker(original,candidate,('custom.yaml',b'proxies: []'))

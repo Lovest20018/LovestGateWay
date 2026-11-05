@@ -11,6 +11,7 @@ from mihomo_upload import UploadStore, CHUNK_BYTES, MAX_COMPRESSED
 from manage_common import ManagementError, operation_lock
 import maintenance
 import subscription_admin
+from manage_common import Layout
 
 
 class UploadTests(unittest.TestCase):
@@ -87,7 +88,7 @@ class UploadTests(unittest.TestCase):
                 with self.assertRaisesRegex(ManagementError, 'MANAGEMENT_BUSY'): executor.submit(self.begin).result()
 
     def test_admin_commit_schedules_only_verified_local_job(self):
-        manager = subscription_admin.Admin()
+        manager = subscription_admin.Admin(Layout(self.temp.name))
         self.begin(); self.chunk()
         with patch('mihomo_upload.UploadStore', return_value=self.store), \
              patch.object(manager, 'core_idle'), patch.object(manager, 'start_core_action', return_value={'status':'running'}) as start:
@@ -99,7 +100,7 @@ class UploadTests(unittest.TestCase):
         from http.client import HTTPConnection
         from http.server import ThreadingHTTPServer
         import threading
-        manager = subscription_admin.Admin()
+        manager = subscription_admin.Admin(Layout(self.temp.name))
         server = ThreadingHTTPServer(('127.0.0.1', 0), subscription_admin.Handler)
         server.admin = manager
         thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
@@ -128,7 +129,7 @@ class UploadTests(unittest.TestCase):
         with patch.object(sys, 'argv', ['maintenance.py', 'install-local']), \
              patch('mihomo_upload.UploadStore', return_value=self.store), \
              patch.object(maintenance, 'STATE', self.store.state), patch.object(maintenance, 'Updater') as updater:
-            maintenance.main()
+            maintenance.main(Layout(self.temp.name))
         updater.return_value.install_local.assert_called_once_with(
             self.store.directory(self.identifier) / 'asset.gz', hashlib.sha256(self.raw).hexdigest(), 'v1.2.3')
         updater.return_value.check.assert_not_called(); updater.return_value.update.assert_not_called()
@@ -141,7 +142,7 @@ class UploadTests(unittest.TestCase):
              patch('mihomo_upload.UploadStore', return_value=self.store), \
              patch.object(maintenance, 'STATE', self.store.state), patch.object(maintenance, 'Updater') as updater:
             updater.return_value.install_local.side_effect = ValueError('MIHOMO_VERSION_MISMATCH')
-            with self.assertRaises(SystemExit): maintenance.main()
+            with self.assertRaises(SystemExit): maintenance.main(Layout(self.temp.name))
         self.assertEqual(json.loads(self.store.path('operation.json').read_bytes())['error'], 'MIHOMO_VERSION_MISMATCH')
         self.assertFalse(self.store.directory(self.identifier).exists())
 

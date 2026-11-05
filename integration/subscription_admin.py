@@ -115,9 +115,19 @@ def atomic_write(path, raw):
 
 
 class Admin:
-    def __init__(self):
+    @property
+    def operation(self): return self._operation
+
+    @operation.setter
+    def operation(self, value):
+        from manage_operations import Operation
+        self._operation = Operation(self._operation_layout or management_layout(), value) if value is not None else None
+
+    def __init__(self, layout=None):
         self.lock = threading.Lock()
-        self.operation = None
+        self._operation_layout = layout
+        from manage_operations import restore_operation
+        self._operation = restore_operation(layout or management_layout())
         self.snapshots = OrderedDict()
         self.core = CoreClient(CORE_TOKEN)
 
@@ -131,7 +141,17 @@ class Admin:
         def read(path, default):
             try: return json.loads(path.read_bytes())
             except (OSError, ValueError): return default
-        return {'core': Updater().status(), 'operation': read(update_state / 'operation.json', None),
+        from manage_operations import lifecycle_lock, mihomo_current, public
+        with lifecycle_lock(self._operation_layout or management_layout()):
+            operation = mihomo_current(self._operation_layout or management_layout(), update_state)
+        if operation: operation = {**operation, **public(operation)}
+        if operation and operation.get('status') == 'queued':
+            operation = {**operation, 'status': 'running', 'phase': 'queued'}
+        elif operation and operation.get('status') == 'interrupted':
+            operation = {**operation, 'status': 'failed', 'phase': 'interrupted', 'result': 'unknown',
+                         'recovery': 'check_required',
+                         'message': '维护执行进程已中断，结果尚未确认；请检查当前版本与系统服务，不会自动重试或重放。'}
+        return {'core': Updater().status(), 'operation': operation,
                 'policy': read(STATE / 'policy-status.json', {'status': 'not_applied'}),
                 'has_local_policy': POLICY.exists(), 'timezone': os.environ.get('TZ', 'Asia/Shanghai'),
                 'log_source': 'instance_controller', 'cloudflared': 'removed'}
@@ -144,21 +164,36 @@ class Admin:
                                    capture_output=True, text=True, timeout=5)
             if state.stdout.strip() in {'active', 'activating', 'deactivating', 'reloading'}: raise ValueError('MANAGEMENT_BUSY')
         from mihomo_update import STATE as update_state
-        try: pending = json.loads((update_state / 'operation.json').read_bytes())
-        except (OSError, ValueError): pending = {}
-        if pending.get('status') == 'running' and time.time() - pending.get('started_at', 0) < 300:
-            raise ValueError('MANAGEMENT_BUSY')
+        from manage_operations import lifecycle_lock, mihomo_current, ACTIVE
+        with lifecycle_lock(self._operation_layout or management_layout()):
+            pending = mihomo_current(self._operation_layout or management_layout(), update_state)
+            if pending and pending.get('status') in ACTIVE: raise ValueError('MANAGEMENT_BUSY')
 
     def start_core_action(self, action):
         from mihomo_update import atomic_json, STATE as update_state
-        atomic_json(update_state / 'operation.json', {'status': 'running', 'action': action, 'started_at': time.time()})
-        try:
-            subprocess.run(['systemctl', 'start', '--no-block', 'paopaogw-core-action@' + action], check=True, timeout=5)
-        except Exception:
-            atomic_json(update_state / 'operation.json', {'status': 'failed', 'action': action,
-                        'error': 'CORE_OPERATION_FAILED', 'message': '维护任务未能启动，请检查系统服务。', 'completed_at': time.time()})
-            raise
-        return {'status': 'running', 'action': action}
+        from manage_operations import record, lifecycle_lock, mihomo_current, service_state, ACTIVE
+        layout = self._operation_layout or management_layout()
+        unit = 'paopaogw-core-action@' + action + '.service'
+        with lifecycle_lock(layout):
+            pending = mihomo_current(layout, update_state)
+            if pending and pending.get('status') in ACTIVE: raise ValueError('MANAGEMENT_BUSY')
+            state = service_state(unit)
+            if state is None or state.get('ActiveState') in {'active', 'activating', 'deactivating', 'reloading'}:
+                raise ValueError('MANAGEMENT_BUSY')
+            value = {'id': 'mihomo_' + str(time.time_ns()), 'kind': action, 'status': 'queued',
+                     'stage': 'queued', 'action': action, 'created_at': time.time(),
+                     'execution': {'service': unit}, 'queued_invocation': state.get('InvocationID', '')}
+            atomic_json(update_state / 'operation.json', value)
+            record(layout, 'mihomo', value)
+            try:
+                subprocess.run(['systemctl', 'start', '--no-block', unit], check=True, timeout=5)
+            except Exception:
+                value.update(status='failed', stage='complete', error='CORE_OPERATION_FAILED',
+                             message='维护任务未能启动，请检查系统服务。', finished_at=time.time())
+                atomic_json(update_state / 'operation.json', value)
+                record(layout, 'mihomo', value)
+                raise
+        return {**value, 'status': 'running'}
 
     def core_action(self, action):
         if action not in {'check', 'update', 'rollback'}: raise ValueError('INVALID_OPERATION')
@@ -220,19 +255,24 @@ class Admin:
                 time.sleep(1)
             raise ValueError('NOT_READY')
         except Exception:
-            if written and not POLICY.exists():
-                atomic_write(POLICY, old)
-                subprocess.run(['systemctl', 'restart', 'paopaogw'], timeout=30,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            with self.lock: self.operation.update(status='failed', message='恢复原始策略失败，已保留此前配置。')
+            try:
+                if written and not POLICY.exists():
+                    atomic_write(POLICY, old)
+                    subprocess.run(['systemctl', 'restart', 'paopaogw'], timeout=30,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception: pass
+            with self.lock: self.operation.update(status='failed', recovery='check_required',
+                message='恢复原始策略未完成；已尝试还原保存文件，运行结果尚未确认，请检查系统服务。')
 
     def node_cache(self):
         try:
-            path = management_layout().path('var/lib/paopaogw/subscriptions/status.json')
-            data = json.loads(path.read_bytes())
-            return {'subscriptions': [{key: row.get(key) for key in
-                    ('name', 'nodes', 'source', 'fetched_at', 'update_failed')}
-                    for row in data.get('subscriptions', []) if isinstance(row, dict)]}
+            from manage_subscription_schedule import provider_status
+            from manage_model import parse_assignments
+            layout = management_layout()
+            values = parse_assignments(CONFIG.read_bytes())
+            if not native_ppsub_source(values): return {'subscriptions': []}
+            settings = {'ini': {'subtime': values.get('subtime', '1d'), 'subcron': values.get('subcron', '')}}
+            return {'subscriptions': provider_status(layout, settings)}
         except (OSError, ValueError): return {'subscriptions': []}
 
     def refresh_nodes(self, body):
@@ -271,14 +311,18 @@ class Admin:
                     or settings_revision(layout) != body['settings_revision']):
                 raise ManagementError('CONFIG_REVISION_CONFLICT')
             from manage_subscription import refresh_nodes
-            rows = refresh_nodes(layout, System(layout), body.get('providers'))
+            def progress(stage):
+                with self.lock: self.operation.update(stage=stage)
+            rows = refresh_nodes(layout, System(layout), body.get('providers'), progress=progress)
             selected = set(body.get('providers', [row['name'] for row in rows]))
             rows = [row for row in rows if row['name'] in selected]
             failed = [row['name'] for row in rows if row.get('update_failed') and row.get('nodes', 0) > 0]
             missing = [row['name'] for row in rows if not row.get('nodes')]
-            message = ('更新完成；以下提供商获取失败，已保留原节点：' + '、'.join(failed)) if failed else '订阅节点已更新并加载；重启继续使用已保存节点。'
+            unchanged = all(row.get('result') == 'unchanged' for row in rows)
+            message = ('更新完成；以下提供商获取失败，已保留原节点：' + '、'.join(failed)) if failed else ('订阅内容未变，无需重新加载。' if unchanged else '订阅节点已更新并加载；重启继续使用已保存节点。')
             if missing: message += '；以下提供商尚无可用节点：' + '、'.join(missing)
-            with self.lock: self.operation.update(status='applied', message=message, retained_subscriptions=failed)
+            with self.lock: self.operation.update(status='unchanged' if unchanged else 'applied', message=message, retained_subscriptions=failed,
+                                                  outcome='retained' if failed else 'unchanged' if unchanged else 'updated')
         except Exception:
             with self.lock: self.operation.update(status='failed', message='订阅更新未完成，已保存节点和原运行配置继续保留。请检查订阅是否已开启，再手动重试。')
 
@@ -514,7 +558,7 @@ class Admin:
                 except Exception:
                     restored = False
             with self.lock:
-                self.operation.update(status='failed', message=('配置校验或加载失败，原配置已保留/恢复。请检查节点引用和规则。'
+                self.operation.update(status='failed', recovery='check_required' if written else 'none', message=('配置校验或加载失败，原保存文件已保留/还原；运行结果尚未确认，请检查节点引用和规则。'
                     if restored else '加载失败且配置已被外部修改，请检查运行状态。'))
         finally:
             check_file.unlink(missing_ok=True)
@@ -573,7 +617,7 @@ class Admin:
                 restored = False
             finally:
                 with self.lock:
-                    self.operation.update(status='failed', message=('订阅未能加载，已恢复原配置。请检查链接/文件后重试。'
+                    self.operation.update(status='failed', recovery='check_required', message=('订阅未能加载，原保存文件已还原；运行结果尚未确认，请检查链接、文件和系统服务。'
                         if restored else '订阅未能加载，检测到外部配置变化，请检查运行状态。'))
 
 
@@ -598,6 +642,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == '/api/status':
                 self.respond(200, self.server.admin.status())
+            elif self.path == '/api/providers':
+                self.respond(200, self.server.admin.node_cache())
             elif self.path == '/api/config':
                 self.respond(200, self.server.admin.current_config())
             elif self.path == '/api/maintenance':

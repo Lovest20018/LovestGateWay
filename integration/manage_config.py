@@ -13,6 +13,7 @@ SAFE_RELOAD = {'max_rec', 'net_cleanday', 'admin_cidr', 'proxy_cidr',
 class ConfigManager:
     def __init__(self, layout, system=None):
         self.layout = layout; self.system = system or System(layout); self.backups = BackupStore(layout)
+        self.progress = lambda stage: None
     def show(self): return {'revision': settings_revision(self.layout), 'settings': public_settings(load_settings(self.layout))}
     def journal(self):
         raw = read_bytes(self.layout, JOURNAL)
@@ -82,16 +83,29 @@ class ConfigManager:
                 journal['restore_services'] = {unit: state for unit, state in before.items() if unit in affected}
             write_json(self.layout, JOURNAL, journal)
             try:
+                self.progress('saving')
                 if hasattr(self.system, 'prepare'): self.system.prepare(action, before)
                 for path, raw in updates.items():
                     if raw is None: self.layout.path(path).unlink(missing_ok=True)
                     else: atomic_write(self.layout, path, raw)
                 journal['phase'] = 'applying'; write_json(self.layout, JOURNAL, journal)
+                self.progress('applying')
                 running = self.system.apply(action, settings, changes, before)
+                self.progress('verifying')
                 if verify is not None: verify()
                 journal['phase'] = 'complete'; write_json(self.layout, JOURNAL, journal)
+                from manage_operations import remember_loaded
+                if isinstance(running, dict):
+                    if running.get('status') == 'running':
+                        remember_loaded(self.layout, settings_revision(self.layout), running)
+                    elif running.get('reason') == 'core_unchanged':
+                        try:
+                            self.system.verify_loaded(settings)
+                            remember_loaded(self.layout, settings_revision(self.layout), self.system.runtime())
+                        except Exception: pass
                 return {'status': 'applied', 'revision': settings_revision(self.layout), 'backup': backup, 'action': action, 'runtime': running}
             except Exception:
+                self.progress('rolling_back')
                 self._rollback(journal)
                 raise ManagementError('APPLY_FAILED_ROLLED_BACK') from None
     def _rollback(self, journal):
@@ -100,7 +114,22 @@ class ConfigManager:
         except ManagementError:
             journal['phase'] = 'conflict'; write_json(self.layout, JOURNAL, journal)
             raise ManagementError('EXTERNAL_CONFIG_CONFLICT') from None
-        self.system.restore_services(journal.get('restore_services', journal['services']))
+        restore = journal.get('restore_services', journal['services'])
+        self.system.restore_services(restore)
+        if self.layout.live:
+            journal['phase'] = 'rollback_verifying'; write_json(self.layout, JOURNAL, journal)
+            try:
+                self.system.verify_services(restore)
+                settings = load_settings(self.layout)
+                if restore.get('paopaogw', {}).get('active'):
+                    runtime = self.system.wait(settings)
+                    from manage_operations import remember_loaded
+                    remember_loaded(self.layout, settings_revision(self.layout), runtime)
+                if settings['api']['enabled'] and restore.get('paopaogw-api', {}).get('active'):
+                    self.system.wait_api(settings)
+            except Exception:
+                journal['phase'] = 'rollback_unconfirmed'; write_json(self.layout, JOURNAL, journal)
+                raise ManagementError('ROLLBACK_UNCONFIRMED') from None
         journal['phase'] = 'rolled_back'; write_json(self.layout, JOURNAL, journal)
     def recover(self):
         with operation_lock(self.layout):

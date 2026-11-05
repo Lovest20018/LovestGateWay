@@ -11,6 +11,7 @@ const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 fn target(method: &str, path: &str) -> Option<&'static str> {
     match (method, path) {
         ("GET", "/sniffbox/subscription/status") => Some("/api/status"),
+        ("GET", "/sniffbox/subscription/providers") => Some("/api/providers"),
         ("GET", "/sniffbox/subscription/config") => Some("/api/config"),
         ("POST", "/sniffbox/subscription/apply") => Some("/api/subscription"),
         ("GET", "/sniffbox/subscription/maintenance") => Some("/api/maintenance"),
@@ -82,6 +83,9 @@ mod tests {
     #[test]
     fn only_fixed_admin_operations_are_forwarded() {
         assert_eq!(target("GET", "/sniffbox/subscription/status"), Some("/api/status"));
+        assert_eq!(target("GET", "/sniffbox/subscription/providers"), Some("/api/providers"));
+        assert!(target("POST", "/sniffbox/subscription/providers").is_none());
+        assert!(target("GET", "/sniffbox/subscription/providers?config=true").is_none());
         assert_eq!(target("GET", "/sniffbox/subscription/config"), Some("/api/config"));
         assert_eq!(target("POST", "/sniffbox/subscription/apply"), Some("/api/subscription"));
         assert!(target("GET", "/sniffbox/subscription/apply").is_none());

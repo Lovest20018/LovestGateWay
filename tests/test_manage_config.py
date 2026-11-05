@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch, PropertyMock, Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_common import Layout, ManagementError
 from manage_config import ConfigManager
@@ -35,6 +36,46 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(self.apply({'ini': {'mode': 'free'}})['status'], 'unchanged')
         self.apply({'ini': {'mode': 'yaml'}}, dry_run=True)
         self.assertEqual(self.ini.read_bytes(), self.original); self.assertEqual(self.system.calls, [])
+
+    def test_live_rollback_needs_runtime_verification_before_claiming_success(self):
+        journal={'backup':'fixture','expected':{},'services':{'paopaogw':{'active':True,'enabled':False}}}
+        self.system.verify_services=Mock()
+        self.system.wait=Mock(side_effect=ManagementError('CORE_NOT_READY'))
+        with patch.object(Layout,'live',new_callable=PropertyMock,return_value=True), \
+             patch.object(self.manager.backups,'restore'):
+            with self.assertRaisesRegex(ManagementError,'ROLLBACK_UNCONFIRMED'):
+                self.manager._rollback(journal)
+            self.assertEqual(self.manager.journal()['phase'],'rollback_unconfirmed')
+            self.system.wait.side_effect=None
+            self.system.wait.return_value={'boot_id':'fixture','config_revision':'fixture'}
+            self.manager._rollback(journal)
+        self.assertEqual(self.manager.journal()['phase'],'rolled_back')
+        self.assertEqual(self.system.wait.call_count,2)
+
+    def test_live_rollback_keeps_inactive_core_and_disabled_api_without_readiness_waits(self):
+        journal={'backup':'fixture','expected':{},'services':{
+            'paopaogw':{'active':False,'enabled':False},'paopaogw-api':{'active':True,'enabled':False}}}
+        self.system.verify_services=Mock();self.system.wait=Mock();self.system.wait_api=Mock()
+        with patch.object(Layout,'live',new_callable=PropertyMock,return_value=True), \
+             patch.object(self.manager.backups,'restore'):
+            self.manager._rollback(journal)
+        self.system.wait.assert_not_called();self.system.wait_api.assert_not_called()
+        self.assertEqual(self.manager.journal()['phase'],'rolled_back')
+
+    def test_restore_service_failure_keeps_transaction_recoverable_for_retry(self):
+        from manage_common import write_json
+        from manage_config import JOURNAL
+        journal={'kind':'config','phase':'applying','backup':'fixture','expected':{},
+                 'services':{'paopaogw':{'active':False,'enabled':False}}}
+        write_json(self.layout,JOURNAL,journal)
+        with patch.object(self.manager.backups,'restore'), \
+             patch.object(self.system,'restore_services',side_effect=ManagementError('SYSTEM_OPERATION_FAILED')):
+            with self.assertRaisesRegex(ManagementError,'SYSTEM_OPERATION_FAILED'):
+                self.manager._rollback(journal)
+        self.assertEqual(self.manager.journal()['phase'],'applying')
+        with patch.object(self.manager.backups,'restore'):
+            self.assertEqual(self.manager.recover()['status'],'rolled_back')
+        self.assertEqual(self.manager.journal()['phase'],'rolled_back')
     def test_revision_conflict_does_not_write(self):
         with self.assertRaises(ManagementError): self.manager.apply({'ini': {'max_rec': 9}}, 'stale')
         self.assertEqual(self.ini.read_bytes(), self.original)
