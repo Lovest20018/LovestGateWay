@@ -8,6 +8,20 @@ use tokio::net::TcpStream;
 pub(crate) const MAX_BODY: usize = 1_100_000;
 const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 
+pub(crate) fn origin_allowed(req: &http::ReqHead) -> bool {
+    if req.method != "POST" { return true; }
+    let origins: Vec<_> = req.headers.iter().filter(|(name, _)| name.eq_ignore_ascii_case("origin")).collect();
+    // Bearer-authenticated command-line clients do not send Origin. Browsers
+    // that do send it must match the public authority before loopback rewrite.
+    if origins.is_empty() { return true; }
+    let hosts: Vec<_> = req.headers.iter().filter(|(name, _)| name.eq_ignore_ascii_case("host")).collect();
+    if origins.len() != 1 || hosts.len() != 1 { return false; }
+    let (Ok(origin), Ok(host)) = (std::str::from_utf8(&origins[0].1), std::str::from_utf8(&hosts[0].1)) else {
+        return false;
+    };
+    origin.eq_ignore_ascii_case(&format!("http://{host}")) || origin.eq_ignore_ascii_case(&format!("https://{host}"))
+}
+
 fn target(method: &str, path: &str) -> Option<&'static str> {
     match (method, path) {
         ("GET", "/sniffbox/subscription/status") => Some("/api/status"),
@@ -46,6 +60,11 @@ pub(crate) async fn handle(
     ka: bool,
     body: &[u8],
 ) -> io::Result<()> {
+    if !origin_allowed(req) {
+        return respond::send(stream, 403, "Forbidden",
+            &[("Content-Type", "application/json"), ("Cache-Control", "no-store")],
+            br#"{"error":"ORIGIN_REJECTED"}"#, ka).await;
+    }
     let Some(path) = target(&req.method, &req.path) else {
         return respond::send(stream, 405, "Method Not Allowed", &[], b"", ka).await;
     };
@@ -79,6 +98,23 @@ pub(crate) async fn forward(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_post_origin_is_checked_before_loopback_rewrite() {
+        let request = |headers: &str| http::parse_request(format!(
+            "POST /sniffbox/subscription/apply HTTP/1.1\r\n{headers}\r\n").as_bytes()).unwrap();
+        assert!(origin_allowed(&request("Host: gateway.test:8080\r\n")));
+        for origin in ["http://gateway.test:8080", "https://GATEWAY.test:8080"] {
+            assert!(origin_allowed(&request(&format!("Host: gateway.test:8080\r\nOrigin: {origin}\r\n"))));
+        }
+        assert!(origin_allowed(&request("Host: [::1]:8080\r\nOrigin: http://[::1]:8080\r\n")));
+        for origin in ["https://foreign.invalid", "null", "http://gateway.test:8081", "http://gateway.test:8080/"] {
+            assert!(!origin_allowed(&request(&format!("Host: gateway.test:8080\r\nOrigin: {origin}\r\n"))));
+        }
+        assert!(!origin_allowed(&request("Host: gateway.test\r\nOrigin: http://gateway.test\r\nOrigin: http://gateway.test\r\n")));
+        assert!(!origin_allowed(&request("Host: gateway.test\r\nHost: foreign.invalid\r\nOrigin: http://gateway.test\r\n")));
+        assert!(!origin_allowed(&request("Origin: http://gateway.test\r\n")));
+    }
 
     #[test]
     fn only_fixed_admin_operations_are_forwarded() {
