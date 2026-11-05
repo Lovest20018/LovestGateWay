@@ -486,6 +486,7 @@ load_clash() {
         load_ini
         closeall_flag="no"
         is_reload=0
+        saved_start_node=""
         log "[MODE]:""$mode"" [VERSION] :""$(clash -v)" succ
         echo "127.0.0.1 localhost" >/etc/hosts
         ppgw -genhost /tmp/clash.yaml -server "$dns_ip" -port "$dns_port" >>/etc/hosts
@@ -501,6 +502,11 @@ load_clash() {
             fi
             ppgw -reload >"$PPGWTTY" 2>&1
         else
+            if [ "${PPGW_DEBIAN:-0}" = "1" ]; then
+                # Read only while the owned Mihomo is stopped. A mere cache.db
+                # existence check also matches empty config-preflight caches.
+                saved_start_node=$(/usr/bin/python3 /usr/local/lib/paopaogw/clash_selection.py /etc/config/clash/cache.db 2>"$PPGWTTY")
+            fi
             sync_ntp
             ppgw -clash-up
         fi
@@ -543,7 +549,18 @@ load_clash() {
         fi
     fi
     unset PPGW_FORCE_CLOSEALL
-    if pidof clash >/dev/null 2>&1 && [ "$1" = "yes" ]; then
+    select_start_node="$1"
+    if [ "${PPGW_DEBIAN:-0}" = "1" ] && [ -n "$saved_start_node" ]; then
+        restored_start_node=$(ppgw -now_node 2>"$PPGWTTY")
+        if [ "$restored_start_node" = "$saved_start_node" ]; then
+            # Native store-selected restored the choice. Keep it until the
+            # ordinary health loop detects a failure; do not race it with a
+            # fresh fastest-node selection on every managed/cold restart.
+            select_start_node=no
+            log "Preserved saved Clash node selection." succ
+        fi
+    fi
+    if pidof clash >/dev/null 2>&1 && [ "$select_start_node" = "yes" ]; then
         ppgw -fastnode -test_node_url="$test_node_url" -ext_node="$ext_node" >"$PPGWTTY"
         if [ $? -ne 0 ]; then
             if [ "$fall_direct" = "yes" ]; then

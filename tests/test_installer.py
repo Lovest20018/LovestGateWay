@@ -23,7 +23,7 @@ class InstallerTests(unittest.TestCase):
             archive_path = work / 'lovestgateway-test-debian-amd64.tar.gz'
             import hashlib
             with verify_package(archive_path, hashlib.sha256(archive_path.read_bytes()).hexdigest()) as verified:
-                for name in ('lib/manage_web.py', 'lib/manage_policy.py', 'lib/manage_subscription.py', 'lib/manage_subscription_schedule.py', 'units/paopaogw-settings.service',
+                for name in ('lib/manage_web.py', 'lib/manage_policy.py', 'lib/manage_subscription.py', 'lib/manage_subscription_schedule.py', 'lib/clash_selection.py', 'units/paopaogw-settings.service',
                              'ui/gateway.html', 'ui/ui-build.json', 'docs/debian-web-settings.md'):
                     self.assertIn(name, verified.manifest)
             with tarfile.open(work / 'lovestgateway-test-debian-amd64.tar.gz') as archive:

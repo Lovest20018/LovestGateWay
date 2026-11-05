@@ -57,6 +57,7 @@ def main():
         copy(ROOT / 'integration/unified_editor.py', 'lib/unified_editor.py')
         copy(ROOT / 'integration/clash_ppsub.py', 'lib/clash_ppsub.py')
         copy(ROOT / 'integration/clash_policy.py', 'lib/clash_policy.py')
+        copy(ROOT / 'integration/clash_selection.py', 'lib/clash_selection.py')
         copy(ROOT / 'integration/mihomo_update.py', 'lib/mihomo_update.py', True)
         copy(ROOT / 'integration/maintenance.py', 'lib/maintenance.py', True)
         copy(ROOT / 'integration/mihomo_upload.py', 'lib/mihomo_upload.py')

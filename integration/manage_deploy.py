@@ -17,7 +17,7 @@ from manage_runtime import System
 from manage_config import JOURNAL
 
 LIB = {'runtime.sh', 'network.py', 'launch.py', 'test_profile.py', 'ppg.sh', 'nft.sh', 'gateway_api.py',
-       'staged_probe.py', 'subscription_admin.py', 'unified_editor.py', 'clash_ppsub.py', 'clash_policy.py', 'mihomo_update.py',
+       'staged_probe.py', 'subscription_admin.py', 'unified_editor.py', 'clash_ppsub.py', 'clash_policy.py', 'clash_selection.py', 'mihomo_update.py',
        'maintenance.py', 'mihomo_upload.py', 'history_store.py', 'observe.py', 'base.yaml', 'build.json', 'bin/sniffbox',
        'manage.py', 'manage_common.py', 'manage_model.py', 'manage_runtime.py', 'manage_config.py', 'manage_preview.py', 'manage_diagnostics.py',
        'manage_backup.py', 'manage_deploy.py', 'manage_assets.py', 'manage_web.py', 'manage_policy.py', 'manage_subscription.py', 'manage_subscription_schedule.py', 'manage_operations.py', 'manage_acceptance.py', 'ppgw-admin'}
