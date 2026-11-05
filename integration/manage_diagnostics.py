@@ -147,7 +147,8 @@ class Diagnostics:
             raw = read_bytes(self.layout, name, limit=512 * 1024 * 1024)
             info = path.stat() if raw is not None else None
             files[name] = None if info is None else [digest(raw), stat.S_IMODE(info.st_mode),
-                                                    getattr(info, 'st_uid', 0), getattr(info, 'st_gid', 0)]
+                                                    getattr(info, 'st_uid', 0), getattr(info, 'st_gid', 0),
+                                                    info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
         raw = read_bytes(self.layout, JOURNAL)
         return self._seal('current', {'files': files, 'services': services,
                                      'journal': digest(raw) if raw is not None else None})
@@ -273,6 +274,7 @@ class Diagnostics:
 
     def _plan(self, action, identifier):
         services = service_states(self.system.status())
+        current = self._current(services)
         journal = self._journal()
         if action == 'restore':
             require_idle(self.layout)
@@ -302,8 +304,13 @@ class Diagnostics:
         targets = index['files'] if index else {}
         worker_unit_changed = (full or worker_unit in targets) and self._file_change(worker_unit, targets.get(worker_unit)) not in {None, 'unchanged'}
         worker_state_preserved = bool(worker in preserved and worker in desired and desired[worker] != services.get(worker))
+        # The displayed scope and service effects must describe the same state
+        # bound by the confirmation. Do not sign a newer state into an older
+        # plan when a file or service changes while the preview is sampled.
+        if not hmac.compare_digest(current, self._current(service_states(self.system.status()))):
+            raise ManagementError('STALE_RECOVERY_PREVIEW')
         claims = {'schema': 1, 'action': action, 'backup': identifier,
-                  'current': self._current(services), 'target': self._seal('target', index),
+                  'current': current, 'target': self._seal('target', index),
                   'expires': int(self.clock()) + self.token_lifetime}
         encoded = base64.urlsafe_b64encode(canonical(claims)).decode('ascii').rstrip('=')
         token = encoded + '.' + self._seal('token', claims)
@@ -323,11 +330,13 @@ class Diagnostics:
     def preview_restore(self, body):
         if (not isinstance(body, dict) or set(body) != {'backup'} or not isinstance(body['backup'], str)
                 or not BACKUP_ID.fullmatch(body['backup'])): raise ManagementError('INVALID_RECOVERY_REQUEST')
-        return self._plan('restore', body['backup'])[0]
+        with operation_lock(self.layout):
+            return self._plan('restore', body['backup'])[0]
 
     def preview_recover(self, body):
         if body != {}: raise ManagementError('INVALID_RECOVERY_REQUEST')
-        return self._plan('recover', None)[0]
+        with operation_lock(self.layout):
+            return self._plan('recover', None)[0]
 
     def validate_execution(self, action, body, with_plan=False):
         """Called under operation_lock immediately before any transaction writes."""
