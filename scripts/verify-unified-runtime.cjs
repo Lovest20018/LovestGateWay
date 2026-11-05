@@ -63,12 +63,12 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
       } catch { return route.fulfill({status: 404, body: ''}); }
     });
     await page.goto(origin+'/ui/#/overview');
-    const runtime=page.locator('#runtime-panel');await runtime.locator('main').waitFor();
+    const runtime=page.locator('#runtime-panel');await page.locator('#overview-page').waitFor();
     await page.evaluate(()=>{window.documentIdentity='same-document';});
     const pages=[];
     assert.equal(await page.locator('#shell-nav [data-route]>.shell-icon').count(),11);
     const brandLogo=page.locator('#shell-nav .shell-brand img');assert.equal(await brandLogo.getAttribute('src'),'/ui/lovestgateway.svg');await page.waitForFunction(()=>document.querySelector('.shell-brand img')?.naturalWidth>0);
-    for(const key of ['proxies','rules','connections','traffic','distribution','logs','region','overview']){
+    for(const key of ['proxies','rules','connections','traffic','distribution','logs','region']){
       await page.locator('#shell-nav [data-route="'+key+'"]').click();
       await page.waitForURL('**/#/'+key);
       await runtime.locator('main h1').first().waitFor();
@@ -77,8 +77,9 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
       assert.equal(await runtime.locator('aside').first().isVisible(),false);
       assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document');
     }
-    assert.equal(new Set(pages.map(row=>row.heading)).size,8,'each navigation must render its own runtime component');
+    assert.equal(new Set(pages.map(row=>row.heading)).size,7,'each compatibility navigation must render its own runtime component');
     assert.equal(await page.locator('iframe').count(),0);
+    await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('#overview-page').waitFor();
     await page.screenshot({path:path.join(root,'dist/unified-overview-desktop.png')});
     await page.locator('#shell-nav [data-route="settings"]').click();
     const limit=page.getByLabel('流量记录上限',{exact:true});await limit.fill('9010');await limit.press('Tab');
@@ -102,7 +103,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     // Changing the accepted secret forces the mounted upstream form to reauth.
     const password='ChangedFixturePassword8',newSecret=require('node:crypto').createHash('sha256').update(password).digest('hex');
     expectedSecret=newSecret;
-    await page.locator('#shell-nav [data-route="overview"]').click();
+    await page.locator('#shell-nav [data-route="traffic"]').click();
     await runtime.locator('input[autocomplete="current-password"]').waitFor({state:'attached'});
     await page.getByRole('button',{name:'重新登录',exact:true}).click();
     await page.locator('#reauth-panel').getByLabel('管理密码',{exact:true}).fill(password);
@@ -113,19 +114,19 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await runtime.getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+newSecret),'upstream must use the new secret after reauth');
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','reauthentication must not reload the document');
-    await page.goBack();await page.waitForURL('**/#/overview');await runtime.getByRole('heading',{name:'概览',exact:true}).waitFor();
+    await page.goBack();await page.waitForURL('**/#/traffic');await runtime.locator('main h1').filter({hasText:'流量'}).waitFor();
     await page.goForward();await page.waitForURL('**/#/proxies');await runtime.getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','browser Back and Forward must not reload the document');
     await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route="overview"]').click();
-    await runtime.getByRole('heading',{name:'概览',exact:true}).waitFor();await page.screenshot({path:path.join(root,'dist/unified-overview-mobile.png')});
+    await page.locator('#overview-page').getByRole('heading',{name:'概览',exact:true}).waitFor();await page.screenshot({path:path.join(root,'dist/unified-overview-mobile.png')});
     assert.equal(await page.locator('#shell-status').isVisible(),false,'reauth must clear the expired banner');
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
-    await page.reload();await page.locator('#runtime-panel main').waitFor();
+    await page.reload();await page.locator('#overview-page').waitFor();
     assert.equal(await page.locator('#shell-appearance [aria-pressed=true]').getAttribute('data-theme-choice'),'light');
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
     await page.evaluate(()=>{localStorage.setItem('ppgw-theme','custom');localStorage.setItem('ppgw-theme-base','dark');localStorage.setItem('ppgw-custom-colors',JSON.stringify({'--brand':'#7c5cff'}));});
-    await page.emulateMedia({colorScheme:'light'});await page.reload();await page.locator('#runtime-panel main').waitFor();
+    await page.emulateMedia({colorScheme:'light'});await page.reload();await page.locator('#overview-page').waitFor();
     assert.equal(await page.locator('#shell-appearance [aria-pressed=true]').getAttribute('data-theme-choice'),'system');
     assert.deepEqual(await page.evaluate(()=>[document.documentElement.dataset.theme,localStorage.getItem('ppgw-theme-base'),localStorage.getItem('ppgw-custom-colors'),document.documentElement.style.getPropertyValue('--brand')]),['light',null,null,'']);
     assert.equal(await page.locator('input[type=color]').count(),0);

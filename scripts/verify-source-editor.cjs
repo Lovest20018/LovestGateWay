@@ -66,6 +66,8 @@ async function exercise(browser,kind){
       assert.equal(await groupName.inputValue(),'Latest import','an older file must not replace a newer import');
       await chooseDelayed('delayed-import-unmount.json','Late import must not reach next editor',true);
       page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('.source-editor').waitFor({state:'detached'});await release('delayed-import-unmount.json');
+      // Mount one compatibility page to exercise its storage bridge explicitly.
+      await page.locator('#shell-nav [data-route="connections"]').click();await page.locator('#runtime-panel main').waitFor();
       const storageCheck=await page.locator('#runtime-panel').evaluate((_,secret)=>{
         const verified=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'changed-in-legacy',clashAPIConfigs:[{secret,label:'updated-legacy-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}],legacyOption:'new-value'}));

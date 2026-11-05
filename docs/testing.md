@@ -18,7 +18,7 @@ API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板�
 
 ```sh
 node frontend/build.mjs
-node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs
+node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs frontend/tests/overview.test.mjs
 ```
 
 ```sh
@@ -36,6 +36,8 @@ python3 scripts/prepare_dashboard.py --output dist/test-ui
 node scripts/verify-settings-fixture.cjs dist/test-ui
 node scripts/verify-dashboard-fixture.cjs dist/test-ui
 node scripts/verify-runtime-navigation.cjs dist/test-ui
+node scripts/verify-unified-runtime.cjs dist/test-ui
+node scripts/verify-overview-fixture.cjs dist/test-ui
 node scripts/verify-subscription-flow.cjs dist/test-ui
 node scripts/verify-subscription-drafts.cjs dist/test-ui
 node scripts/verify-source-editor.cjs dist/test-ui
@@ -49,6 +51,8 @@ node scripts/verify-observer-api-fixture.cjs dist/test-ui
 订阅草稿验证同时检查结构化变化预览、来源覆盖说明、敏感内容隐藏、名称按文本显示、后台生效计划及手机预览尺寸；API 使用合成响应，不触碰真实订阅或服务。
 
 源码编辑器验证在非安全 HTTP 合成地址上检查登录、重新认证保留草稿、偏好保留和消息来源校验，并将实际表单提交交给后端 PPsub 校验或 Clash 合并函数，验证未编辑字段和隐藏凭据保留。`tests/test_dashboard.py` 检查构建清单、原兼容 bundle 字节不变和重复构建结果一致。
+
+概览验证直接加载可维护源码，断言不请求兼容 bundle，所有状态请求只读；覆盖动态采样、计数与启动身份变化、静态嵌套字段保留、API 故障重试、重新登录、主题、图表悬停、页面离开后的取消与迟到响应，以及 390px/320px 手机布局。冷启动节点选择的单元与真实 Mihomo 隔离复验见 [节点选择保留](node-selection-persistence.md)。
 
 复杂编辑器验证使用 12 个提供商、60 个节点组、200 条规则和 1000 个节点候选，分别检查原生 PPsub、完整 Clash 配置的 1440px 桌面和 320px 手机布局。长名称包含按文本展示的 HTML 样例；测试末尾分组的编辑、复制、移动、删除、节点标签提交、模式切换及预览保存，并检查提供商后台刷新与页签切换保留草稿。提交交给实际后端校验或合并函数，逐项比较未编辑分组、规则、扩展字段和隐藏凭据；完整配置重命名分组时还检查规则引用按原顺序同步更新。证据默认写入 `dist/complex-editor-evidence/`，第三个参数可指定其他证据目录。该验证不访问真实机场，也不代表终端网络已通过验收。
 

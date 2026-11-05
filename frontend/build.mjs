@@ -24,7 +24,7 @@ export async function build(output=join(here,'dist')) {
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
   for(const name of ['model.js','auth.js','icons.js'])await emit(name,await textFile(join(here,'src',name)));
   await emit('legacy-bridge.js',(await textFile(join(here,'src/legacy-bridge.js'))).replaceAll('@@runtime-bundle@@',bundle));
-  for(const name of ['editor.js','diagnostics.js','shell.js']) {
+  for(const name of ['editor.js','diagnostics.js','overview.js','shell.js']) {
     let source=await textFile(join(here,'src',name));
     for(const [label,hashed] of Object.entries(assets)) source=source.replaceAll('./'+label,'./'+hashed);
     await emit(name,source);
@@ -32,6 +32,7 @@ export async function build(output=join(here,'dist')) {
   await emit('shell.css',await textFile(join(here,'src/shell.css')));
   await emit('editor.css',await textFile(join(here,'src/editor.css')));
   await emit('diagnostics.css',await textFile(join(here,'src/diagnostics.css')));
+  await emit('overview.css',await textFile(join(here,'src/overview.css')));
   await writeFile(join(output,'legacy.html'),'<!doctype html><meta charset="utf-8"><script>location.replace("/ui/"+location.hash)</script>');
   let index=await textFile(join(here,'src/index.html'));
   for(const [label,hashed] of Object.entries(assets)) index=index.replaceAll('@@'+label+'@@',hashed);
