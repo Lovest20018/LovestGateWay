@@ -19,7 +19,7 @@ const native={version:'PaoPaoGateWay 3.1',exported_at:'fixture',custom:{untouche
 async function exercise(browser,kind){
   const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'}),page=await context.newPage(),errors=[];
   page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));
-  await page.addInitScript(()=>{if(!localStorage.getItem('PaoPaoGateWay'))localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'preserve-me',clashAPIConfigs:[{secret:'',label:'existing-profile'}]}));});
+  await page.addInitScript(()=>{if(!localStorage.getItem('PaoPaoGateWay'))localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'preserve-me',clashAPIConfigs:[{secret:'',label:'existing-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}]}));});
   let config=structuredClone(kind==='ppsub'?native:baseline),operation=null,expired=false,posted=null,merged=null,validations=0;
   const model={...structuredClone(defaults),revision:'a'.repeat(64),assets:[],source:{native_ppsub:kind==='ppsub',local_policy:kind==='clash_patch'},mihomo_installed:true};
   await page.route(origin+'/**',async route=>{
@@ -50,6 +50,36 @@ async function exercise(browser,kind){
     await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();
     const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);await ready();
     if(kind==='ppsub'){
+      await page.evaluate(()=>{const original=File.prototype.text;window.delayedImports={};File.prototype.text=function(){if(this.name.startsWith('delayed-import-')){const name=this.name;return new Promise(resolve=>{window.delayedImports[name]=()=>original.call(this).then(resolve);});}return original.apply(this,arguments);};});
+      const chooseDelayed=async(name,label,confirm=false)=>{if(confirm)page.once('dialog',dialog=>dialog.accept());const value=structuredClone(native);value['node-groups'][0].name=label;await page.locator('.source-editor input[type=file]').setInputFiles({name,mimeType:'application/json',buffer:Buffer.from(JSON.stringify(value))});await page.waitForFunction(name=>typeof window.delayedImports[name]==='function',name);};
+      const release=async name=>{await page.evaluate(name=>window.delayedImports[name](),name);await page.waitForTimeout(50);};
+      const groupName=page.locator('.groups .item').first().locator('[data-field="name"]');
+      await chooseDelayed('delayed-import-edit.json','Late import must not replace typed draft');
+      await groupName.fill('Typed after file chosen');await release('delayed-import-edit.json');
+      assert.equal(await groupName.inputValue(),'Typed after file chosen','late file read must not overwrite newer form input');
+      assert.match(await page.locator('[data-import-status]').textContent(),/已取消迟到的导入/);
+      await chooseDelayed('delayed-import-reload.json','Late import must not replace reloaded document',true);
+      page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'重新读取',exact:true}).click();await ready();await release('delayed-import-reload.json');
+      assert.equal(await groupName.inputValue(),'Main','late import must not overwrite a newer server reload');
+      await chooseDelayed('delayed-import-older.json','Older import');
+      const latest=structuredClone(native);latest['node-groups'][0].name='Latest import';await page.locator('.source-editor input[type=file]').setInputFiles({name:'latest-import.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(latest))});await page.waitForFunction(()=>document.querySelector('.groups [data-field="name"]')?.value==='Latest import');await release('delayed-import-older.json');
+      assert.equal(await groupName.inputValue(),'Latest import','an older file must not replace a newer import');
+      await chooseDelayed('delayed-import-unmount.json','Late import must not reach next editor',true);
+      page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('.source-editor').waitFor({state:'detached'});await release('delayed-import-unmount.json');
+      const storageCheck=await page.frameLocator('.legacy-frame').locator('body').evaluate((_,secret)=>{
+        const verified=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'changed-in-legacy',clashAPIConfigs:[{secret,label:'updated-legacy-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}],legacyOption:'new-value'}));
+        const changed=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        localStorage.setItem('ppgw-theme','dark');localStorage.removeItem('PaoPaoGateWay');const loggedOut=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret,label:'explicit-single-profile'}],favorite:'explicit-settings-update'}));const explicit=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'preserve-me',clashAPIConfigs:[{secret,label:'existing-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}]}));
+        return{verified,changed,loggedOut,explicit,theme:localStorage.getItem('ppgw-theme')};
+      },secret);
+      assert.equal(storageCheck.verified.clashAPIConfigs.length,2);assert.equal(storageCheck.verified.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.verified.clashAPIConfigs[1].secret,'secondary-auth-fixture');
+      assert.equal(storageCheck.changed.favorite,'changed-in-legacy');assert.equal(storageCheck.changed.clashAPIConfigs[0].label,'updated-legacy-profile');
+      assert.equal(storageCheck.loggedOut.favorite,'changed-in-legacy');assert.equal(storageCheck.loggedOut.legacyOption,'new-value');assert.equal(storageCheck.loggedOut.clashAPIConfigs[0].secret,'');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].secret,'');assert.equal(storageCheck.theme,'dark');
+      assert.equal(storageCheck.explicit.favorite,'explicit-settings-update');assert.equal(storageCheck.explicit.clashAPIConfigs.length,1,'explicit profile removal remains possible');assert.equal(storageCheck.explicit.clashAPIConfigs[0].label,'explicit-single-profile');
+      await page.locator('#shell-nav [data-route="subscriptions"]').click();await ready();assert.equal(await groupName.inputValue(),'Main','disposed import must not write into a newly mounted editor');
       const advanced=page.locator('.editor-body > .editor-advanced');await advanced.locator('summary').click();await page.waitForFunction(()=>document.querySelector('.editor-body > .editor-advanced textarea')?.value);
       const value=JSON.parse(await advanced.locator('textarea').inputValue());value.advanced_added={preserve:true};
       await advanced.locator('textarea').fill(JSON.stringify(value));await advanced.getByRole('button',{name:'应用 JSON 修改',exact:true}).click();
@@ -83,10 +113,10 @@ async function exercise(browser,kind){
     await page.waitForFunction(()=>document.querySelector('#shell-status')?.textContent.includes('重新登录'),{timeout:15000});expired=false;
     await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-dialog').waitFor({state:'detached'});
     assert.equal(await page.locator('.groups .item').first().locator('[data-field="name"]').inputValue(),'Draft survives reauthentication');
-    const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(saved.favorite,'preserve-me');assert.equal(saved.clashAPIConfigs[0].label,'existing-profile');assert.equal(saved.clashAPIConfigs[0].secret,secret);
+    const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(saved.favorite,'preserve-me');assert.equal(saved.clashAPIConfigs[0].label,'existing-profile');assert.equal(saved.clashAPIConfigs[0].secret,secret);assert.equal(saved.clashAPIConfigs[1].label,'second-profile');assert.equal(saved.clashAPIConfigs[1].secret,'secondary-auth-fixture');
     await page.evaluate(()=>window.postMessage({type:'ppgw:route',hash:'#/overview'},location.origin));assert.equal(new URL(page.url()).hash,'#/subscriptions','messages from an untrusted source are ignored');
     page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav').getByRole('button',{name:'退出登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).waitFor();const loggedOut=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(loggedOut.favorite,'preserve-me');assert.equal(loggedOut.clashAPIConfigs[0].label,'existing-profile');assert.equal(loggedOut.clashAPIConfigs[0].secret,'');
-    assert.deepEqual(errors,[]);return{kind,nonSecureHttpLogin:true,actualFormsValidatedByBackend:true,hiddenFieldsPreserved:true,copyMoveDelete:true,reauthenticationPreservesDraft:true,storedPreferencesPreserved:true,foreignMessageIgnored:true,validations,pageErrors:errors};
+    assert.deepEqual(errors,[]);return{kind,nonSecureHttpLogin:true,actualFormsValidatedByBackend:true,hiddenFieldsPreserved:true,copyMoveDelete:true,reauthenticationPreservesDraft:true,storedPreferencesPreserved:true,foreignMessageIgnored:true,...(kind==='ppsub'?{lateImportPreservesNewInput:true,reloadInvalidatesImport:true,newerImportWins:true,unmountedImportIgnored:true}:{}),validations,pageErrors:errors};
   }finally{await context.close();}
 }
 (async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{const results=[];for(const kind of ['ppsub','clash_patch'])results.push(await exercise(browser,kind));await fs.mkdir(path.join(root,'dist'),{recursive:true});await fs.writeFile(path.join(root,'dist/source-editor-browser-evidence.json'),JSON.stringify({syntheticOnly:true,results},null,2)+'\n');console.log(JSON.stringify({syntheticOnly:true,results}));}finally{await browser.close();}})().catch(error=>{console.error(error);process.exitCode=1;});
