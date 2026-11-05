@@ -35,6 +35,7 @@ async function main() {
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
     let stale = false, fail = false, expireLogin = false, runningJob, polls = 0, configDelay = 0, coreFailed = true, coreLimited = false, localUpload = null, localInstalled = false, localOperations = [];
     let managementOffline=false, managementPolls=0, configReads=0;
+    let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreSuperseded=false;
     const management={state:'unknown',policy_state:'saved_unconfirmed',recent:[],latest:null};
     model.management=management;
     await page.route(origin + '/**', async route => {
@@ -47,16 +48,23 @@ async function main() {
         if (body.operation === 'chunk') { assert.equal(body.offset, localUpload.bytes.length);localUpload.bytes=Buffer.concat([localUpload.bytes,Buffer.from(body.data,'base64')]); return route.fulfill({contentType:'application/json',body:JSON.stringify({received:localUpload.bytes.length})}); }
         assert.equal(body.operation,'commit');assert.equal(localUpload.bytes.length,localUpload.size);
         assert.equal(crypto.createHash('sha256').update(localUpload.bytes).digest('hex'),localUpload.sha256);
-        localInstalled=true;return route.fulfill({contentType:'application/json',body:JSON.stringify({status:'running',action:'install-local'})});
+        localInstalled=true;coreId='mihomo_'+(++coreSerial);return route.fulfill({contentType:'application/json',body:JSON.stringify({id:coreId,status:'running',action:'install-local'})});
       }
-      if (target === '/sniffbox/subscription/core/check' || target === '/sniffbox/subscription/maintenance') {
+      if (target === '/sniffbox/subscription/core/check' || target === '/sniffbox/subscription/core/rollback' || target === '/sniffbox/subscription/maintenance') {
         assert.equal(req.headers().authorization, 'Bearer fixture-token');
-        const data = target.endsWith('/check') ? {status: 'running', action: 'check'} : {
+        if (!target.endsWith('/maintenance')) { coreId='mihomo_'+(++coreSerial);coreMutations++;coreReads=0; }
+        if (target.endsWith('/maintenance') && coreRestart) {
+          coreReads++;
+          if (coreExpired) return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'LOGIN_REQUIRED'})});
+          if (coreReads<=2) return route.abort('failed');
+          if (coreReads===3) return route.fulfill({status:503,contentType:'application/json',body:'{}'});
+        }
+        const data = !target.endsWith('/maintenance') ? {id:coreId,status: 'running', action: target.endsWith('/rollback')?'rollback':'check'} : {
           core: {installed_version: localInstalled ? localUpload.version : null, latest_version: coreFailed ? null : 'v1.2.3',
             selection:model.settings.maintenance.core_variant, architecture:'amd64-'+(model.settings.maintenance.core_variant==='auto'?'v3':model.settings.maintenance.core_variant), installed_architecture:localInstalled?'amd64-v1':null,
             cpu_detection:'glibc-hwcaps', selection_supported:true, variant_change_available:!coreFailed},
-          operation: localInstalled ? {status:'complete',action:'install-local'} : coreLimited ? {status: 'failed', error: 'RELEASE_RATE_LIMITED', retry_at: 2000000000, message: '限流'} : coreFailed ? {status: 'failed', error: 'RELEASE_NETWORK_TIMEOUT',
-            message: '连接 GitHub 超时，请检查这台 Debian 的外网连接后重试。'} : {status: 'complete', action: 'check'},
+          operation: coreRestart ? {id:coreSuperseded?'mihomo_99999':coreId,status:coreGate?'running':'complete',action:'rollback'} : localInstalled ? {id:coreId,status:'complete',action:'install-local'} : coreLimited ? {id:coreId,status: 'failed', error: 'RELEASE_RATE_LIMITED', retry_at: 2000000000, message: '限流'} : coreFailed ? {id:coreId,status: 'failed', error: 'RELEASE_NETWORK_TIMEOUT',
+            message: '连接 GitHub 超时，请检查这台 Debian 的外网连接后重试。'} : {id:coreId,status: 'complete', action: 'check'},
         };
         return route.fulfill({contentType: 'application/json', body: JSON.stringify(data)});
       }
@@ -69,7 +77,7 @@ async function main() {
         if (target.endsWith('/status')) {
           managementPolls++;
           if(managementOffline)return route.abort('failed');
-          data={management,runtime:{status:'staged'},running_mode:null,source:{local_policy:true}};
+          data={management:coreSuperseded?{...management,recent:[{id:coreId,source:'mihomo',status:coreGate?'running':'complete',action:'rollback'}]}:management,runtime:{status:'staged'},running_mode:null,source:{local_policy:true}};
         }
         else if (target.endsWith('/config')) { configReads++; if (configDelay) await new Promise(resolve => setTimeout(resolve, configDelay)); data = model; }
         else if (target.endsWith('/preview')) {
@@ -125,7 +133,7 @@ async function main() {
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.screenshot({path:path.join(root,'dist/password-settings-mobile.png'),fullPage:true});
     await page.setViewportSize({width:1440,height:1000}); await page.waitForTimeout(400);
-    const shell = await page.locator('#shell-nav').elementHandle();
+    let shell = await page.locator('#shell-nav').elementHandle();
     const navigation = page.locator('#shell-nav');
     assert.equal(await navigation.count(), 1);
     assert.equal(await navigation.locator('a[href="#/settings"].active').count(), 1);
@@ -170,6 +178,35 @@ async function main() {
     assert.deepEqual(localOperations,['begin',...Array(Math.ceil(localArchive.length/16384)).fill('chunk'),'commit']);
     assert.equal(await page.locator('#notice').innerText(),'核心维护已完成。');
     assert.equal(await page.getByRole('button',{name:'上传并安装 Mihomo',exact:true}).isEnabled(),true);
+    // Core restarts close the same HTTP listener used by maintenance polling.
+    // Recover GET failures without repeating the mutation or losing its identity.
+    coreRestart=true;coreGate=true;
+    const mutationsBefore=coreMutations;
+    await page.getByRole('button',{name:'回退上一版本',exact:true}).click();
+    await page.getByText('网关正在重启或暂时断连，正在重新连接并查询维护结果；请勿重复安装。',{exact:true}).waitFor();
+    const coreRecord=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('lovestgateway-core-job')));
+    assert.deepEqual(coreRecord,{id:coreId,action:'rollback'});
+    assert.equal(await page.getByRole('button',{name:'回退上一版本',exact:true}).isDisabled(),true);
+    assert.doesNotMatch(await page.locator('#notice').innerText(),/Failed to fetch/);
+    await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('维护任务正在后台执行'),{},{timeout:20000});
+    assert.ok(coreReads>=4);
+    // Reload after the worker finished must still query the saved task.
+    coreGate=false;coreSuperseded=true;
+    page.once('dialog',dialog=>dialog.accept());await page.reload();
+    await page.getByText('核心维护已完成。',{exact:true}).waitFor();
+    shell=await page.locator('#shell-nav').elementHandle();
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem('lovestgateway-core-job')),null);
+    assert.equal(coreMutations,mutationsBefore+1);
+    await page.getByRole('tab',{name:'维护与 API',exact:true}).click();
+    // Authentication can expire during reconnect. Relogin/read recovery never resubmits.
+    coreReads=0;coreGate=true;coreSuperseded=false;coreExpired=true;
+    await page.getByRole('button',{name:'回退上一版本',exact:true}).click();
+    await page.getByText('登录已失效，请先返回管理面板重新登录。',{exact:true}).waitFor();
+    assert.ok(await page.evaluate(()=>sessionStorage.getItem('lovestgateway-core-job')));
+    coreExpired=false;coreGate=false;
+    await page.getByText('核心维护已完成。',{exact:true}).waitFor({timeout:20000});
+    assert.equal(coreMutations,mutationsBefore+2);
+    coreRestart=false;coreSuperseded=false;
     await page.screenshot({path:path.join(root,'dist/mihomo-manual-desktop.png'),fullPage:true});
     await page.setViewportSize({width:390,height:844});
     await page.waitForTimeout(400);
@@ -328,7 +365,7 @@ async function main() {
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
       sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, appearanceSelection: true, mobileMenu: true,
-      unmountDuringFetch: true, observerApiSettings: true, coreNetworkFailureAndRetry: true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
+      unmountDuringFetch: true, observerApiSettings: true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
