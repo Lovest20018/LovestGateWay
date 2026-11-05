@@ -13,7 +13,7 @@
     const openHelp = new Set();
     let model, category = 'access', subscriptionControls = null, sourceDraft = null, sourceDetails = null;
     let passwordConfirmation = '';
-    let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0;
+    let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0, corePolling = null;
     const bridge = {setEditorBusy: busy => { if(editorBusy!==busy){editorBusy=busy;updateDirty();} },
       syncEditor: data => {
         if (!data.settings_revision) throw Error('配置已变化，请重新读取后再保存。');
@@ -221,6 +221,12 @@
       try { await options.refreshRuntime(() => !stopped); } catch { /* Keep a successful apply result if the follow-up read fails. */ }
     }
     function pending() { try { return JSON.parse(sessionStorage.getItem('lovestgateway-job') || 'null'); } catch { return null; } }
+    function pendingCore() {
+      try {
+        const record = JSON.parse(sessionStorage.getItem('lovestgateway-core-job') || 'null');
+        return /^mihomo_[0-9]+$/.test(record?.id || '') && ['check','update','rollback','install-local','scheduled'].includes(record.action) ? record : null;
+      } catch { return null; }
+    }
     function identifier() { return [...crypto.getRandomValues(new Uint8Array(16))].map(v => v.toString(16).padStart(2, '0')).join(''); }
     function valueOf(namespace, key) { return dirty.has(namespace + '.' + key) ? dirty.get(namespace + '.' + key) : model.settings[namespace][key]; }
     function setValue(namespace, key, value) {
@@ -788,19 +794,46 @@
       if ($('maintenance-state')) $('maintenance-state').textContent = `当前 Mihomo ${data.core.installed_version || '未安装'} · 官方稳定版 ${data.core.latest_version || (failed ? (data.operation?.error === 'RELEASE_RATE_LIMITED' ? '查询受限' : '未取得版本信息') : '尚未检查')}` + cpu + selection + available + (busy ? ' · 后台正在处理，请稍候…' : detail ? ' · ' + detail : '');
       return {failed, busy, detail};
     }
-    async function pollCore(action) {
+    async function pollCore(record) {
       for (let attempts = 0; attempts < 100 && !stopped; attempts++) {
         await pause(attempts ? 3000 : 1500);
         if (stopped) return;
-        const data = await api('maintenance', undefined, 'subscription');
-        const state = maintenanceState(data);
-        if (state.busy) continue;
-        if (action !== 'check') window.ppgwPpsub?.invalidate();
-        if (!state.failed && action !== 'check') await refreshRuntime();
-        notice(state.failed ? state.detail : '核心维护已完成。', state.failed ? 'error' : 'success');
-        return;
+        try {
+          let data = await api('maintenance', undefined, 'subscription');
+          if (data.operation?.id !== record.id) {
+            // Another tab can start a newer task before this browser reconnects.
+            // Only the saved task's result may finish this browser's tracking.
+            const status = await api('status');
+            const own = status.management?.recent?.find(row => row.source === 'mihomo' && row.id === record.id);
+            if (!own) { notice('尚未查到本次维护任务的结果，正在继续核对；不会重复提交安装。'); continue; }
+            data = {...data, operation: own};
+          }
+          const state = maintenanceState(data);
+          if (state.busy) { notice('维护任务正在后台执行，重启期间会自动重新连接并继续查询。'); continue; }
+          if (!['complete','failed','interrupted'].includes(data.operation?.status)) continue;
+          if (record.action !== 'check') window.ppgwPpsub?.invalidate();
+          if (!state.failed && record.action !== 'check') await refreshRuntime();
+          if (pendingCore()?.id === record.id) sessionStorage.removeItem('lovestgateway-core-job');
+          notice(state.failed ? state.detail : '核心维护已完成。', state.failed ? 'error' : 'success');
+          return;
+        } catch (error) {
+          if (stopped) return;
+          notice(error.status === 401 ? message('LOGIN_REQUIRED') : '网关正在重启或暂时断连，正在重新连接并查询维护结果；请勿重复安装。', error.status === 401 ? 'error' : '');
+        }
       }
-      if (!stopped) notice('维护任务仍在后台执行，请刷新页面查看结果，或检查 paopaogw-core-action@' + action + ' 服务状态。');
+      if (!stopped) {
+        notice('尚未确认维护结果，任务号已保留。可继续查询、刷新或重新登录；不会重复提交安装。');
+        $('notice').append(el('button', {type:'button', class:'btn', text:'继续查询维护结果', onclick:() => followCore(record)}));
+      }
+    }
+    async function followCore(operation, action = operation?.action) {
+      const record = {id: operation?.id, action};
+      if (!/^mihomo_[0-9]+$/.test(record.id || '')) throw Error('维护任务号未确认，请刷新页面核对后台状态后再操作。');
+      if (corePolling) return corePolling;
+      sessionStorage.setItem('lovestgateway-core-job', JSON.stringify(record));
+      running = true; updateDirty();
+      corePolling = pollCore(record).finally(() => { corePolling = null; running = Boolean(pendingCore()); updateDirty(); });
+      return corePolling;
     }
     function coreAvailable() {
       if (dirty.size || running || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) { notice('请先完成当前配置操作。', 'error'); return false; }
@@ -810,11 +843,11 @@
       if (!coreAvailable()) return;
       running = true; updateDirty();
       try {
-        await api('core/' + action, {}, 'subscription');
+        const operation = await api('core/' + action, {}, 'subscription');
         if ($('maintenance-state')) $('maintenance-state').textContent = '维护已提交，正在处理…';
-        await pollCore(action);
-      } catch (error) { if (!stopped) notice(error.message, 'error'); }
-      finally { running = false; updateDirty(); }
+        await followCore(operation, action);
+      } catch (error) { if (!stopped) notice(error.status ? error.message : '提交响应暂时中断，维护可能已在后台启动。请刷新页面核对维护状态，勿重复安装。', 'error'); }
+      finally { running = Boolean(pendingCore()); updateDirty(); }
     }
     function localCoreForm() {
       const file = el('input', {id: 'core-local-file', type: 'file', accept: '.gz,application/gzip', required: true});
@@ -852,24 +885,26 @@
           if (stopped) return;
           progress.textContent = '上传完成，正在校验并提交后台安装…';
           committing = true;
-          await send({operation: 'commit', id}); committed = true;
+          const operation = await send({operation: 'commit', id}); committed = true;
           progress.textContent = '后台正在安装。刷新页面不会中断安装，可在此查看结果。';
-          await pollCore('install-local');
-          progress.textContent = '后台任务已返回结果，请查看上方维护状态。';
+          await followCore(operation, 'install-local');
+          progress.textContent = pendingCore() ? '安装结果尚未确认，已保留任务号继续核对。' : '后台任务已返回结果，请查看上方维护状态。';
         } catch (error) {
           if (error.status && error.status < 500) committing = false;
           progress.textContent = '上传或安装未完成，请查看上方提示。';
           if (!stopped) notice(committing && (!error.status || error.status >= 500) ? '提交响应中断，安装可能已在后台启动。请刷新页面检查维护状态后再重试。' : error.message, 'error');
         } finally {
           if (!committed && !committing && !stopped) { try { await send({operation: 'cancel', id}); } catch {} }
-          running = false; updateDirty();
+          running = Boolean(pendingCore()); updateDirty();
         }
       };
       later(async () => {
         try {
+          const record = pendingCore();
+          if (record) { await followCore(record); return; }
           const data = await api('maintenance', undefined, 'subscription');
           const state = maintenanceState(data);
-          if (state.busy && !running) { running = true; updateDirty(); try { await pollCore(data.operation.action); } finally { running = false; updateDirty(); } }
+          if (state.busy && !running) await followCore(data.operation);
         } catch {}
       }, 0);
       return el('details', {class: 'core-local'}, [el('summary', {text: '本地文件更新（手动）'}), form]);
@@ -955,6 +990,7 @@
       if (stopped) return;
       const record = pending();
       if (record) { running = true; updateDirty(); if (record.address && new URL(record.address).origin !== location.origin) { showReconnect(record.address); running = false; updateDirty(); } else pollJob(record); }
+      else if (pendingCore()) followCore(pendingCore());
     });
     return destroy;
   }
