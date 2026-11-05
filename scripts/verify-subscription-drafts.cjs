@@ -74,7 +74,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     const interval=page.getByLabel('订阅更新间隔',{exact:true});
     const navigation=page.locator('#shell-nav');
     const settings=()=>navigation.locator('a[href="#/settings"]').click();
-    const subscriptions=()=>navigation.locator('a[href="#/subscriptions"]').click();
+    const subscriptions=async()=>{await navigation.locator('a[href="#/subscriptions"]').click();await page.getByRole('tab',{name:'策略编辑',exact:true}).click();};
     const reload=async(confirm=false)=>{if(confirm)page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'重新读取',exact:true}).click();await ready();};
     model.revision='b'.repeat(64);model.settings.ini.subtime='8h';model.settings.ini.max_rec=6000;
     await reload();assert.equal(await interval.inputValue(),'8h');
@@ -83,7 +83,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.equal(requests.at(-1).body.settings_revision,model.revision);
     assert.match(await page.locator('.source-override').first().textContent(),/节点组、规则/);
     assert.match(await page.locator('#preview-content .source-override').textContent(),/此次将使用本地覆盖/);
-    assert.match(await page.locator('.source-card .source-override').textContent(),/已保存与当前来源绑定的本地覆盖/);
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.match(await page.locator('.source-card .source-override').textContent(),/已保存与当前来源绑定的本地覆盖/);await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
     assert.match(await page.locator('[data-change-section="subscriptions"]').textContent(),/修改 1.*修改：Airport/s);
     assert.match(await page.locator('[data-change-section="node_groups"]').textContent(),/新增 1.*顺序已调整/s);
     assert.match(await page.locator('[data-change-section="rules"]').textContent(),/1 → 2/);
@@ -146,9 +146,9 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await subscriptions();await reload(true);await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
     await subscriptions();await ready();
-    await page.locator('.source-switch > summary').click();await page.locator('#source-url').fill('https://example.com/pending-source');
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.locator('#source-url').fill('https://example.com/pending-source');
     await settings();assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),true);
-    await subscriptions();await page.getByRole('button',{name:'取消切换',exact:true}).click();await settings();
+    await subscriptions();await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.equal(await page.locator('#source-url').inputValue(),'https://example.com/pending-source');await page.getByRole('button',{name:'取消切换',exact:true}).click();await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
     // A browser left open receives another browser/scheduler's provider result,
     // while preserving its unsaved source and provider schedule drafts.

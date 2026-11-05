@@ -1,7 +1,41 @@
-.diagnostic-page{padding:28px 30px;max-width:1450px;margin:auto}.diagnostic-page .page-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.diagnostic-page .card{padding:22px;margin:18px 0;min-width:0}.diagnostic-page h2{font-size:18px;margin:0 0 16px}.diagnostic-page ul{padding-left:22px}.diagnostic-page li{margin-bottom:9px;overflow-wrap:anywhere}.diagnostic-page .button-row{display:flex;flex-wrap:wrap;gap:10px}.diagnostic-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.diagnostic-overview .card{margin:0}.diagnostic-overview .card:last-child{grid-column:1/-1}.diagnostic-recent{max-height:330px;overflow:auto}.diagnostic-backup{border-top:1px solid var(--edge);padding:18px 0;overflow-wrap:anywhere}.diagnostic-backup p{margin:8px 0}.diagnostic-scope{border-collapse:collapse;width:100%;margin:20px 0;font-size:14px}.diagnostic-scope th,.diagnostic-scope td{padding:9px 5px;border-bottom:1px solid var(--edge);text-align:left}.diagnostic-task p{overflow-wrap:anywhere}@media(max-width:760px){.diagnostic-page{padding:18px 14px}.diagnostic-overview{grid-template-columns:1fr}.diagnostic-page .card{padding:16px}.diagnostic-scope{font-size:12px}}
-.diagnostic-ack{display:flex;align-items:flex-start;gap:10px;margin:14px 0;line-height:1.6}.diagnostic-ack input{appearance:auto;flex:none;width:20px;height:20px;margin-top:2px}[data-unknown-task]>.btn{margin:8px 8px 0 0}
-
-.diagnostic-page {max-width:none;padding:0!important;margin:0}
-.diagnostic-preview {width:100%;max-height:none;scroll-margin-top:24px;border:1px solid var(--brand);background:var(--panel-solid)}
-.diagnostic-preview .dialog-body {padding:0}
-.diagnostic-preview .dialog-actions {display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:20px}
+.diagnostic-page{padding:0;margin:0;min-width:0;font-size:13px}
+.diagnostic-page .page-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.diagnostic-page .page-description{margin:-4px 0 18px;color:var(--text-2);font-size:12px;line-height:1.65}
+.diagnostic-page .page-tabs{margin-bottom:16px}
+.diagnostic-page .card{padding:18px 20px;min-width:0;margin:0}
+.diagnostic-page .card-heading{margin-bottom:20px}
+.diagnostic-page h2{font-size:15px;font-weight:650;margin:0}
+.diagnostic-page h3{font-size:13px}
+.diagnostic-page p{line-height:1.7;overflow-wrap:anywhere}
+.diagnostic-page .subtext{color:var(--text-2);font-size:12px;margin:5px 0 0;line-height:1.65}
+.diagnostic-page ul{padding-left:20px}
+.diagnostic-page li{overflow-wrap:anywhere}
+.diagnostic-page .button-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.diagnostic-page .notice{padding:12px 15px;margin-bottom:16px;border-radius:12px;background:var(--brand-soft);border:1px solid color-mix(in srgb,var(--brand) 28%,transparent);font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.diagnostic-page .notice.error{background:color-mix(in srgb,var(--err) 8%,transparent);border-color:color-mix(in srgb,var(--err) 25%,transparent);color:var(--err-text)}
+.diagnostic-page .notice.success{background:color-mix(in srgb,var(--up) 8%,transparent);border-color:color-mix(in srgb,var(--up) 25%,transparent);color:var(--up-text)}
+.diagnostic-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.diagnostic-runtime{margin:0 0 12px;color:var(--brand-text)}
+.diagnostic-services{list-style:none;margin:0 0 12px;padding:0!important}
+.diagnostic-services li{padding:9px 0;border-bottom:1px solid var(--edge);font-size:12px;color:var(--text-2)}
+.diagnostic-services li:last-child{border-bottom:0}
+.diagnostic-actions{padding-bottom:20px}
+.diagnostic-backups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.diagnostic-backups>p,.diagnostic-backups>.button-row{grid-column:1/-1}
+.diagnostic-backup{border:1px solid var(--edge);border-radius:var(--r-ctl);padding:16px;min-width:0;overflow-wrap:anywhere}
+.diagnostic-backup p{margin:8px 0}
+.diagnostic-backup code{font-size:11px;color:var(--text-2)}
+.diagnostic-backup>.btn{margin-top:12px}
+.diagnostic-backup .notice{margin-bottom:0}
+.diagnostic-scope{border-collapse:collapse;width:100%;margin:20px 0;font-size:13px}
+.diagnostic-scope th,.diagnostic-scope td{padding:9px 5px;border-bottom:1px solid var(--edge);text-align:left}
+.diagnostic-page .diagnostic-task{margin-bottom:16px;border-color:var(--brand)}
+.diagnostic-task p{overflow-wrap:anywhere}
+.diagnostic-ack{display:flex;align-items:flex-start;gap:10px;margin:14px 0;line-height:1.6}
+.diagnostic-ack input{appearance:auto;flex:none;width:20px;height:20px;margin-top:2px}
+[data-unknown-task]>.btn{margin:8px 8px 0 0}
+.diagnostic-page .diagnostic-preview{margin-top:16px;width:100%;scroll-margin-top:24px;border:1px solid var(--brand);background:var(--panel-solid)}
+.diagnostic-preview .dialog-body{padding:0}
+.diagnostic-preview .dialog-actions{justify-content:flex-end;margin-top:20px}
+@media(max-width:760px){.diagnostic-overview,.diagnostic-backups{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:639.5px){.diagnostic-page .card{padding:16px 15px}.diagnostic-page .page-head{gap:8px}.diagnostic-page .page-head .btn{padding:6px 10px;font-size:12px}.diagnostic-scope{font-size:12px}}

@@ -21,6 +21,8 @@ python scripts/prepare_dashboard.py --output dist/source-ui
 
 Apply, source switching and backup/recovery previews appear inline at full content width. The original index CSS provides the established theme baseline. The builder only reads its standard `<style>` and module import entry. It does not patch compressed JS symbols. Updating the upstream dashboard requires checking the public DOM bridge and compatibility pages.
 
+Subscription management uses shared page tabs for policy editing, configuration sources, and recent operations. The source form and operation lists display directly in their tabs. Settings include a recent-operations tab; diagnostics use the same tabs and card spacing for runtime checks, backups/recovery, and recent operations. Switching tabs keeps editor/source drafts and pending task tracking. Tab controls support arrow keys, Home, and End, and scroll horizontally on narrow screens.
+
 ## Synthetic browser acceptance
 
 These scripts intercept all requests on synthetic origins and never contact a deployed gateway. Install Playwright separately or set `PPGW_PLAYWRIGHT_MODULE` to the existing Playwright module. Chrome is used through Playwright's `chrome` channel. Set `PPGW_PYTHON` to the Python interpreter that can import the repository's backend dependencies.

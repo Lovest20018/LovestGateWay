@@ -17,10 +17,6 @@
 :is(.ppgw-gateway,.ppgw-global-settings) .btn.small {font-size:12px;padding:5px 10px}
 :is(.ppgw-gateway,.ppgw-global-settings) .btn.danger {color:var(--err-text);font-size:12px;padding:5px 10px}
 :is(.ppgw-gateway,.ppgw-global-settings) .pill {display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--edge);border-radius:20px;font-size:11px;color:var(--text-2);white-space:nowrap;background:var(--panel)}
-:is(.ppgw-gateway,.ppgw-global-settings) .tabs {display:flex;gap:4px;padding:4px;background:var(--panel);border:1px solid var(--edge);border-radius:12px;overflow-x:auto;align-self:flex-start;max-width:100%}
-:is(.ppgw-gateway,.ppgw-global-settings) .tabs button {flex-shrink:0;border:0;border-radius:8px;background:transparent;color:var(--text-2);font:inherit;padding:7px 13px;cursor:pointer;white-space:nowrap}
-:is(.ppgw-gateway,.ppgw-global-settings) .tabs button:hover {background:var(--row-hover);color:var(--text)}
-:is(.ppgw-gateway,.ppgw-global-settings) .tabs button.active {background:var(--brand-soft);color:var(--brand-text);font-weight:600}
 :is(.ppgw-gateway,.ppgw-global-settings) .field-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 28px}
 :is(.ppgw-gateway,.ppgw-global-settings) .field {display:flex;flex-direction:column;gap:7px;min-width:0}
 :is(.ppgw-gateway,.ppgw-global-settings) .field>label,:is(.ppgw-gateway,.ppgw-global-settings) .field-title,:is(.ppgw-gateway,.ppgw-global-settings) .setting-field-heading>label {font-size:12px;font-weight:550}
@@ -88,7 +84,6 @@
   :is(.ppgw-gateway,.ppgw-global-settings) .field-grid {grid-template-columns:1fr;gap:18px}
   :is(.ppgw-gateway,.ppgw-global-settings) .page-head {gap:8px}
   :is(.ppgw-gateway,.ppgw-global-settings) .page-head .btn {padding:6px 10px;font-size:12px}
-  :is(.ppgw-gateway,.ppgw-global-settings) .tabs button {padding:7px 10px;font-size:12px}
   :is(.ppgw-gateway,.ppgw-global-settings) .source-summary {padding:12px}
   :is(.ppgw-gateway,.ppgw-global-settings) .source-summary .pill {display:none}
   :is(.ppgw-gateway,.ppgw-global-settings) .savebar {padding:12px;bottom:8px;flex-wrap:wrap}
@@ -125,8 +120,7 @@
 .source-kind {color:var(--text);font-size:13px;flex:none}
 .source-location {font-size:12px;color:var(--text-2);overflow-wrap:anywhere;word-break:break-all;min-width:0}
 .source-switch {margin-top:16px;border-top:1px solid var(--edge);padding-top:13px}
-.source-switch > summary {cursor:pointer;color:var(--text-2);font-size:12px;width:fit-content}
-.source-switch[open] > summary {color:var(--brand-text)}
+.source-switch > h3 {color:var(--text);font-weight:600}
 .source-form {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;margin-top:18px}
 .source-form .wide {grid-column:1/-1}
 .source-form .button-row {justify-content:flex-end}
@@ -182,11 +176,11 @@
 .ppgw-gateway .clipboard-helper {position:fixed;left:-9999px;top:0}
 @media(max-width:639.5px){.ppgw-provider-plan {gap:8px}.ppgw-provider-plan select {min-width:130px}.ppgw-provider-plan button {width:100%}}
 /* Shared operation summary and per-provider update evidence. */
-.ppgw-management { margin-bottom: 16px; padding: 16px 20px; }
-.ppgw-workspace[data-page="subscriptions"] .ppgw-management { grid-column: 1/-1; order: 2; margin: 0 0 4px; min-width: 0; }
-.ppgw-management p { margin: 6px 0; overflow-wrap: anywhere; }
-.ppgw-management details { margin-top: 8px; }
-.ppgw-management summary { cursor: pointer; }
+.ppgw-management {margin:12px 0 16px;padding:10px 13px;border:1px solid var(--edge);border-radius:var(--r-ctl);background:var(--row-hover);color:var(--text-2);font-size:12px;line-height:1.7;overflow-wrap:anywhere}
+.ppgw-management p {margin:0}
+.page-navigation {margin:18px 0 0}
+.ppgw-workspace[data-page="subscriptions"] > .ppgw-gateway {gap:0}
+.ppgw-workspace[data-page="subscriptions"] {gap:0}
 .ppgw-provider-status { flex-basis: 100%; margin: 4px 0; white-space: pre-line; color: var(--text-2); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .ppgw-provider-plan { flex-wrap: wrap; }
 .ppgw-gateway .source-override {margin-top:14px;padding:12px 14px;border:1px solid var(--edge);border-radius:10px;background:var(--panel);font-size:12px;line-height:1.75;overflow-wrap:anywhere}
