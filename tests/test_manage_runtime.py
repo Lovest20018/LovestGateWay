@@ -157,7 +157,7 @@ class RuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError, 'SERVICE_STATE_MISMATCH'):
             self.system.verify_services({'paopaogw': {'active': True, 'enabled': True}})
 
-    def test_dns_preflight_allows_tcp_only_occupancy_but_rejects_udp_occupancy(self):
+    def test_dns_preflight_rejects_tcp_or_udp_occupancy(self):
         import socket
         from unittest.mock import patch
         from manage_common import ManagementError
@@ -174,9 +174,8 @@ class RuntimeTests(unittest.TestCase):
                 def bind(self, address):
                     if address == ('127.0.0.1', 1053) and self.kind == occupied: raise OSError('occupied')
             with self.subTest(occupied=occupied), patch('manage_runtime.socket.socket', Listener):
-                if occupied == socket.SOCK_DGRAM:
-                    with self.assertRaisesRegex(ManagementError, 'LISTENER_UNAVAILABLE'): self.system.preflight_listeners(settings)
-                else: self.system.preflight_listeners(settings)
+                with self.assertRaisesRegex(ManagementError, 'LISTENER_UNAVAILABLE'):
+                    self.system.preflight_listeners(settings)
 
     def test_missing_fib_table_is_empty_but_route_query_errors_are_not_ignored(self):
         from unittest.mock import patch

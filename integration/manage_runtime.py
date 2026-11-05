@@ -73,6 +73,7 @@ class System:
         if not self.layout.live: return
         endpoints = [(settings['service']['PPGW_WEB_LISTEN'], socket.SOCK_STREAM),
                      (settings['service']['PPGW_DNS_LISTEN'], socket.SOCK_DGRAM),
+                     (settings['service']['PPGW_DNS_LISTEN'], socket.SOCK_STREAM),
                      ('127.0.0.1:8789', socket.SOCK_STREAM), ('127.0.0.1:8790', socket.SOCK_STREAM)]
         if settings['api']['enabled']:
             endpoints.append((f"{settings['api']['listen']}:{settings['api']['port']}", socket.SOCK_STREAM))
