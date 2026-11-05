@@ -33,6 +33,11 @@ fn target(method: &str, path: &str) -> Option<String> {
 pub(crate) async fn handle(
     stream: &mut TcpStream, req: &http::ReqHead, token: &str, ka: bool, body: &[u8],
 ) -> io::Result<()> {
+    if !subscription::origin_allowed(req) {
+        return respond::send(stream, 403, "Forbidden",
+            &[("Content-Type", "application/json"), ("Cache-Control", "no-store")],
+            br#"{"error":"ORIGIN_REJECTED"}"#, ka).await;
+    }
     let Some(path) = target(&req.method, &req.path) else {
         return respond::send(stream, 405, "Method Not Allowed", &[], b"", ka).await;
     };
@@ -42,6 +47,23 @@ pub(crate) async fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn foreign_origin_is_rejected_before_forwarding() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted, client) = tokio::join!(listener.accept(), TcpStream::connect(address));
+        let (mut server, _) = accepted.unwrap();
+        let mut client = client.unwrap();
+        let request = http::parse_request(b"POST /sniffbox/settings/recheck HTTP/1.1\r\nHost: gateway.test\r\nOrigin: https://foreign.invalid\r\n\r\n").unwrap();
+        let task = tokio::spawn(async move { handle(&mut server, &request, "synthetic-token", false, b"{}").await.unwrap(); });
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        task.await.unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 403 "));
+        assert!(response.ends_with(br#"{"error":"ORIGIN_REJECTED"}"#));
+    }
     #[test]
     fn settings_routes_never_forward_arbitrary_paths_or_queries() {
         assert_eq!(target("POST", "/sniffbox/settings/apply").as_deref(), Some("/api/apply"));
