@@ -210,28 +210,15 @@ async function main() {
     assert.doesNotMatch(await page.locator('.ppgw-gateway').innerText(), /HomeNet|HNM/i);
     for (const title of ['网络与出站', '高级选项', '访问与统计']) await page.getByRole('tab', {name: title, exact: true}).click();
     await page.evaluate(() => scrollTo(0, 0));
-    const themeButton = navigation.getByRole('button', {name: '主题与配色', exact:true});
+    const appearance = navigation.getByLabel('外观', {exact:true});
     const themeSettled = color => page.waitForFunction(expected =>
       getComputedStyle(document.querySelector('.toggle-field input:checked')).backgroundColor === expected, color);
-    await themeButton.click();
-    await page.getByRole('region', {name: '主题与自定义配色', exact: true}).waitFor();
-    await page.getByLabel('自定义基础主题', {exact:true}).selectOption('dark');
-    await page.getByLabel('主题色', {exact: true}).fill('#7c5cff');
-    await page.getByRole('button', {name: '返回网关设置', exact: true}).click();
-    assert.equal(await page.evaluate(() => localStorage.getItem('ppgw-theme')), 'custom');
-    assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()), '#7c5cff');
-    assert.equal(await page.locator('.ppgw-gateway').evaluate(node => getComputedStyle(node).color === getComputedStyle(document.body).color), true);
-    await themeSettled('rgb(124, 92, 255)');
-    await page.screenshot({path: path.join(root, 'dist/settings-unified-custom.png'), fullPage: true});
-    await themeButton.click();
-    await page.getByLabel('主题', {exact:true}).selectOption('dark');
-    await page.getByRole('button', {name:'返回网关设置',exact:true}).click();
+    await appearance.selectOption('dark');
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+    assert.equal(await page.locator('.ppgw-gateway').evaluate(node => getComputedStyle(node).color === getComputedStyle(document.body).color), true);
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-dark.png'), fullPage: true});
-    await themeButton.click();
-    await page.getByLabel('主题', {exact:true}).selectOption('light');
-    await page.getByRole('button', {name:'返回网关设置',exact:true}).click();
+    await appearance.selectOption('light');
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-light.png'), fullPage: true});
@@ -324,7 +311,7 @@ async function main() {
     await context.close();
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
-      sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, themeEditor: true, mobileMenu: true,
+      sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, appearanceSelection: true, mobileMenu: true,
       unmountDuringFetch: true, observerApiSettings: true, coreNetworkFailureAndRetry: true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
   } finally { await browser.close(); }
 }

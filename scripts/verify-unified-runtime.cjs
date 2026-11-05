@@ -20,7 +20,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     const page = await context.newPage(), errors = [];
     page.setDefaultTimeout(10000);
     page.on('pageerror', error => errors.push(error.message));
-    await page.addInitScript(() => localStorage.setItem('PaoPaoGateWay', JSON.stringify({clashAPIConfigs: [{secret: 'fixture-token'}]})));
+    await page.addInitScript(() => {if(!localStorage.getItem('PaoPaoGateWay'))localStorage.setItem('PaoPaoGateWay', JSON.stringify({clashAPIConfigs: [{secret: 'fixture-token'}]}));});
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: false}, mihomo_installed: true};
     let job, infoReads=0,sourceImports=0,expectedSecret='fixture-token';const requests=[];
     await page.route(origin + '/**', async route => {
@@ -83,15 +83,22 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.locator('#shell-nav [data-route="settings"]').click();
     const limit=page.getByLabel('流量记录上限',{exact:true});await limit.fill('9010');await limit.press('Tab');
     await page.locator('#preview').click();await page.locator('#preview-dialog').waitFor({state:'visible'});await limit.fill('9011');await limit.press('Tab');await page.locator('#apply').click();await page.getByText('编辑内容已变化，请重新预览后再确认应用。',{exact:true}).waitFor();assert.equal(job,undefined);await limit.fill('9010');await limit.press('Tab');
-    await page.locator('#shell-nav').getByRole('button',{name:'主题与配色',exact:true}).click();
-    await page.getByLabel('主题',{exact:true}).selectOption('custom');await page.getByLabel('主题色',{exact:true}).fill('#7c5cff');
-    await page.getByRole('button',{name:'返回网关设置',exact:true}).click();assert.equal(await limit.inputValue(),'9010','appearance page must retain the draft');
-    await page.goBack();await page.waitForURL('**/#/appearance');await page.goBack();await page.waitForURL('**/#/settings');
+    const appearance=page.getByLabel('外观',{exact:true});
+    assert.deepEqual(await appearance.locator('option').allTextContents(),['跟随系统','亮色','暗色']);
+    assert.equal(await appearance.inputValue(),'system');
+    await page.emulateMedia({colorScheme:'dark'});await page.waitForFunction(()=>document.documentElement.dataset.theme==='dark');
+    await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>document.documentElement.dataset.theme==='light');
+    await appearance.selectOption('dark');await page.emulateMedia({colorScheme:'light'});
+    assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'dark','explicit choice must override the system');
+    await appearance.selectOption('light');await page.emulateMedia({colorScheme:'dark'});
+    assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
+    assert.equal(await limit.inputValue(),'9010','appearance selection must retain the draft');
+    assert.equal(new URL(page.url()).hash,'#/settings','appearance must not navigate');
     page.once('dialog',dialog=>dialog.dismiss());await page.goBack();await page.waitForURL('**/#/settings');await page.waitForTimeout(150);
     assert.equal(await limit.inputValue(),'9010','rejected Back must retain the draft');
     page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="proxies"]').click();
     await runtime.getByText('Fixture Main',{exact:true}).first().waitFor();
-    assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()),'#7c5cff');
+    assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
     // Changing the accepted secret forces the mounted upstream form to reauth.
     const password='ChangedFixturePassword8',newSecret=require('node:crypto').createHash('sha256').update(password).digest('hex');
     expectedSecret=newSecret;
@@ -113,9 +120,17 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route="overview"]').click();
     await runtime.getByRole('heading',{name:'概览',exact:true}).waitFor();await page.screenshot({path:path.join(root,'dist/unified-overview-mobile.png')});
     assert.equal(await page.locator('#shell-status').isVisible(),false,'reauth must clear the expired banner');
-    assert.equal(await page.evaluate(()=>getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()),'#7c5cff');
+    assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
+    await page.reload();await page.locator('#runtime-panel main').waitFor();
+    assert.equal(await page.getByLabel('外观',{exact:true}).inputValue(),'light');
+    assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
+    await page.evaluate(()=>{localStorage.setItem('ppgw-theme','custom');localStorage.setItem('ppgw-theme-base','dark');localStorage.setItem('ppgw-custom-colors',JSON.stringify({'--brand':'#7c5cff'}));});
+    await page.emulateMedia({colorScheme:'light'});await page.reload();await page.locator('#runtime-panel main').waitFor();
+    assert.equal(await page.getByLabel('外观',{exact:true}).inputValue(),'system');
+    assert.deepEqual(await page.evaluate(()=>[document.documentElement.dataset.theme,localStorage.getItem('ppgw-theme-base'),localStorage.getItem('ppgw-custom-colors'),document.documentElement.style.getPropertyValue('--brand')]),['light',null,null,'']);
+    assert.equal(await page.locator('input[type=color]').count(),0);
     assert.equal(await page.locator('dialog').count(),0);assert.deepEqual(errors,[]);
-    const evidence={syntheticOnly:true,pages,sameDocument:true,noIframe:true,noFloatingTools:true,appearancePreservesDraft:true,backForwardAndDraftGuard:true,runtimeChangedPasswordReauth:true,mobile390:true,pageErrors:errors};
+    const evidence={syntheticOnly:true,pages,sameDocument:true,noIframe:true,noFloatingTools:true,appearancePreservesDraft:true,threeAppearanceOptions:true,systemThemeChangesLive:true,explicitThemeOverridesSystem:true,choiceSurvivesReload:true,retiredCustomThemeMigrated:true,backForwardAndDraftGuard:true,runtimeChangedPasswordReauth:true,mobile390:true,pageErrors:errors};
     await fs.writeFile(path.join(root,'dist/unified-runtime-browser-evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence));
     await context.close();
   } finally { await browser.close(); }
