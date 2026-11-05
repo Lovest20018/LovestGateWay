@@ -39,6 +39,7 @@ node scripts/verify-runtime-navigation.cjs dist/test-ui
 node scripts/verify-subscription-flow.cjs dist/test-ui
 node scripts/verify-subscription-drafts.cjs dist/test-ui
 node scripts/verify-source-editor.cjs dist/test-ui
+node scripts/verify-complex-editor.cjs dist/test-ui
 node scripts/verify-diagnostics-fixture.cjs dist/test-ui
 node scripts/verify-observer-api-fixture.cjs dist/test-ui
 ```
@@ -48,6 +49,8 @@ node scripts/verify-observer-api-fixture.cjs dist/test-ui
 订阅草稿验证同时检查结构化变化预览、来源覆盖说明、敏感内容隐藏、名称按文本显示、后台生效计划及手机预览尺寸；API 使用合成响应，不触碰真实订阅或服务。
 
 源码编辑器验证在非安全 HTTP 合成地址上检查登录、重新认证保留草稿、偏好保留和消息来源校验，并将实际表单提交交给后端 PPsub 校验或 Clash 合并函数，验证未编辑字段和隐藏凭据保留。`tests/test_dashboard.py` 检查构建清单、原兼容 bundle 字节不变和重复构建结果一致。
+
+复杂编辑器验证使用 12 个提供商、60 个节点组、200 条规则和 1000 个节点候选，分别检查原生 PPsub、完整 Clash 配置的 1440px 桌面和 320px 手机布局。长名称包含按文本展示的 HTML 样例；测试末尾分组的编辑、复制、移动、删除、节点标签提交、模式切换及预览保存，并检查提供商后台刷新与页签切换保留草稿。提交交给实际后端校验或合并函数，逐项比较未编辑分组、规则、扩展字段和隐藏凭据；完整配置重命名分组时还检查规则引用按原顺序同步更新。证据默认写入 `dist/complex-editor-evidence/`，第三个参数可指定其他证据目录。该验证不访问真实机场，也不代表终端网络已通过验收。
 
 诊断恢复验证检查分页备份校验、损坏备份禁用、脱敏报告固定字段、签名预览与确认、过期预览拒绝、网络断开与刷新后按原任务号续查、待核实任务的导航保护，以及历史密码恢复后的重新登录。明确被拒绝的提交与查询时认证失效分别处理；成功结果区分真实验收、目标未启用和暂存环境，并验证管理任务服务保留状态的例外提示。所有操作均使用合成响应，同时检查 320px 手机布局、主题和文本安全。
 
