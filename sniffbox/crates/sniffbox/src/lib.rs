@@ -527,7 +527,7 @@ async fn run(cfg: Config, source: ConfigSource) -> std::io::Result<()> {
                 tracing::info!(
                     listen = %dns.listen, cidr = %fakeip.cidr(),
                     ttl = fakeip.ttl(), max_entries = dns.max_entries,
-                    "fakeip dns server running"
+                    "fakeip dns server running (UDP and TCP)"
                 );
                 let sd = shutdown_rx.clone();
                 tokio::spawn(async move {
@@ -535,7 +535,8 @@ async fn run(cfg: Config, source: ConfigSource) -> std::io::Result<()> {
                 });
             }
             Err(e) => {
-                tracing::warn!(listen = %dns.listen, ?e, "dns bind failed; fakeip dns disabled");
+                tracing::error!(listen = %dns.listen, ?e, "required UDP/TCP fakeip dns bind failed");
+                return Err(e);
             }
         }
     }

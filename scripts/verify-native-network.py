@@ -78,20 +78,31 @@ DNS = r'''
 import socket,struct,json,sys
 name=b''.join(bytes([len(p)])+p.encode() for p in 'example.com'.split('.'))+b'\0'
 q=b'\x73\x21\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00'+name+b'\x00\x01\x00\x01'
-with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as s:
- s.settimeout(5);s.sendto(q,(sys.argv[1],int(sys.argv[2])));data,_=s.recvfrom(4096)
-assert data[:2]==q[:2] and (data[3]&15)==0
-count=struct.unpack('!H',data[6:8])[0];offset=12+len(name)+4;answers=[]
-for _ in range(count):
- if data[offset]&192==192:offset+=2
- else:
-  while data[offset]:offset+=data[offset]+1
-  offset+=1
- typ,cls,ttl,n=struct.unpack('!HHIH',data[offset:offset+10]);offset+=10
- if typ==1 and cls==1 and n==4:answers.append(socket.inet_ntoa(data[offset:offset+4]))
- offset+=n
-assert answers
-print(json.dumps(answers))
+def exact(s,n):
+ data=b''
+ while len(data)<n:
+  part=s.recv(n-len(data));assert part;data+=part
+ return data
+out={}
+for protocol,kind in [('udp',socket.SOCK_DGRAM),('tcp',socket.SOCK_STREAM)]:
+ with socket.socket(socket.AF_INET,kind) as s:
+  s.settimeout(5);target=(sys.argv[1],int(sys.argv[2]))
+  if protocol=='udp':s.sendto(q,target);data,_=s.recvfrom(4096)
+  else:
+   s.connect(target);s.sendall(struct.pack('!H',len(q))+q);data=exact(s,struct.unpack('!H',exact(s,2))[0])
+ assert data[:2]==q[:2] and (data[3]&15)==0
+ count=struct.unpack('!H',data[6:8])[0];offset=12+len(name)+4;answers=[]
+ for _ in range(count):
+  if data[offset]&192==192:offset+=2
+  else:
+   while data[offset]:offset+=data[offset]+1
+   offset+=1
+  typ,cls,ttl,n=struct.unpack('!HHIH',data[offset:offset+10]);offset+=10
+  if typ==1 and cls==1 and n==4:answers.append(socket.inet_ntoa(data[offset:offset+4]))
+  offset+=n
+ assert answers;out[protocol]=answers
+assert out['udp']==out['tcp']
+print(json.dumps(out))
 '''
 
 UDP = r'''
@@ -210,9 +221,9 @@ def main():
                 addresses = json.loads(run('ip', '-4', '-j', 'addr', 'show', 'dev', settings['service']['PPGW_INTERFACE']).stdout)
                 dns_address = next(item['local'] for link in addresses for item in link['addr_info'] if item['scope'] == 'global')
             answers = json.loads(run('ip', 'netns', 'exec', CLIENT, 'python3', '-c', DNS, dns_address, dns_port).stdout)
-            fake = answers[0]
+            fake = answers['udp'][0]
             assert ipaddress.ip_address(fake) in ipaddress.ip_network(settings['ini']['fake_cidr'] or '7.0.0.0/8')
-            report['checks']['fakeip_dns'] = {'fakeip': fake}
+            report['checks']['fakeip_dns'] = {'fakeip': fake, 'udp': True, 'tcp': True, 'same_answers': True}
             if not args.fixture_only:
                 result = run('ip', 'netns', 'exec', CLIENT, 'curl', '--noproxy', '*', '--silent', '--show-error',
                              '--max-time', '20', '--resolve', 'example.com:443:' + fake, '--output', '/dev/null',

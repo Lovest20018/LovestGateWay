@@ -5,30 +5,60 @@ use sb_dns::is_valid_fakeip_domain;
 use sb_dns::message::{
     self, CLASS_IN, RCODE_FORMERR, RCODE_NOTIMP, RCODE_NXDOMAIN, TYPE_A, parse_query,
 };
+use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::net::UdpSocket;
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpSocket, UdpSocket};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
+use tokio::time::timeout;
 
-pub fn bind_dns(addr: SocketAddr) -> std::io::Result<UdpSocket> {
-    sb_tproxy::udp::bind_udp_reuseaddr(addr)
+const TCP_CONNECTION_LIMIT: usize = 128;
+const TCP_IO_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub struct DnsSockets {
+    udp: UdpSocket,
+    tcp: TcpListener,
+}
+
+pub fn bind_dns(addr: SocketAddr) -> io::Result<DnsSockets> {
+    let udp = sb_tproxy::udp::bind_udp_reuseaddr(addr)?;
+    let tcp = if addr.is_ipv6() {
+        TcpSocket::new_v6()?
+    } else {
+        TcpSocket::new_v4()?
+    };
+    tcp.set_reuseaddr(true)?;
+    // Use the same port for both transports, including ephemeral-port fixtures.
+    tcp.bind(udp.local_addr()?)?;
+    let tcp = tcp.listen(128)?;
+    // A TCP bind failure drops UDP too; do not silently start a partial service.
+    Ok(DnsSockets { udp, tcp })
 }
 
 pub async fn run_dns_server(
-    sock: UdpSocket,
+    sockets: DnsSockets,
     pool: Arc<FakeIpPool>,
     mut shutdown: watch::Receiver<bool>,
 ) {
-
+    let DnsSockets { udp, tcp } = sockets;
+    let mut clients = JoinSet::new();
     let mut buf = [0u8; 1500];
     loop {
+        if *shutdown.borrow() {
+            break;
+        }
         tokio::select! {
-            biased;
-            _ = shutdown.changed() => { if *shutdown.borrow() { break; } }
-            res = sock.recv_from(&mut buf) => match res {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() { break; }
+            }
+            _ = clients.join_next(), if !clients.is_empty() => {}
+            res = udp.recv_from(&mut buf) => match res {
                 Ok((n, peer)) => {
                     let resp = handle_query(&buf[..n], &pool);
-                    if let Err(e) = sock.send_to(&resp, peer).await {
+                    if let Err(e) = udp.send_to(&resp, peer).await {
                         tracing::debug!(%peer, ?e, "dns send_to failed");
                     }
                 }
@@ -36,10 +66,68 @@ pub async fn run_dns_server(
                     tracing::warn!(?e, "dns recv_from error; backoff 50ms");
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
+            },
+            res = tcp.accept() => match res {
+                Ok((stream, peer)) => {
+                    if clients.len() >= TCP_CONNECTION_LIMIT {
+                        drop(stream);
+                        continue;
+                    }
+                    let pool = Arc::clone(&pool);
+                    clients.spawn(async move {
+                        let _ = stream.set_nodelay(true);
+                        if let Err(e) = serve_tcp_connection(stream, pool).await {
+                            tracing::debug!(%peer, ?e, "dns tcp connection closed");
+                        }
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!(?e, "dns tcp accept failed; backoff 50ms");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
             }
         }
     }
+    clients.abort_all();
+    while clients.join_next().await.is_some() {}
     tracing::info!("dns server stopped");
+}
+
+async fn serve_tcp_connection<S>(mut stream: S, pool: Arc<FakeIpPool>) -> io::Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut query = Vec::new();
+    loop {
+        // RFC 7766: persistent, framed messages may arrive in multiple reads.
+        // One deadline covers the whole frame, so partial bytes cannot extend it.
+        let frame = timeout(TCP_IO_TIMEOUT, async {
+            let length = stream.read_u16().await? as usize;
+            if length < 12 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "short DNS frame",
+                ));
+            }
+            query.resize(length, 0);
+            stream.read_exact(&mut query).await?;
+            Ok::<_, io::Error>(())
+        })
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS TCP frame timeout"))?;
+        match frame {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        let response = handle_query(&query, &pool);
+        let mut framed = Vec::with_capacity(response.len() + 2);
+        framed.extend_from_slice(&(response.len() as u16).to_be_bytes());
+        framed.extend_from_slice(&response);
+        timeout(TCP_IO_TIMEOUT, stream.write_all(&framed))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "DNS TCP write timeout"))??;
+    }
 }
 
 fn handle_query(buf: &[u8], pool: &FakeIpPool) -> Vec<u8> {
@@ -55,7 +143,6 @@ fn handle_query(buf: &[u8], pool: &FakeIpPool) -> Vec<u8> {
     }
     match q.qtype {
         TYPE_A => {
-
             if !is_valid_fakeip_domain(&q.name) {
                 tracing::debug!(name = %q.name, "invalid/reserved domain; no fakeip (NXDOMAIN)");
                 return q.error(RCODE_NXDOMAIN);
@@ -74,6 +161,206 @@ mod tests {
     use super::*;
     use sb_dns::FakeIpConfig;
     use sb_dns::message::{CLASS_IN, RCODE_NXDOMAIN, TYPE_A, TYPE_AAAA, TYPE_HTTPS};
+    use tokio::io::duplex;
+    use tokio::net::TcpStream;
+
+    fn frame(query: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::with_capacity(query.len() + 2);
+        wire.extend_from_slice(&(query.len() as u16).to_be_bytes());
+        wire.extend_from_slice(query);
+        wire
+    }
+
+    async fn read_response<S: AsyncRead + Unpin>(stream: &mut S) -> Vec<u8> {
+        let length = stream.read_u16().await.unwrap() as usize;
+        let mut response = vec![0; length];
+        stream.read_exact(&mut response).await.unwrap();
+        response
+    }
+
+    async fn udp_query(address: SocketAddr, query: &[u8]) -> Vec<u8> {
+        let client = UdpSocket::bind(SocketAddr::new(address.ip(), 0))
+            .await
+            .unwrap();
+        client.send_to(query, address).await.unwrap();
+        let mut response = [0; 1500];
+        let (length, _) = timeout(Duration::from_secs(2), client.recv_from(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        response[..length].to_vec()
+    }
+
+    #[tokio::test]
+    async fn tcp_udp_share_fakeip_with_fragmented_and_pipelined_queries() {
+        for address in ["127.0.0.1:0", "[::1]:0"] {
+            let sockets = bind_dns(address.parse().unwrap()).unwrap();
+            let address = sockets.udp.local_addr().unwrap();
+            assert_eq!(address, sockets.tcp.local_addr().unwrap());
+            let pool = test_pool();
+            let (shutdown, receiver) = watch::channel(false);
+            let server = tokio::spawn(run_dns_server(sockets, Arc::clone(&pool), receiver));
+            let first = make_query(0x21, "shared.example.com", TYPE_A);
+            let udp = udp_query(address, &first).await;
+            let mut client = TcpStream::connect(address).await.unwrap();
+            let wire = frame(&first);
+            client.write_all(&wire[..1]).await.unwrap();
+            tokio::task::yield_now().await;
+            client.write_all(&wire[1..7]).await.unwrap();
+            tokio::task::yield_now().await;
+            client.write_all(&wire[7..]).await.unwrap();
+            assert_eq!(read_response(&mut client).await, udp);
+            let second = make_query(0x22, "shared.example.com", TYPE_A);
+            let third = make_query(0x23, "other.example.com", TYPE_A);
+            client
+                .write_all(&[frame(&second), frame(&third)].concat())
+                .await
+                .unwrap();
+            for query in [&second, &third] {
+                let response = read_response(&mut client).await;
+                assert_eq!(response, handle_query(query, &pool));
+                assert_eq!(response[..2], query[..2]);
+            }
+            shutdown.send(true).unwrap();
+            timeout(Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_consumes_large_frames_and_recovers_after_malformed_queries() {
+        let pool = test_pool();
+        let (mut client, server) = duplex(131072);
+        let worker = tokio::spawn(serve_tcp_connection(server, Arc::clone(&pool)));
+        let mut large = make_query(0x31, "padded.example.com", TYPE_A);
+        large[11] = 1; // One OPT record with EDNS padding, larger than the UDP buffer.
+        large.extend_from_slice(&[0, 0, 41, 16, 0, 0, 0, 0, 0]);
+        large.extend_from_slice(&6004u16.to_be_bytes());
+        large.extend_from_slice(&12u16.to_be_bytes());
+        large.extend_from_slice(&6000u16.to_be_bytes());
+        large.resize(large.len() + 6000, 0);
+        let mut malformed = vec![0; 12];
+        malformed[..2].copy_from_slice(&0x32u16.to_be_bytes());
+        let last = make_query(0x33, "last.example.com", TYPE_A);
+        client
+            .write_all(&[frame(&large), frame(&malformed), frame(&last)].concat())
+            .await
+            .unwrap();
+        assert_eq!(
+            read_response(&mut client).await,
+            handle_query(&large, &pool)
+        );
+        let error = read_response(&mut client).await;
+        assert_eq!(&error[..2], &malformed[..2]);
+        assert_eq!(error[3] & 15, RCODE_FORMERR);
+        assert_eq!(read_response(&mut client).await, handle_query(&last, &pool));
+        drop(client);
+        worker.await.unwrap().unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tcp_partial_bytes_do_not_reset_the_frame_deadline() {
+        let (mut client, server) = duplex(128);
+        let started = tokio::time::Instant::now();
+        let worker = tokio::spawn(serve_tcp_connection(server, test_pool()));
+        client.write_all(&[0]).await.unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(TCP_IO_TIMEOUT / 2).await;
+        client.write_all(&[32]).await.unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(TCP_IO_TIMEOUT / 2).await;
+        let error = worker.await.unwrap().unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(started.elapsed(), TCP_IO_TIMEOUT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tcp_blocked_response_has_a_write_deadline() {
+        let (mut client, server) = duplex(8);
+        let worker = tokio::spawn(serve_tcp_connection(server, test_pool()));
+        client
+            .write_all(&frame(&make_query(0x41, "write.example.com", TYPE_A)))
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        tokio::time::advance(TCP_IO_TIMEOUT).await;
+        assert_eq!(
+            worker.await.unwrap().unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+    }
+
+    #[tokio::test]
+    async fn tcp_short_frames_and_truncated_streams_close_without_allocating_fakeips() {
+        for wire in [vec![0, 0], vec![0, 11], vec![0, 32, 1, 2]] {
+            let pool = test_pool();
+            let (mut client, server) = duplex(128);
+            let worker = tokio::spawn(serve_tcp_connection(server, Arc::clone(&pool)));
+            client.write_all(&wire).await.unwrap();
+            client.shutdown().await.unwrap();
+            let result = timeout(Duration::from_secs(2), worker)
+                .await
+                .unwrap()
+                .unwrap();
+            if wire[1] < 12 {
+                assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+            } else {
+                result.unwrap();
+            }
+            assert_eq!(pool.len(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_connection_limit_keeps_udp_available_and_shutdown_closes_clients() {
+        let sockets = bind_dns("127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = sockets.tcp.local_addr().unwrap();
+        let (shutdown, receiver) = watch::channel(false);
+        let server = tokio::spawn(run_dns_server(sockets, test_pool(), receiver));
+        let mut clients = Vec::new();
+        for _ in 0..TCP_CONNECTION_LIMIT {
+            clients.push(TcpStream::connect(address).await.unwrap());
+        }
+        let mut extra = TcpStream::connect(address).await.unwrap();
+        let mut byte = [0];
+        assert_eq!(
+            timeout(Duration::from_secs(2), extra.read(&mut byte))
+                .await
+                .unwrap()
+                .unwrap(),
+            0
+        );
+        let response = udp_query(address, &make_query(0x51, "udp.example.com", TYPE_A)).await;
+        assert_eq!(&response[6..8], &[0, 1]);
+        shutdown.send(true).unwrap();
+        timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        for mut client in clients {
+            assert_eq!(
+                timeout(Duration::from_secs(2), client.read(&mut byte))
+                    .await
+                    .unwrap()
+                    .unwrap(),
+                0
+            );
+        }
+        let _rebound = bind_dns(address).expect("shutdown must release both listening sockets");
+    }
+
+    #[tokio::test]
+    async fn tcp_bind_conflict_releases_the_candidate_udp_listener() {
+        let existing = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = existing.local_addr().unwrap();
+        let error = bind_dns(address)
+            .err()
+            .expect("occupied TCP port must reject DNS startup");
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        let _udp = std::net::UdpSocket::bind(address).expect("failed bind must release UDP");
+    }
 
     fn test_pool() -> Arc<FakeIpPool> {
         Arc::new(

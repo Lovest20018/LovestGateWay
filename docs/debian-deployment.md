@@ -21,7 +21,7 @@ sudo python3 install.py
 
 修改 `/etc/paopaogw/service.env` 的 `PPGW_INTERFACE`，填写实际网卡名，如 `ens18`。IP、默认路由、DNS、NTP 由 Debian 管理。修改 `/etc/paopaogw/files/ppgw.ini`；格式和五种模式沿用上游，密码首次安装随机生成，8 位随机字符。配置不作为 shell 执行。
 
-FakeIP DNS 默认监听 `0.0.0.0:53`。与其他服务共用宿主时，可设置 `PPGW_DNS_LISTEN="192.0.2.10:53"`，将文档示例地址替换为实际网关 LAN 地址，避免接管宿主的 `127.0.0.1:53`。该字段可通过脚本配置管理修改，生效需要重启核心；原有宿主 resolver 配置保持不变。
+FakeIP DNS 默认在 `0.0.0.0:53` 同时监听 UDP 和 TCP，两个协议共用同一 FakeIP 地址池。安装预检同时检查两个协议的端口占用；任一监听失败时核心启动失败。与其他服务共用宿主时，可设置 `PPGW_DNS_LISTEN="192.0.2.10:53"`，将文档示例地址替换为实际网关 LAN 地址，避免接管宿主的 `127.0.0.1:53`。该字段可通过脚本配置管理修改，生效需要重启核心；原有宿主 resolver 配置保持不变。
 
 `free`、`socks5` 不需要 mihomo。`yaml`、`suburl` 模式先运行 `sudo python3 /usr/local/lib/paopaogw/mihomo_update.py install`，直接从 MetaCubeX/mihomo 官方 GitHub 稳定版下载 amd64-compatible 资产，验证官方 SHA256、ELF、版本和现有配置后安装。Geo 数据按规则需要放入 `/var/lib/paopaogw/clash/`，可用原生面板 Geo 更新入口维护。配置文件放 `/etc/paopaogw/files/custom.yaml` 或填订阅地址；依赖远端配置的模式需要目标可达。`ovpn` 的 openvpn/openssl 已列为安装依赖，配置和证书放同一 files 目录；优先使用内嵌证书的单个 .ovpn 文件。Cloudflared 已从 Debian 运行路径、API 和导航入口移除，旧 token 不再启用进程或 nft UID 规则。
 
