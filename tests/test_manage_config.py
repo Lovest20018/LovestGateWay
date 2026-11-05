@@ -37,6 +37,14 @@ class ConfigTests(unittest.TestCase):
         self.apply({'ini': {'mode': 'yaml'}}, dry_run=True)
         self.assertEqual(self.ini.read_bytes(), self.original); self.assertEqual(self.system.calls, [])
 
+    def test_core_variant_is_validated_and_saved_without_restart(self):
+        preview = self.apply({'maintenance': {'core_variant': 'v2'}}, dry_run=True)
+        self.assertEqual(preview['action'], 'none')
+        self.apply({'maintenance': {'core_variant': 'v2'}})
+        self.assertEqual(json.loads(self.layout.path('etc/paopaogw/maintenance.json').read_bytes())['core_variant'], 'v2')
+        self.assertEqual(self.system.calls, ['none'])
+        with self.assertRaises(ManagementError): self.apply({'maintenance': {'core_variant': 'v4'}})
+
     def test_live_rollback_needs_runtime_verification_before_claiming_success(self):
         journal={'backup':'fixture','expected':{},'services':{'paopaogw':{'active':True,'enabled':False}}}
         self.system.verify_services=Mock()

@@ -4,6 +4,7 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from functools import lru_cache
 import gzip
 import errno
 import http.client
@@ -27,6 +28,7 @@ from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHand
 API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 CODE = Path('/usr/local/lib/paopaogw')
 STATE = Path('/var/lib/paopaogw/maintenance')
+CONFIG = Path('/etc/paopaogw/maintenance.json')
 MAX_COMPRESSED = 64 * 1024 * 1024
 MAX_BINARY = 128 * 1024 * 1024
 CHECK_CACHE_SECONDS = 300
@@ -47,7 +49,10 @@ ERROR_MESSAGES = {
     'RELEASE_HTTP_FAILED': 'GitHub 拒绝请求或服务暂不可用，请稍后重试。',
     'RELEASE_DOWNLOAD_INTERRUPTED': 'GitHub 下载中断，请检查网络后重试。',
     'RELEASE_TOO_LARGE': '官方发布信息或下载文件超出允许大小。',
-    'RELEASE_ASSET_MISSING': '官方稳定版缺少适用的 amd64 compatible 安装文件。',
+    'RELEASE_ASSET_MISSING': '官方稳定版缺少适用于当前 CPU 和所选型号的 Linux amd64 安装文件。',
+    'INVALID_CORE_VARIANT': 'Mihomo 型号设置无效，请选择自动、v1、v2 或 v3。',
+    'CORE_VARIANT_UNSUPPORTED': '当前系统未确认支持所选 CPU 指令集，请选择自动或较低型号。',
+    'MIHOMO_INSTALLED_VERSION_UNKNOWN': '无法确认已安装核心的稳定版版本，已停止自动替换；可使用本地文件更新或回退。',
     'RELEASE_DIGEST_MISSING': '官方发布缺少可信 SHA256 校验信息，已停止安装。',
     'INVALID_STABLE_RELEASE': '官方稳定版信息无效，请稍后重试。',
     'UNSUPPORTED_ARCHITECTURE': '目前仅支持 Debian amd64 架构的 Mihomo。',
@@ -170,17 +175,49 @@ def fetch(url, limit):
     return data
 
 
-def release_asset(release, machine=None):
+def cpu_capabilities(machine=None):
+    """glibc checks CPU, OSXSAVE/XCR0 and hypervisor-visible features together.
+
+    Debian 12+ has this loader. Do not infer AVX usability from /proc/cpuinfo
+    alone; failure to obtain a positive result deliberately falls back to v1.
+    """
     machine = machine or platform.machine()
     if machine not in {'x86_64', 'AMD64', 'amd64'}:
         raise ValueError('UNSUPPORTED_ARCHITECTURE')
+    levels = ['v1']
+    detected = False
+    if platform.system() == 'Linux':
+        for loader in (Path('/lib64/ld-linux-x86-64.so.2'), Path('/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2')):
+            if not loader.is_file(): continue
+            try:
+                result = subprocess.run([str(loader), '--help'], capture_output=True, text=True,
+                                        check=True, timeout=5, env={**os.environ, 'LC_ALL': 'C'})
+                found = [level for level in ('v2', 'v3') if re.search(
+                    rf'^\s*x86-64-{level}\s+\(supported, searched\)\s*$', result.stdout, re.M)]
+                if found: levels = ['v1', 'v2', 'v3'][:int(found[-1][1])]
+                detected = any('x86-64-' in line for line in result.stdout.splitlines())
+                if detected: break
+            except (OSError, subprocess.SubprocessError): continue
+    return {'cpu_level': levels[-1], 'cpu_detection': 'glibc-hwcaps' if detected else 'baseline-fallback',
+            'supported_variants': levels}
+
+
+def release_asset(release, machine=None, variant=None):
+    capabilities = cpu_capabilities(machine)
+    variant = variant or capabilities['cpu_level']
+    if variant not in ('v1', 'v2', 'v3'): raise ValueError('INVALID_CORE_VARIANT')
+    if variant not in capabilities['supported_variants']: raise ValueError('CORE_VARIANT_UNSUPPORTED')
     version = release.get('tag_name', '')
     if release.get('draft') or release.get('prerelease') or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', version):
         raise ValueError('INVALID_STABLE_RELEASE')
-    name = f'mihomo-linux-amd64-compatible-{version}.gz'
-    matches = [asset for asset in release.get('assets', []) if asset.get('name') == name]
-    if len(matches) != 1:
-        raise ValueError('RELEASE_ASSET_MISSING')
+    # Explicit modern names first. Older releases may only have the v1 alias.
+    names = [f'mihomo-linux-amd64-{variant}-{version}.gz']
+    if variant == 'v1': names.append(f'mihomo-linux-amd64-compatible-{version}.gz')
+    matches = []
+    for name in names:
+        matches = [asset for asset in release.get('assets', []) if asset.get('name') == name]
+        if matches: break
+    if len(matches) != 1: raise ValueError('RELEASE_ASSET_MISSING')
     asset = matches[0]
     url = asset.get('browser_download_url', '')
     expected = f'https://github.com/MetaCubeX/mihomo/releases/download/{version}/{name}'
@@ -188,13 +225,55 @@ def release_asset(release, machine=None):
         raise ValueError('RELEASE_DIGEST_MISSING')
     if type(asset.get('size')) is not int or not 0 < asset['size'] <= MAX_COMPRESSED:
         raise ValueError('RELEASE_TOO_LARGE')
-    return {'version': version, 'asset': name, 'url': url, 'sha256': asset['digest'][7:], 'size': asset['size']}
+    return {'version': version, 'asset': name, 'architecture': 'amd64-' + variant,
+            'url': url, 'sha256': asset['digest'][7:], 'size': asset['size']}
+
+
+def stable_version(value):
+    if isinstance(value, str) and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', value):
+        return tuple(int(part) for part in value[1:].split('.'))
+    return None
+
+
+def version_state(current, exists):
+    installed, latest = stable_version(current.get('installed_version')), stable_version(current.get('latest_version'))
+    if latest is None: return {}
+    return {'update_available': not exists or (installed is not None and installed < latest),
+            'variant_change_available': installed == latest and current.get('installed_architecture') is not None
+                and current.get('latest_architecture') == current.get('architecture')
+                and current['installed_architecture'] != current['architecture'],
+            'installed_newer': installed is not None and installed > latest,
+            'version_unrecognized': exists and installed is None}
+
+
+@lru_cache(maxsize=8)
+def _binary_variant(path, signature):
+    # Go embeds this build setting even in stripped releases. Best effort only;
+    # never label an unrecognized binary as the currently selected architecture.
+    try:
+        with open(path, 'rb') as stream:
+            tail = b''
+            for _ in range(MAX_BINARY // (1024 * 1024) + 1):
+                chunk = stream.read(1024 * 1024)
+                if not chunk: break
+                match = re.search(rb'\nbuild\tGOAMD64=(v[1-4])\n', tail + chunk)
+                if match: return 'amd64-' + match[1].decode('ascii')
+                tail = chunk[-64:]
+    except OSError: pass
+    return None
+
+
+def binary_variant(path):
+    try:
+        value = path.stat()
+        return _binary_variant(str(path), (value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns))
+    except OSError: return None
 
 
 def version_of(binary):
     try:
         result = subprocess.run([str(binary), '-v'], capture_output=True, text=True, check=True, timeout=5)
-        match = re.search(r'\bMihomo\b.*?\b(v[0-9]+\.[0-9]+\.[0-9]+)\b', result.stdout, re.I)
+        match = re.search(r'\bMihomo\s+(?:Meta\s+)?(\S+)', result.stdout, re.I)
         return match.group(1) if match else None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -207,18 +286,32 @@ def validate_elf(data):
 
 
 class Updater:
-    def __init__(self, code=CODE, state=STATE):
+    def __init__(self, code=CODE, state=STATE, config=CONFIG):
         self.code, self.state = code, state
+        self.config = config
         self.binary = code / 'bin/clash'
         self.previous = code / 'bin/clash.previous'
+
+    def target(self):
+        try: config = json.loads(self.config.read_bytes())
+        except FileNotFoundError: config = {}
+        except (ValueError, TypeError): raise ValueError('INVALID_CORE_VARIANT') from None
+        preference = config.get('core_variant', 'auto') if isinstance(config, dict) else None
+        if preference not in ('auto', 'v1', 'v2', 'v3'): raise ValueError('INVALID_CORE_VARIANT')
+        capabilities = cpu_capabilities()
+        variant = capabilities['cpu_level'] if preference == 'auto' else preference
+        return {**capabilities, 'selection': preference, 'architecture': 'amd64-' + variant,
+                'selection_supported': variant in capabilities['supported_variants']}
 
     def status(self):
         try:
             status = json.loads((self.state / 'status.json').read_bytes())
         except (OSError, ValueError):
             status = {}
-        return {**status, 'installed_version': version_of(self.binary), 'rollback_available': self.previous.is_file(),
-                'source': 'MetaCubeX/mihomo', 'channel': 'stable', 'architecture': 'amd64-compatible'}
+        if not isinstance(status, dict): status = {}
+        current = {**status, 'installed_version': version_of(self.binary), 'installed_architecture': binary_variant(self.binary),
+                'rollback_available': self.previous.is_file(), 'source': 'MetaCubeX/mihomo', 'channel': 'stable', **self.target()}
+        return {**current, **version_state(current, self.binary.exists())}
 
     def check(self):
         with operation_lock(self.state):
@@ -226,6 +319,8 @@ class Updater:
 
     def _check(self):
         current = self.status()
+        if not current['selection_supported']: raise ValueError('CORE_VARIANT_UNSUPPORTED')
+        variant = current['architecture'].removeprefix('amd64-')
         now = time.time()
         retry_at = current.get('retry_at')
         if type(retry_at) in (int, float) and now < retry_at:
@@ -236,12 +331,12 @@ class Updater:
             checked_at = cache['checked_at']
             if type(checked_at) not in (int, float) or not 0 <= now - checked_at < CHECK_CACHE_SECONDS:
                 raise ValueError('STALE_RELEASE_CACHE')
-            release = release_asset(cache['release'])
+            release = release_asset(cache['release'], variant=variant)
             cached = True
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             try:
                 document = json.loads(fetch(API, 2 * 1024 * 1024))
-                release = release_asset(document)
+                release = release_asset(document, variant=variant)
             except Exception as error:
                 details = error_details(error)
                 status = {**current, 'last_check_result': 'failed', 'last_check_error': details['error'],
@@ -254,8 +349,9 @@ class Updater:
             checked_at = now
             atomic_json(self.state / 'release-cache.json', {'checked_at': checked_at, 'release': document})
         status = {**current, 'latest_version': release['version'], 'checked_at': checked_at,
-                  'update_available': current['installed_version'] != release['version'], 'latest_sha256': release['sha256'],
+                  'latest_asset': release['asset'], 'latest_architecture': release['architecture'], 'latest_sha256': release['sha256'],
                   'last_check_result': 'success', 'metadata_cached': cached}
+        status.update(version_state(status, self.binary.exists()))
         for key in ('retry_at', 'http_status', 'last_check_error', 'last_check_message'): status.pop(key, None)
         atomic_json(self.state / 'status.json', status)
         return release
@@ -295,8 +391,15 @@ class Updater:
     def update(self, force=False):
         with operation_lock(self.state):
             release = self._check()
-            if version_of(self.binary) == release['version'] and not force:
-                return {'status': 'unchanged', 'version': release['version']}
+            installed = version_of(self.binary)
+            previous = stable_version(installed)
+            if self.binary.exists() and previous is None: raise ValueError('MIHOMO_INSTALLED_VERSION_UNKNOWN')
+            if previous is not None and previous > stable_version(release['version']):
+                return {'status': 'unchanged', 'version': installed, 'reason': 'installed_newer'}
+            architecture = binary_variant(self.binary)
+            variant_change = architecture is not None and architecture != release['architecture']
+            if installed == release['version'] and not force and not variant_change:
+                return {'status': 'unchanged', 'version': installed, 'reason': 'up_to_date'}
             compressed = fetch(release['url'], MAX_COMPRESSED)
             return self._install(release, compressed)
 
@@ -315,8 +418,6 @@ class Updater:
                 raise ValueError('RELEASE_TOO_LARGE')
             if hashlib.sha256(compressed).hexdigest() != sha256:
                 raise ValueError('MIHOMO_CHECKSUM_MISMATCH')
-            if version_of(self.binary) == version:
-                return {'status': 'unchanged', 'version': version}
             release = {'version': version, 'sha256': sha256, 'size': len(compressed)}
             return self._install(release, compressed)
 
@@ -337,6 +438,11 @@ class Updater:
             staged.chmod(0o755)
             if version_of(staged) != release['version']:
                 raise ValueError('MIHOMO_VERSION_MISMATCH')
+            # Offline same-version uploads can switch CPU variants. Exact binary
+            # equality is the only no-op; no backup or restart for identical data.
+            if (self.binary.is_file() and not release.get('asset') and self.binary.stat().st_size == len(data)
+                    and self.binary.read_bytes() == data):
+                return {'status': 'unchanged', 'version': release['version'], 'reason': 'identical_binary'}
             self.validate_config(staged)
             old_version = version_of(self.binary)
             self.binary.parent.mkdir(parents=True, exist_ok=True)
@@ -360,7 +466,8 @@ class Updater:
                     self.binary.unlink(missing_ok=True)
                 raise ValueError('MIHOMO_UPDATE_ROLLED_BACK') from None
         status = {**self.status(), 'installed_version': release['version'], 'updated_at': time.time(),
-                  'update_available': False, 'last_update_result': 'success', 'installed_asset_sha256': release['sha256']}
+                  'update_available': False, 'variant_change_available': False, 'last_update_result': 'success',
+                  'installed_asset': release.get('asset'), 'installed_asset_sha256': release['sha256']}
         atomic_json(self.state / 'status.json', status)
         return {'status': 'updated', 'version': release['version']}
 
@@ -384,7 +491,8 @@ class Updater:
                     self.restart_and_check(version_of(self.binary))
                     raise ValueError('MIHOMO_ROLLBACK_FAILED') from None
                 shutil.copy2(current, self.previous)
-            atomic_json(self.state / 'status.json', {**self.status(), 'last_update_result': 'rolled_back', 'updated_at': time.time()})
+            atomic_json(self.state / 'status.json', {**self.status(), 'last_update_result': 'rolled_back', 'updated_at': time.time(),
+                        'installed_asset': None, 'installed_asset_sha256': None})
             return {'status': 'rolled_back', 'version': previous}
 
 

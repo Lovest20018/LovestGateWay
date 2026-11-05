@@ -127,7 +127,7 @@ def main():
     write_new(config / 'api.json', json.dumps({'enabled': False, 'listen': '127.0.0.1', 'port': 8788, 'probe_urls': []}, indent=2) + '\n', 0o640)
     write_new(config / 'service.env', 'PPGW_INTERFACE=\nPPGW_IPV6=no\n', 0o640)
     write_new(config / 'network', '# Debian: IPv6 disabled unless configured explicitly\n', 0o640)
-    write_new(config / 'maintenance.json', json.dumps({'auto_update': False, 'history_enabled': False,
+    write_new(config / 'maintenance.json', json.dumps({'auto_update': False, 'core_variant': 'auto', 'history_enabled': False,
               'history_retention_days': 30, 'timezone': 'Asia/Shanghai', 'test_defaults': False}, indent=2) + '\n', 0o640)
     write_new(config / 'files/ppgw.ini', '#paopao-gateway\nmode=free\nfake_cidr=7.0.0.0/8\n'
               'dns_ip=223.5.5.5\ndns_port=53\nclash_web_password="' + secrets.token_urlsafe(6) + '"\n'

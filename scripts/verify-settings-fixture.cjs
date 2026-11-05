@@ -52,7 +52,9 @@ async function main() {
       if (target === '/sniffbox/subscription/core/check' || target === '/sniffbox/subscription/maintenance') {
         assert.equal(req.headers().authorization, 'Bearer fixture-token');
         const data = target.endsWith('/check') ? {status: 'running', action: 'check'} : {
-          core: {installed_version: localInstalled ? localUpload.version : null, latest_version: coreFailed ? null : 'v1.2.3'},
+          core: {installed_version: localInstalled ? localUpload.version : null, latest_version: coreFailed ? null : 'v1.2.3',
+            selection:model.settings.maintenance.core_variant, architecture:'amd64-'+(model.settings.maintenance.core_variant==='auto'?'v3':model.settings.maintenance.core_variant), installed_architecture:localInstalled?'amd64-v1':null,
+            cpu_detection:'glibc-hwcaps', selection_supported:true, variant_change_available:!coreFailed},
           operation: localInstalled ? {status:'complete',action:'install-local'} : coreLimited ? {status: 'failed', error: 'RELEASE_RATE_LIMITED', retry_at: 2000000000, message: '限流'} : coreFailed ? {status: 'failed', error: 'RELEASE_NETWORK_TIMEOUT',
             message: '连接 GitHub 超时，请检查这台 Debian 的外网连接后重试。'} : {status: 'complete', action: 'check'},
         };
@@ -128,6 +130,19 @@ async function main() {
     assert.equal(await navigation.count(), 1);
     assert.equal(await navigation.locator('a[href="#/settings"].active').count(), 1);
     await page.getByRole('tab', {name: '维护与 API', exact: true}).click();
+    const variant = page.getByLabel('Mihomo CPU 型号',{exact:true});
+    assert.equal(await variant.inputValue(),'auto');
+    await variant.selectOption('v1');
+    await page.getByRole('button', {name: '检查稳定版', exact: true}).click();
+    assert.equal(await page.locator('#notice').innerText(),'请先完成当前配置操作。');
+    await page.locator('#preview').click();
+    await page.locator('#preview-dialog').waitFor({state:'visible'});
+    assert.match(await page.locator('#preview-content').innerText(),/无需重启/);
+    await page.locator('#apply').click();await saved();
+    assert.equal(submitted.at(-1).payload.patch.maintenance.core_variant,'v1');
+    submitted.length=0;
+    await page.getByRole('tab', {name: '维护与 API', exact: true}).click();
+    assert.equal(await page.getByLabel('Mihomo CPU 型号',{exact:true}).inputValue(),'v1');
     await page.getByRole('button', {name: '检查稳定版', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('#notice')?.textContent.includes('RELEASE_NETWORK_TIMEOUT'));
     assert.match(await page.locator('#maintenance-state').innerText(), /未取得版本信息.*连接 GitHub 超时/);
@@ -144,6 +159,7 @@ async function main() {
     await page.getByRole('button', {name: '检查稳定版', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('#maintenance-state')?.textContent.includes('v1.2.3'));
     assert.equal(await page.locator('#notice').innerText(), '核心维护已完成。');
+    assert.match(await page.locator('#maintenance-state').innerText(),/指定目标 amd64-v1.*可手动切换同版本 CPU 型号/);
     await page.getByText('本地文件更新（手动）', {exact:true}).click();
     const localArchive=Buffer.alloc(1024*1024+17,123), localSha=crypto.createHash('sha256').update(localArchive).digest('hex');
     await page.getByLabel('Mihomo 官方 .gz 文件',{exact:true}).setInputFiles({name:'mihomo-linux-amd64-compatible-v1.2.4.gz',mimeType:'application/gzip',buffer:localArchive});
