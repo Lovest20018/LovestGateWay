@@ -52,14 +52,33 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(self.manager.journal()['phase'],'rolled_back')
         self.assertEqual(self.system.wait.call_count,2)
 
-    def test_live_rollback_keeps_inactive_core_and_disabled_api_without_readiness_waits(self):
+    def test_live_rollback_keeps_inactive_core_and_inactive_api_without_readiness_waits(self):
         journal={'backup':'fixture','expected':{},'services':{
-            'paopaogw':{'active':False,'enabled':False},'paopaogw-api':{'active':True,'enabled':False}}}
+            'paopaogw':{'active':False,'enabled':False},'paopaogw-api':{'active':False,'enabled':False}}}
         self.system.verify_services=Mock();self.system.wait=Mock();self.system.wait_api=Mock()
         with patch.object(Layout,'live',new_callable=PropertyMock,return_value=True), \
              patch.object(self.manager.backups,'restore'):
             self.manager._rollback(journal)
         self.system.wait.assert_not_called();self.system.wait_api.assert_not_called()
+        self.assertEqual(self.manager.journal()['phase'],'rolled_back')
+
+    def test_live_rollback_of_legacy_active_api_requires_endpoint_readiness(self):
+        journal={'backup':'fixture','expected':{},'services':{
+            'paopaogw':{'active':False,'enabled':False},'paopaogw-api':{'active':True,'enabled':False}}}
+        self.system.verify_services=Mock();self.system.wait=Mock()
+        self.system.wait_api=Mock(side_effect=ManagementError('API_READINESS_TIMEOUT'))
+        with patch.object(Layout,'live',new_callable=PropertyMock,return_value=True), \
+             patch.object(self.manager.backups,'restore'):
+            with self.assertRaisesRegex(ManagementError,'^ROLLBACK_UNCONFIRMED$'):
+                self.manager._rollback(journal)
+            self.assertEqual(self.manager.journal()['phase'],'rollback_unconfirmed')
+            self.system.wait_api.side_effect=None
+            self.manager._rollback(journal)
+        self.system.wait.assert_not_called()
+        self.assertEqual(self.system.wait_api.call_count,2)
+        self.assertTrue(self.system.wait_api.call_args.args[0]['api']['enabled'])
+        self.assertEqual(self.ini.read_bytes(),self.original)
+        self.assertFalse(self.layout.path('etc/paopaogw/api.json').exists())
         self.assertEqual(self.manager.journal()['phase'],'rolled_back')
 
     def test_restore_service_failure_keeps_transaction_recoverable_for_retry(self):

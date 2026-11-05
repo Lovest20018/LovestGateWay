@@ -129,6 +129,32 @@ class DeployTests(unittest.TestCase):
         system.wait.assert_not_called(); system.wait_api.assert_called_once()
         self.assertEqual(json.loads(layout.path(JOURNAL).read_bytes())['phase'], 'rollback_unconfirmed')
 
+    def test_legacy_active_api_recovery_requires_readiness_and_keeps_opt_in_bytes(self):
+        from manage_config import JOURNAL
+        from manage_common import write_json
+        from manage_model import load_settings
+        layout = Layout(self.base / 'root'); system = FakeSystem()
+        system.states = {'paopaogw': {'active': False, 'enabled': False},
+                         'paopaogw-api': {'active': True, 'enabled': True}}
+        original = b'{"name":"Legacy fixture"}\n'
+        atomic_write(layout, 'etc/paopaogw/api.json', original)
+        system.stop_all = Mock(); system.verify_services = Mock(); system.wait = Mock()
+        system.wait_api = Mock(side_effect=ManagementError('API_READINESS_TIMEOUT'))
+        write_json(layout, JOURNAL, {'kind': 'deploy', 'phase': 'installing',
+                                    'backup': None, 'services': system.states})
+        with patch.object(Layout, 'live', new_callable=PropertyMock, return_value=True), patch.object(Layout, 'require_root'):
+            with self.assertRaisesRegex(ManagementError, '^ROLLBACK_UNCONFIRMED$'):
+                Deployer(layout, system).recover()
+            self.assertEqual(json.loads(layout.path(JOURNAL).read_bytes())['phase'], 'rollback_unconfirmed')
+            system.wait_api.side_effect = None
+            self.assertEqual(Deployer(layout, system).recover()['status'], 'rolled_back')
+        system.wait.assert_not_called()
+        self.assertEqual(system.wait_api.call_count, 2)
+        self.assertTrue(system.wait_api.call_args.args[0]['api']['enabled'])
+        self.assertFalse(load_settings(layout)['api']['enabled'])
+        self.assertEqual(layout.path('etc/paopaogw/api.json').read_bytes(), original)
+        self.assertEqual(json.loads(layout.path(JOURNAL).read_bytes())['phase'], 'rolled_back')
+
     @unittest.skipUnless(os.name == 'posix', 'Debian installer FD inheritance requires POSIX')
     def test_orphan_installer_blocks_recovery_until_its_last_write(self):
         from manage_backup import BackupStore

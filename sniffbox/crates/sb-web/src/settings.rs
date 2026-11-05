@@ -8,10 +8,15 @@ fn target(method: &str, path: &str) -> Option<String> {
         ("GET", "/sniffbox/settings/config") => Some("/api/config"),
         ("GET", "/sniffbox/settings/status") => Some("/api/status"),
         ("GET", "/sniffbox/settings/policy") => Some("/api/policy"),
+        ("GET", "/sniffbox/settings/diagnostics") => Some("/api/diagnostics"),
+        ("GET", "/sniffbox/settings/backups") => Some("/api/backups"),
         ("POST", "/sniffbox/settings/preview") => Some("/api/preview"),
         ("POST", "/sniffbox/settings/policy/preview") => Some("/api/policy/preview"),
         ("POST", "/sniffbox/settings/apply") => Some("/api/apply"),
         ("POST", "/sniffbox/settings/observer-token") => Some("/api/observer-token"),
+        ("POST", "/sniffbox/settings/backups/list") => Some("/api/backups/list"),
+        ("POST", "/sniffbox/settings/restore/preview") => Some("/api/restore/preview"),
+        ("POST", "/sniffbox/settings/recover/preview") => Some("/api/recover/preview"),
         _ => None,
     };
     if let Some(path) = fixed { return Some(path.to_string()); }
@@ -53,5 +58,19 @@ mod tests {
         assert_eq!(target("POST", "/sniffbox/settings/observer-token").as_deref(), Some("/api/observer-token"));
         assert!(target("GET", "/sniffbox/settings/observer-token").is_none());
         assert!(target("POST", "/sniffbox/settings/observer-token?reveal=true").is_none());
+        for suffix in ["diagnostics", "backups"] {
+            assert_eq!(target("GET", &format!("/sniffbox/settings/{suffix}")).as_deref(),
+                       Some(format!("/api/{suffix}").as_str()));
+            assert!(target("POST", &format!("/sniffbox/settings/{suffix}")).is_none());
+            assert!(target("GET", &format!("/sniffbox/settings/{suffix}?path=/etc/shadow")).is_none());
+        }
+        for suffix in ["backups/list", "restore/preview", "recover/preview"] {
+            assert_eq!(target("POST", &format!("/sniffbox/settings/{suffix}")).as_deref(),
+                       Some(format!("/api/{suffix}").as_str()));
+            assert!(target("GET", &format!("/sniffbox/settings/{suffix}")).is_none());
+            assert!(target("POST", &format!("/sniffbox/settings/{suffix}?path=../../secret")).is_none());
+        }
+        assert!(target("POST", "/sniffbox/settings/restore").is_none());
+        assert!(target("GET", "/sniffbox/settings/backups/download").is_none());
     }
 }

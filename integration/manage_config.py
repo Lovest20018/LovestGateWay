@@ -125,7 +125,10 @@ class ConfigManager:
                     runtime = self.system.wait(settings)
                     from manage_operations import remember_loaded
                     remember_loaded(self.layout, settings_revision(self.layout), runtime)
-                if settings['api']['enabled'] and restore.get('paopaogw-api', {}).get('active'):
+                if restore.get('paopaogw-api', {}).get('active'):
+                    # A historical snapshot may predate explicit API opt-in.
+                    # The recorded active service still requires real readiness.
+                    settings['api']['enabled'] = True
                     self.system.wait_api(settings)
             except Exception:
                 journal['phase'] = 'rollback_unconfirmed'; write_json(self.layout, JOURNAL, journal)
