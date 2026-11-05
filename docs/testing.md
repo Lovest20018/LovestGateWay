@@ -14,7 +14,12 @@ node --check integration/gateway.js
 node --check integration/ppsub_panel.js
 ```
 
-API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
+API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板构建和调用打包脚本的测试需要 Node.js 18+（Debian Bookworm 可安装 `nodejs`）；不需要安装 npm 依赖，Node 不属于生产运行依赖。`PPGW_NODE` 可指定构建解释器。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
+
+```sh
+node frontend/build.mjs
+node --test frontend/tests/model.test.mjs
+```
 
 ```sh
 cd sniffbox
@@ -33,12 +38,15 @@ node scripts/verify-dashboard-fixture.cjs dist/test-ui
 node scripts/verify-runtime-navigation.cjs dist/test-ui
 node scripts/verify-subscription-flow.cjs dist/test-ui
 node scripts/verify-subscription-drafts.cjs dist/test-ui
+node scripts/verify-source-editor.cjs dist/test-ui
 node scripts/verify-observer-api-fixture.cjs dist/test-ui
 ```
 
 `PPGW_PLAYWRIGHT_MODULE` 和 `PPGW_PYTHON` 可指定本地工具位置。生成资源、截图和日志保存在被忽略的 `dist/` 中。
 
 订阅草稿验证同时检查结构化变化预览、来源覆盖说明、敏感内容隐藏、名称按文本显示、后台生效计划及手机预览尺寸；API 使用合成响应，不触碰真实订阅或服务。
+
+源码编辑器验证在非安全 HTTP 合成地址上检查登录、重新认证保留草稿、偏好保留和消息来源校验，并将实际表单提交交给后端 PPsub 校验或 Clash 合并函数，验证未编辑字段和隐藏凭据保留。`tests/test_dashboard.py` 检查构建清单、原兼容 bundle 字节不变和重复构建结果一致。
 
 ## 隔离运行验证
 

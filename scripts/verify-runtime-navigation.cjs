@@ -53,8 +53,8 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     });
     await page.goto(origin + '/ui/#/subscriptions');
     await page.locator('.source-kind').waitFor();
-    const nav = page.locator('aside');
-    assert.equal(await nav.locator('a[href="#/proxies"]').count(), 0);
+    const nav = page.locator('#shell-nav');
+    assert.equal(await nav.locator('a[href="#/proxies"]').isVisible(), false);
     await page.locator('.source-switch > summary').click();
     await page.locator('#source-type').selectOption('ppsub');
     await page.locator('#source-ppsub').setInputFiles({name: 'import.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(native))});
@@ -65,16 +65,16 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await nav.locator('a[href="#/proxies"]').waitFor();
     assert.equal(await nav.locator('a[href="#/rules"]').count(), 1);
     await nav.locator('a[href="#/proxies"]').click();
-    await page.getByText('Fixture Main', {exact: true}).first().waitFor();
-    await page.getByText('Fixture Node', {exact: true}).first().waitFor();
+    await page.frameLocator('.legacy-frame').getByText('Fixture Main', {exact: true}).first().waitFor();
+    await page.frameLocator('.legacy-frame').getByText('Fixture Node', {exact: true}).first().waitFor();
     await nav.getByRole('link', {name: '网关设置', exact: true}).click();
     await page.getByRole('tab', {name: '网络与出站', exact: true}).click();
     await page.getByLabel('网关出站模式', {exact: true}).selectOption('free');
     await page.locator('#preview').click();
     await page.locator('#apply').click();
     await page.getByText('配置已应用，运行状态验收通过。', {exact: true}).waitFor();
-    assert.equal(await nav.locator('a[href="#/proxies"]').count(), 0);
-    assert.equal(await nav.locator('a[href="#/rules"]').count(), 0);
+    assert.equal(await nav.locator('a[href="#/proxies"]').isVisible(), false);
+    assert.equal(await nav.locator('a[href="#/rules"]').isVisible(), false);
     assert.equal(sourceImports, 1);
     assert.deepEqual(errors, []);
     const evidence = {syntheticOnly: true, initialDirectMode: true, importedPpsubApplied: true,

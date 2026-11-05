@@ -69,9 +69,9 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.goto(origin+'/ui/#/subscriptions');
     const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);
     await ready();
-    const health=page.locator('.monitor > label.ck input').first();
+    const health=page.locator('.monitor [data-field="enable"]').first();
     const interval=page.getByLabel('订阅更新间隔',{exact:true});
-    const navigation=page.locator('aside');
+    const navigation=page.locator('#shell-nav');
     const settings=()=>navigation.locator('a[href="#/settings"]').click();
     const subscriptions=()=>navigation.locator('a[href="#/subscriptions"]').click();
     const reload=async(confirm=false)=>{if(confirm)page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'重新读取',exact:true}).click();await ready();};
