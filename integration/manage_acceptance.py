@@ -4,10 +4,16 @@ import re
 import threading
 import time
 
-from manage_common import ManagementError, operation_lock, read_bytes, require_idle, write_json
+from manage_common import ManagementError, digest, operation_lock, read_bytes, require_idle, write_json
 from manage_model import load_settings, settings_revision
 
 CHECK = 'var/lib/paopaogw/admin/settings-check.json'
+
+
+def runtime_identity(runtime):
+    actual = runtime.get('data', runtime)
+    scope = digest(json.dumps(actual.get('mihomo_configuration'), sort_keys=True).encode())
+    return actual.get('boot_id'), actual.get('config_revision'), scope
 
 
 class Acceptance:
@@ -26,8 +32,7 @@ class Acceptance:
 
     def trigger(self, revision, runtime):
         if not self.layout.live: return
-        actual = runtime.get('data', runtime)
-        identity = (revision, actual.get('boot_id'), actual.get('config_revision'))
+        identity = (revision, *runtime_identity(runtime))
         with self.lock:
             if (identity == self.last and time.monotonic() - self.attempted < 60) or getattr(self, 'running', False): return
             self.last, self.attempted, self.running = identity, time.monotonic(), True
@@ -47,7 +52,8 @@ class Acceptance:
             try:
                 before = self.system.runtime()
                 actual = before.get('data', before)
-                value.update(boot_id=actual.get('boot_id'), config_revision=actual.get('config_revision'))
+                value.update(boot_id=actual.get('boot_id'), config_revision=actual.get('config_revision'),
+                             runtime_scope=runtime_identity(before)[2])
                 if (not isinstance(actual.get('boot_id'), str) or not re.fullmatch(r'[0-9a-f-]{36}', actual['boot_id']) or
                         not isinstance(actual.get('config_revision'), str) or not re.fullmatch(r'[0-9a-f]{64}', actual['config_revision']) or
                         actual.get('configuration_state') != 'loaded' or actual.get('last_load_result') != 'success'):
@@ -56,7 +62,7 @@ class Acceptance:
                 after = self.system.runtime()
                 after = after.get('data', after)
                 if (settings_revision(self.layout) != revision or
-                        any(actual.get(key) != after.get(key) for key in ('boot_id', 'config_revision'))):
+                        runtime_identity(before) != runtime_identity(after)):
                     raise ManagementError('STATE_CHANGED_DURING_CHECK')
                 value['result'] = 'verified'
                 from manage_operations import remember_loaded
@@ -74,5 +80,5 @@ class Acceptance:
 def latest_check(layout):
     try:
         value = json.loads(read_bytes(layout, CHECK, b'{}'))
-        return {key: value[key] for key in ('revision', 'boot_id', 'config_revision', 'result', 'checked_at', 'checks', 'error') if key in value}
+        return {key: value[key] for key in ('revision', 'boot_id', 'config_revision', 'runtime_scope', 'result', 'checked_at', 'checks', 'error') if key in value}
     except (OSError, ValueError): return {}

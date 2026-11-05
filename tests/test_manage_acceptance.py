@@ -54,6 +54,11 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(self.acceptance.check()['error'], 'STATE_CHANGED_DURING_CHECK')
         self.assertFalse(self.layout.path(RECEIPT).exists())
 
+    def test_mihomo_source_change_during_check_cannot_confirm_even_with_same_core_boot(self):
+        self.system.runtime.side_effect = [self.runtime, {**self.runtime, 'mihomo_configuration': {'status':'loaded','source_revision':'new'}}]
+        self.assertEqual(self.acceptance.check()['error'], 'STATE_CHANGED_DURING_CHECK')
+        self.assertFalse(self.layout.path(RECEIPT).exists())
+
     def test_pending_recovery_is_never_overwritten(self):
         write_json(self.layout, 'var/lib/paopaogw/admin/transaction.json', {'phase': 'conflict'})
         with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): self.acceptance.check()
@@ -78,6 +83,9 @@ class AcceptanceTests(unittest.TestCase):
     def test_changed_identity_marks_old_check_as_historical(self):
         self.acceptance.check()
         value = summary(self.layout, settings_revision(self.layout), {**self.runtime, 'boot_id': 'b'*36})
+        self.assertEqual(value['state'], 'unknown')
+        self.assertFalse(value['verification']['current'])
+        value = summary(self.layout, settings_revision(self.layout), {**self.runtime, 'mihomo_configuration': {'status':'loaded','source_revision':'new'}})
         self.assertEqual(value['state'], 'unknown')
         self.assertFalse(value['verification']['current'])
 
