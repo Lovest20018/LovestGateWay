@@ -31,7 +31,7 @@
 
   function mount(editor) {
     const state = { ...editor, available: false, writeAllowed: false, revision: '', editKind: 'ppsub',
-      snapshotId: null, settingsRevision: '', syntheticSource:false, nodeChoices: [], active: false, stopped: false, timer: null, locked: [],
+      snapshotId: null, settingsRevision: '', syntheticSource:false, nodeChoices: [], active: false, stopped: false, timer: null, providerTimer: null, locked: [],
       loaded: false, loading: false, settingsBusy: false, editingLocked: false, baseline: null };
     state.needsReload = false;
     const lifetime = new AbortController();
@@ -81,10 +81,22 @@
     refreshNodes.type='button'; refreshNodes.className='btn'; refreshNodes.textContent='更新全部订阅';
     refreshNodes.dataset.refreshNodes=''; refreshNodes.disabled=true;
     const cacheNote=document.createElement('p'); cacheNote.className='ppgw-export-note'; cacheNote.dataset.nodeCache=''; cacheNote.hidden=true;
+    let providerStates = [];
     function showCache(data) {
       const rows=data?.subscriptions||[];
+      providerStates = rows;
       cacheNote.hidden=!rows.length;
       cacheNote.textContent=rows.map(row=>row.nodes?`${row.name}：已保存 ${row.nodes} 个节点${row.update_failed?'（获取失败，沿用已保存节点）':''}`:`${row.name}：尚无节点，请手动更新`).join('；');
+      providerControls();
+    }
+    async function pollProviders() {
+      try {
+        if (!state.active && !state.loading) {
+          const data = await request('providers');
+          if (!state.stopped) showCache(data);
+        }
+      } catch { /* Keep saved provider evidence and every unsaved editor field. */ }
+      finally { if (!state.stopped) state.providerTimer = setTimeout(pollProviders, 5000); }
     }
     async function refreshProviders(names) {
       if(state.loading||state.active||state.settingsBusy||!state.loaded)return;
@@ -145,7 +157,8 @@
           }
           const interval=document.createElement('input');interval.className='input';interval.dataset.providerInterval='';interval.placeholder='如 6h、1d';
           const update=document.createElement('button');update.type='button';update.className='btn';update.textContent='更新此订阅';update.dataset.providerRefresh='';
-          controls.append(mode,interval,update);item.append(controls);
+          const status=document.createElement('p');status.className='ppgw-provider-status';status.dataset.providerStatus='';status.setAttribute('aria-live','polite');
+          controls.append(mode,interval,update,status);item.append(controls);
           mode.onchange=()=>{
             const row=editor.providers()[Array.from(item.parentElement.querySelectorAll(':scope > .item')).indexOf(item)];
             row.update_mode=mode.value;row.update_interval ||= '1d';providerControls();
@@ -157,6 +170,13 @@
           update.onclick=()=>refreshProviders([item.querySelector('.row input').value]);
         }
         controls.hidden=state.editKind!=='ppsub';
+        const saved=providerStates.find(value=>value.name===row.name);
+        const when=value=>value?new Date(value*1000).toLocaleString():'尚无记录';
+        const results={updated:'已更新',unchanged:'内容未变，无需重新加载',retained:'获取失败，沿用旧节点',unavailable:'尚无可用节点',failed:'更新失败，保留原配置',saved:'已保存节点'};
+        const next=saved?.next_update_at?when(saved.next_update_at):saved?.update_mode==='manual'?'仅手动':saved?.update_mode==='inherit'?'全局自动更新未启用或计划尚待确认':'计划尚待确认';
+        const label=saved?`${saved.nodes} 个节点 · ${results[saved.result]||'尚无结果'}\n最近尝试：${when(saved.attempted_at)} · 最近成功：${when(saved.succeeded_at)}\n下次更新：${next}${saved.error_category?' · '+saved.error_category:''}${saved.node_delta!=null?' · 节点数变化 '+(saved.node_delta>0?'+':'')+saved.node_delta:''}`:'尚无已保存的更新记录';
+        const status=controls.querySelector('[data-provider-status]');
+        if(status.textContent!==label)status.textContent=label;
         const mode=controls.querySelector('select'),interval=controls.querySelector('input'),update=controls.querySelector('button');
         mode.setAttribute('aria-label',row.name+' 更新方式');interval.setAttribute('aria-label',row.name+' 自动更新间隔');
         update.setAttribute('aria-label','更新此订阅：'+row.name);
@@ -221,7 +241,8 @@
         state.editKind = data.edit_kind || 'ppsub';
         updateApply();
         if (operation) {
-          show(operation.message, operation.status === 'failed');
+          const stages={fetching:'获取订阅',validating:'校验配置',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置'};
+          show((stages[operation.stage]?stages[operation.stage]+'…\n':'')+operation.message, ['failed','interrupted'].includes(operation.status));
           view.hidden = !['applied', 'unchanged'].includes(operation.status);
           view.style.display = view.hidden ? 'none' : 'inline-flex';
           if (operation.status !== 'applying') {
@@ -312,6 +333,7 @@
     };
 
     lockEditing(true);
+    state.providerTimer = setTimeout(pollProviders, 5000);
     show('正在读取本机当前配置…');
     request('status').then(async data => {
       if (state.stopped) return;
@@ -320,7 +342,7 @@
       state.writeAllowed = data.ppsub_write_allowed !== false;
       state.editKind = data.edit_kind || 'ppsub';
       if (data.operation?.status === 'applying') { state.active = true; await refresh(); }
-      else await state.loadCurrent(editor.importConfig, false);
+      else { await state.loadCurrent(editor.importConfig, false); if(data.operation)show(data.operation.message,['failed','interrupted'].includes(data.operation.status)); }
     }).catch(error => {
       if (state.stopped) return;
       // Keep the explicit read button available so a temporary failure is retryable.
@@ -334,6 +356,7 @@
       state.stopped = true;
       lifetime.abort();
       clearTimeout(state.timer);
+      clearTimeout(state.providerTimer);
       syncEditing();
       window.ppgwGateway?.setEditorBusy(false);
       capabilityObserver.disconnect(); editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); backup.remove(); exportNote.remove(); refreshNodes.remove(); cacheNote.remove();

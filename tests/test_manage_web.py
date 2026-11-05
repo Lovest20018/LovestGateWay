@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch, Mock, PropertyMock
 from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler
 from http.server import ThreadingHTTPServer
@@ -67,6 +68,43 @@ class WebSettingsTests(unittest.TestCase):
         body = self.job(); self.admin.submit(body)
         restarted = SettingsAdmin(self.layout, self.system, start_job=self.callbacks.append)
         self.assertEqual(restarted.job(body['id'])['error'], 'INTERRUPTED_CHECK_RECOVERY')
+        self.assertEqual(restarted.status()['management']['latest']['result'], 'unknown')
+        self.assertEqual(restarted.status()['management']['latest']['recovery'], 'check_required')
+
+    def test_status_avoids_full_config_and_rehash_until_external_metadata_changes(self):
+        with patch.object(self.admin.manager,'show',side_effect=AssertionError('full config read')), \
+             patch('manage_web.load_settings',side_effect=AssertionError('secret settings read')), \
+             patch('manage_model.settings_revision', wraps=settings_revision) as revision:
+            first = self.admin.status()
+            self.admin.status()
+            self.assertEqual(revision.call_count,1)
+            asset = self.layout.path('etc/paopaogw/files/externally-added.yaml')
+            asset.write_text('rules: []')
+            self.admin.status()
+            self.assertEqual(revision.call_count,2)
+            asset.unlink()
+            self.admin.status()
+            self.assertEqual(revision.call_count,3)
+            external=self.layout.path('etc/paopaogw/network')
+            external.write_text('external network change')
+            self.admin.status()
+            self.assertEqual(revision.call_count,4)
+            self.admin.revision_sample.checked-=61
+            self.admin.status()
+            self.assertEqual(revision.call_count,5)
+        self.assertNotIn('settings',first)
+        self.assertNotIn('private',json.dumps(first))
+
+    def test_status_samples_core_once_and_never_attests_unreachable_runtime(self):
+        client = Mock(); client.request.return_value = {'mode':'free','integration':{'boot_id':'boot','config_revision':'rev'}}
+        with patch.object(Layout,'live',new_callable=PropertyMock,return_value=True), \
+             patch.object(self.system,'client',return_value=client,create=True):
+            value = self.admin.status()
+            self.assertEqual(value['running_mode'],'free')
+            client.request.assert_called_once_with('/sniffbox/info')
+            client.request.side_effect = OSError('offline')
+            value = self.admin.status()
+            self.assertEqual(value['management']['state'],'unknown')
 
     def test_auxiliary_services_and_source_reset_are_in_preview(self):
         value = self.admin.preview(self.request({'maintenance': {'auto_update': False}, 'api': {'name': 'Fixture'}}))
@@ -91,6 +129,11 @@ class WebSettingsTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as denied: call('/api/config')
         self.assertEqual(denied.exception.code, 401)
         denied.exception.close()
+        with self.assertRaises(HTTPError) as denied: call('/api/status')
+        self.assertEqual(denied.exception.code,401); denied.exception.close()
+        with call('/api/status',token='a'*64) as response:
+            self.assertEqual(response.status,200)
+            self.assertNotIn('settings',json.load(response))
         with self.assertRaises(HTTPError) as denied: call('/api/preview', self.request(), 'a' * 64, 'https://example.org')
         self.assertEqual(denied.exception.code, 403)
         denied.exception.close()

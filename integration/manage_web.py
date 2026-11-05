@@ -11,7 +11,7 @@ import threading
 import time
 from manage_common import Layout, ManagementError, read_bytes, write_json
 from manage_config import ConfigManager
-from manage_model import SCHEMA, SECRET_KEYS, load_settings, settings_revision
+from manage_model import SCHEMA, SECRET_KEYS, load_settings, settings_revision, RevisionSample
 from manage_runtime import System
 from manage_assets import import_asset
 from manage_policy import PolicyManager
@@ -65,6 +65,7 @@ class SettingsAdmin:
         self.policy = PolicyManager(self.layout, self.system, policy_reader)
         self.lock = threading.Lock()
         self.active = None
+        self.revision_sample = RevisionSample()
         self.start_job = start_job or self.schedule
         self.reconcile_jobs()
 
@@ -82,8 +83,10 @@ class SettingsAdmin:
             try:
                 value = json.loads(read_bytes(self.layout, JOBS + path.name))
                 if value.get('status') in {'queued', 'running'}:
-                    value.update(status='failed', error='INTERRUPTED_CHECK_RECOVERY', finished_at=time.time())
+                    value.update(status='failed', stage='interrupted', error='INTERRUPTED_CHECK_RECOVERY', finished_at=time.time())
                     write_json(self.layout, JOBS + path.name, value)
+                    from manage_operations import record
+                    record(self.layout, 'settings', {**value, 'status': 'interrupted', 'stage': 'interrupted'})
             except (ValueError, OSError): continue
 
     def authenticated(self, authorization):
@@ -113,8 +116,36 @@ class SettingsAdmin:
         journal = self.manager.journal()
         value['recovery_required'] = bool(journal and journal.get('phase') not in {'complete', 'rolled_back'})
         value['latest_job'] = self.latest_job()
-        try: value['runtime'] = self.system.runtime() if self.layout.live else {'status': 'staged'}
-        except Exception: value['runtime'] = {'status': 'unavailable'}
+        value.update(self.runtime_sample())
+        from manage_operations import summary
+        value['management'] = summary(self.layout, value['revision'], value['runtime'], value['recovery_required'])
+        return value
+
+    def runtime_sample(self):
+        try:
+            info = self.system.client().request('/sniffbox/info') if self.layout.live else {}
+            return {'runtime': info.get('integration', {'status': 'staged' if not self.layout.live else 'unavailable'}),
+                    'running_mode': info.get('mode')}
+        except Exception: return {'runtime': {'status': 'unavailable'}, 'running_mode': None}
+
+    def status(self):
+        """No settings/schema/secrets or full config show on the polling path."""
+        from manage_operations import summary, lifecycle_lock, mihomo_current
+        from mihomo_update import STATE
+        if self.layout.live:
+            with lifecycle_lock(self.layout): mihomo_current(self.layout, STATE)
+        value = self.runtime_sample()
+        journal = self.manager.journal()
+        value['recovery_required'] = bool(journal and journal.get('phase') not in {'complete', 'rolled_back'})
+        try:
+            revision = self.revision_sample.sample(self.layout)
+            value['management'] = summary(self.layout, revision, value['runtime'], value['recovery_required'])
+        except Exception:
+            from manage_operations import history
+            rows = history(self.layout)
+            value['management'] = {'state': 'unknown', 'policy_state': 'saved_unconfirmed', 'recent': rows,
+                                   'latest': rows[0] if rows else None, 'error': 'STATE_SAMPLE_UNAVAILABLE'}
+        value['source'] = {'local_policy': self.layout.path('etc/paopaogw/files/clash-policy.json').exists()}
         return value
 
     def preview(self, body):
@@ -137,6 +168,10 @@ class SettingsAdmin:
         if raw is None: raise ManagementError('JOB_NOT_FOUND')
         value = json.loads(raw)
         value.pop('request_digest', None)
+        from manage_operations import public
+        contract = public(value)
+        value.update({key: contract[key] for key in ('phase', 'recovery')})
+        value['operation_result'] = contract['result']
         return value
 
     def submit(self, body):
@@ -158,8 +193,12 @@ class SettingsAdmin:
             if self.active: raise ManagementError('MANAGEMENT_BUSY')
             if body['kind'] == 'config': envelope(body['payload'])
             value = {'id': identifier, 'kind': body['kind'], 'status': 'queued',
-                     'created_at': time.time(), 'request_digest': digest}
+                     'stage': 'queued', 'created_at': time.time(), 'request_digest': digest}
+            from manage_operations import execution
+            value['execution'] = execution('paopaogw-settings.service')
             write_json(self.layout, relative, value)
+            from manage_operations import record
+            record(self.layout, 'settings', value)
             write_json(self.layout, JOBS + 'latest.json', {'id': identifier})
             self.active = identifier
             self.start_job(lambda: self.run(body))
@@ -168,9 +207,15 @@ class SettingsAdmin:
     def run(self, body):
         identifier = body['id']; relative = JOBS + identifier + '.json'
         value = json.loads(read_bytes(self.layout, relative))
+        from manage_operations import record
+        def progress(stage):
+            value['stage'] = stage
+            write_json(self.layout, relative, value)
+            record(self.layout, 'settings', value)
         try:
             value.update(status='running', started_at=time.time())
-            write_json(self.layout, relative, value)
+            progress('validating')
+            self.manager.progress = progress
             payload = body['payload']
             if body['kind'] == 'config':
                 patch, revision, reset, restart = envelope(payload)
@@ -191,7 +236,14 @@ class SettingsAdmin:
             value.update(status='failed', error=public_error(error))
         finally:
             value['finished_at'] = time.time()
+            value['stage'] = 'complete'
+            if value.get('result'):
+                result = value['result']
+                value['outcome'] = (result.get('runtime') or {}).get('reason') or result.get('status')
+                if result.get('backup'): value['backup'] = result['backup']
             write_json(self.layout, relative, value)
+            record(self.layout, 'settings', value)
+            self.manager.progress = lambda stage: None
             with self.lock: self.active = None
 
 
@@ -212,6 +264,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(401, {'error': 'LOGIN_REQUIRED'})
         try:
             if self.path == '/api/config': value = self.server.admin.show()
+            elif self.path == '/api/status': value = self.server.admin.status()
             elif self.path == '/api/policy': value = self.server.admin.policy.show()
             elif self.path.startswith('/api/jobs/'): value = self.server.admin.job(self.path[len('/api/jobs/'):])
             else: return self.respond(404, {'error': 'NOT_FOUND'})

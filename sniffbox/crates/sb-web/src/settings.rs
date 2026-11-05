@@ -6,6 +6,7 @@ use tokio::net::TcpStream;
 fn target(method: &str, path: &str) -> Option<String> {
     let fixed = match (method, path) {
         ("GET", "/sniffbox/settings/config") => Some("/api/config"),
+        ("GET", "/sniffbox/settings/status") => Some("/api/status"),
         ("GET", "/sniffbox/settings/policy") => Some("/api/policy"),
         ("POST", "/sniffbox/settings/preview") => Some("/api/preview"),
         ("POST", "/sniffbox/settings/policy/preview") => Some("/api/policy/preview"),
@@ -38,6 +39,9 @@ mod tests {
     #[test]
     fn settings_routes_never_forward_arbitrary_paths_or_queries() {
         assert_eq!(target("POST", "/sniffbox/settings/apply").as_deref(), Some("/api/apply"));
+        assert_eq!(target("GET", "/sniffbox/settings/status").as_deref(), Some("/api/status"));
+        assert!(target("POST", "/sniffbox/settings/status").is_none());
+        assert!(target("GET", "/sniffbox/settings/status?secret=true").is_none());
         assert_eq!(target("GET", "/sniffbox/settings/jobs/0123456789abcdef0123456789abcdef").as_deref(),
                    Some("/api/jobs/0123456789abcdef0123456789abcdef"));
         for path in ["/sniffbox/settings/config?url=http://example.com", "/sniffbox/settings/jobs/../config",

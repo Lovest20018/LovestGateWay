@@ -9,7 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_common import Layout
 from manage_model import validate
-from manage_subscription import refresh_nodes
+from manage_subscription import refresh_nodes, payload_content
 
 
 class SubscriptionCacheTransactionTests(unittest.TestCase):
@@ -82,7 +82,8 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
     def test_new_nodes_publish_only_after_validation_and_survive_readiness(self):
         with patch('manage_subscription.subprocess.run', side_effect=self.execute):
             rows = refresh_nodes(self.layout, self.system)
-        self.assertEqual(rows, self.rows)
+        self.assertEqual(rows[0]['result'], 'updated')
+        self.assertEqual(rows[0]['name'], self.rows[0]['name'])
         self.assertIn(b'new valid nodes', (self.cache / self.filename).read_bytes())
         self.assertEqual(self.waits, 1)
         self.assertEqual(self.commands.count(('systemctl', 'restart', 'paopaogw')), 1)
@@ -104,6 +105,35 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
         self.assertEqual((self.cache / self.filename).read_bytes(), self.original)
         self.assertEqual(self.waits, 2)
         self.assertEqual(self.commands.count(('systemctl', 'restart', 'paopaogw')), 2)
+
+    def test_metadata_only_update_accepts_new_timestamp_without_restart(self):
+        from manage_subscription_schedule import identity
+        provider = {'name': 'Airport', 'url': 'https://example.com/a'}
+        self.filename = identity(provider) + '.json'
+        self.original = b'{"raw_yaml":"same payload", "saved_at": 1}\n'
+        (self.cache / self.filename).write_bytes(self.original)
+        def execute(command, **kwargs):
+            result = self.execute(command, **kwargs)
+            if '-ppsub' in command:
+                stage = Path(kwargs['env']['PPGW_SUB_CACHE_DIR'])
+                (stage / self.filename).write_bytes(b'{"raw_yaml":"same payload", "saved_at": 2}\n')
+            return result
+        with patch('manage_subscription.subprocess.run', side_effect=execute):
+            rows = refresh_nodes(self.layout, self.system)
+        self.assertEqual(rows[0]['result'], 'unchanged')
+        self.assertEqual(json.loads((self.cache / self.filename).read_bytes())['saved_at'], 2)
+        self.assertEqual(self.waits, 0)
+        self.assertFalse(any('restart' in cmd for cmd in self.commands))
+
+    def test_comparison_preserves_credentials_scalar_types_hosts_and_node_order(self):
+        def content(text): return payload_content(json.dumps({'raw_yaml': text, 'saved_at': 1}).encode())
+        baseline = 'proxies: [{name: A, password: yes, port: 443}, {name: B}]\nhosts: {node.test: 192.0.2.1}\n'
+        self.assertEqual(content(baseline), content(baseline.replace('name: A, password: yes', 'password: yes, name: A') + '# comment\n'))
+        for changed in (baseline.replace('password: yes', 'password: true'),
+                        baseline.replace('password: yes', 'password: "yes"'),
+                        baseline.replace('192.0.2.1', '192.0.2.2'),
+                        baseline.replace('[{name: A, password: yes, port: 443}, {name: B}]', '[{name: B}, {name: A, password: yes, port: 443}]')):
+            self.assertNotEqual(content(baseline), content(changed))
 
 
 if __name__ == '__main__': unittest.main()

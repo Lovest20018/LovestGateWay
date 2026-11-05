@@ -28,7 +28,7 @@ class UnifiedEditorTests(unittest.TestCase):
         self.original=self.ini.read_bytes()
         self.doc,self.baseline,self.submitted=test_clash_ppsub.ClashPpsubTests().editing()
         self.system=FakeSystem(); self.system.validate_policy=lambda document: None
-        self.admin=source.Admin()
+        self.admin=source.Admin(self.layout)
         self.patches=[patch.object(source,'CONFIG',self.ini),patch.object(source,'FILES',self.files),
                       patch.object(source,'STATE',self.layout.path('var/lib/paopaogw/admin')),
                       patch.object(source,'running_document',side_effect=lambda:deepcopy(self.doc)),

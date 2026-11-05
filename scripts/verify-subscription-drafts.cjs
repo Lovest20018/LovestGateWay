@@ -21,14 +21,17 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.addInitScript(()=>localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]})));
     const model={...defaults,revision:'a'.repeat(64),assets:['custom.yaml','second.yaml'],source:{url:'https://example.com/main-config',native_ppsub:false,local_policy:true},mihomo_installed:true};
     let operation=null,job=null,savedEditor=null,sourceSwitched=0,mismatchSettings=false;
+    let providerRows=[],providerPolls=0,editorConfigReads=0;
     const kind=()=>model.source.native_ppsub?'ppsub':'clash_patch';
     await page.route(origin+'/**',async route=>{
       const request=route.request(),target=new URL(request.url()).pathname,body=request.method()==='POST'?request.postDataJSON():null;
       const reply=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
       if(target.startsWith('/sniffbox/')){
         if(target==='/sniffbox/settings/config')return reply(mismatchSettings?{...model,revision:'f'.repeat(64)}:model);
+        if(target==='/sniffbox/settings/status')return reply({management:{state:'unknown',recent:[]},runtime:{},running_mode:model.settings.ini.mode,source:model.source});
+        if(target==='/sniffbox/subscription/providers'){providerPolls++;return reply({subscriptions:providerRows});}
         if(target==='/sniffbox/subscription/status')return reply({ready:true,ppsub_write_allowed:true,edit_kind:kind(),base_revision:model.revision,operation});
-        if(target==='/sniffbox/subscription/config')return reply({config:model.source.native_ppsub?native:projected,write_allowed:true,edit_kind:kind(),base_revision:model.revision,settings_revision:model.revision,snapshot_id:'snapshot',node_choices:['N1'],notice:'Fixture source: '+model.settings.ini.mode});
+        if(target==='/sniffbox/subscription/config'){editorConfigReads++;return reply({config:model.source.native_ppsub?native:projected,write_allowed:true,edit_kind:kind(),base_revision:model.revision,settings_revision:model.revision,snapshot_id:'snapshot',node_choices:['N1'],notice:'Fixture source: '+model.settings.ini.mode});}
         if(target==='/sniffbox/settings/preview'){
           requests.push({target,body});
           if(model.source.local_policy&&Object.keys(body.patch.ini||{}).some(key=>['mode','suburl','yamlfile'].includes(key))&&!body.reset_source)return reply({error:'SOURCE_CONFLICT'},409);
@@ -110,10 +113,25 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await settings();assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),true);
     await subscriptions();await page.getByRole('button',{name:'取消切换',exact:true}).click();await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
+    // A browser left open receives another browser/scheduler's provider result,
+    // while preserving its unsaved source and provider schedule drafts.
+    model.source.native_ppsub=true;model.source.local_policy=false;operation=null;
+    await subscriptions();await reload();
+    const mode=page.getByLabel('Native provider 更新方式',{exact:true});
+    await mode.selectOption('auto');
+    const providerInterval=page.getByLabel('Native provider 自动更新间隔',{exact:true});
+    await providerInterval.fill('7h');
+    const readsBefore=editorConfigReads;
+    providerRows=[{name:'Native provider',nodes:13,result:'updated',attempted_at:1700000000,succeeded_at:1700000000,update_mode:'auto',next_update_at:1700020000}];
+    await page.locator('[data-provider-status]').filter({hasText:'13 个节点'}).waitFor({timeout:15000});
+    assert.equal(await providerInterval.inputValue(),'7h');
+    assert.equal(await mode.inputValue(),'auto');
+    assert.equal(editorConfigReads,readsBefore,'idle provider polls must not import configuration');
+    assert.ok(providerPolls>0);
     assert.deepEqual(errors,[]);
     const result={syntheticOnly:true,reloadSynchronizesRevisionAndValues:true,mixedSnapshotsRejectedAndRetryable:true,
       editorDraftBlocksSecondSettingsDraft:true,settingsDraftBlocksSecondEditorDraft:true,bothOriginalSavePathsComplete:true,
-      scheduleDraftProtected:true,sourceDraftProtected:true,draftsPreservedAcrossRoutes:true,pageErrors:errors};
+      scheduleDraftProtected:true,sourceDraftProtected:true,draftsPreservedAcrossRoutes:true,idleProviderUpdatePreservesDraft:true,pageErrors:errors};
     await fs.writeFile(path.join(root,'dist/subscription-drafts-browser-evidence.json'),JSON.stringify(result,null,2)+'\n');
     console.log(JSON.stringify(result));
   }finally{await browser.close();}

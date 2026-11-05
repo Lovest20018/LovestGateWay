@@ -154,17 +154,22 @@ def worker(admin, body, operation):
         with operation_lock(layout):
             require_idle(layout)
             layout, system, patch, options, verify = candidate(admin, body)
-            result = ConfigManager(layout, system).apply(patch, body['settings_revision'], verify=verify, **options)
+            manager = ConfigManager(layout, system)
+            def progress(stage):
+                with admin.lock: operation.update(stage=stage)
+            manager.progress = progress
+            result = manager.apply(patch, body['settings_revision'], verify=verify, **options)
         with admin.lock:
             operation.update(status='unchanged' if result['status'] == 'unchanged' else 'applied',
                              message='订阅、策略与更新计划已保存并验证。' if result['status'] != 'unchanged' else '配置没有变化，无需应用。',
-                             backup=result.get('backup'))
+                             backup=result.get('backup'), outcome=(result.get('runtime') or {}).get('reason') or result['status'])
             admin.snapshots.pop(body.get('snapshot_id'), None)
     except Exception as error:
         code = str(error).split(':', 1)[0]
         message = {'APPLY_FAILED_ROLLED_BACK': '加载失败，已恢复此次保存前的配置和更新计划。',
+                   'ROLLBACK_UNCONFIRMED': '加载失败，原保存文件已还原，但运行恢复尚未通过验证；请检查系统服务和恢复提示。',
                    'EXTERNAL_CONFIG_CONFLICT': '检测到外部修改，请检查运行状态并通过管理脚本恢复。',
                    'CONFIG_REVISION_CONFLICT': '配置已变化，未写入，请重新读取后再保存。',
                    'CONFIG_CHANGED': '运行配置或快照已变化，未写入，请重新读取后再保存。',
                    'MANAGEMENT_BUSY': '其他管理任务正在进行，请稍后重试。'}.get(code, '校验或应用失败，配置未保存；请检查订阅与规则。')
-        with admin.lock: operation.update(status='failed', message=message)
+        with admin.lock: operation.update(status='failed', message=message, error=code if re.fullmatch(r'[A-Z_]{3,64}',code) else 'OPERATION_FAILED')

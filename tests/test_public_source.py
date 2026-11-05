@@ -44,6 +44,44 @@ class PublicSourceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn('reachable history', result.stderr)
 
+    def assert_private_copy_is_rejected(self, private):
+        for deleted in (False, True):
+            if deleted:
+                self.git('rm', '-qr', private)
+                self.git('commit', '-qm', 'delete private copy')
+            for pre_push in (False, True):
+                with self.subTest(deleted=deleted, pre_push=pre_push):
+                    result = self.check(pre_push=pre_push)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn('reachable history', result.stderr)
+
+    def test_reused_blob_does_not_hide_private_paths(self):
+        public = self.root / 'docs/example.md'
+        public.parent.mkdir(); public.write_text('synthetic duplicate contents')
+        self.git('add', 'docs'); self.git('commit', '-qm', 'public example')
+        private = self.root / 'docs/validation/synthetic.md'
+        private.parent.mkdir(); shutil.copyfile(public, private)
+        self.git('add', 'docs'); self.git('commit', '-qm', 'private copy of existing blob')
+        self.assert_private_copy_is_rejected('docs/validation/synthetic.md')
+
+    def test_reused_subtree_does_not_hide_private_prefixes(self):
+        public = self.root / 'docs/examples'
+        public.mkdir(parents=True)
+        (public / 'one.md').write_text('first synthetic example')
+        (public / 'two.md').write_text('second synthetic example')
+        self.git('add', 'docs'); self.git('commit', '-qm', 'public examples')
+        shutil.copytree(public, self.root / 'docs/validation')
+        self.git('add', 'docs'); self.git('commit', '-qm', 'private copy of existing tree')
+        tree = self.git('rev-parse', 'HEAD^{tree}').decode().strip()
+        self.git('tag', '-a', 'private-tree', '-m', 'synthetic tree tag', tree)
+        tag = self.git('rev-parse', 'private-tree').decode().strip()
+        for target in (tree, tag):
+            with self.subTest(target=target):
+                result = self.check(pre_push=True, sha=target)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('reachable history', result.stderr)
+        self.assert_private_copy_is_rejected('docs/validation')
+
     def test_staged_runtime_credential_is_rejected_before_commit(self):
         path = self.root / 'etc/paopaogw/read-token'
         path.parent.mkdir(parents=True); path.write_text('synthetic-credential-only')

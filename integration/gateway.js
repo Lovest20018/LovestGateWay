@@ -172,6 +172,7 @@
       EXPLICIT_PROXY_AUTH_REQUIRED: '开启显式代理时必须设置 用户名:密码。',
       DASHBOARD_PASSWORD_TOO_SHORT: '管理密码至少需要 8 个字符。',
       APPLY_FAILED_ROLLED_BACK: '应用验收失败，已恢复原配置。请检查网卡、监听端口和资源。',
+      ROLLBACK_UNCONFIRMED: '原保存文件已还原，运行恢复尚未通过验证；请检查系统服务和恢复提示。',
       EXTERNAL_CONFIG_CONFLICT: '检测到外部配置变化，未覆盖它。请通过管理脚本检查并恢复。',
       INTERRUPTED_CHECK_RECOVERY: '管理任务曾中断。请用管理脚本检查事务状态，必要时执行 recover。',
       SYSTEM_OPERATION_FAILED: '系统或 Mihomo 校验未通过，请检查字段和节点/规则引用。',
@@ -544,6 +545,39 @@
       if (subscriptionControls) subscriptionControls.replaceChildren(...(model ? subscriptionGlobals() : []));
     }
     let sessionReset = false;
+    const statusHost = el('section', {class:'ppgw-management card glass', 'aria-label':'运行与操作状态'});
+    root.querySelector('#content').before(statusHost);
+    const phaseNames = {queued:'等待执行',validating:'校验配置',fetching:'获取订阅',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置',complete:'已结束',interrupted:'结果待核实'};
+    const statusNames = {succeeded:'成功',complete:'成功',applied:'已应用',unchanged:'内容未变',failed:'失败',interrupted:'结果待核实',running:'进行中',applying:'进行中',queued:'等待执行'};
+    let statusFingerprint = '';
+    function renderManagement() {
+      const data = model?.management;
+      const fingerprint=JSON.stringify([data,model?.running_mode,model?.source.local_policy]);
+      if(fingerprint===statusFingerprint&&statusHost.childElementCount)return;
+      statusFingerprint=fingerprint;
+      const names = {loaded:'已生效（本次管理操作已验证）',saved_pending:'已保存，尚未确认加载',retained:'候选校验未通过，沿用上次成功配置',recovery_required:'需要恢复，请检查管理事务',unknown:'暂时无法确认配置是否已全部生效'};
+      const runtime = model?.runtime?.data || model?.runtime || {};
+      const rows = data?.recent || [];
+      const opened = statusHost.querySelector('details')?.open;
+      const policyText = data?.policy_state==='loaded'?' · 本地覆盖策略已加载':model?.source.local_policy?' · 已保存本地覆盖策略，加载结果待确认':'';
+      const heading = el('p',{role:'status',text:'运行模式：' + (modeNames[model?.running_mode] || model?.running_mode || '暂时无法确认') + ' · ' + (names[data?.state] || names.unknown) + policyText});
+      const details = el('details',{},[el('summary',{text:'最近操作（' + rows.length + '）'})]);
+      details.open=Boolean(opened);
+      for (const row of rows) {
+        const kind = {config:'配置修改',policy:'策略保存',policy_reset:'恢复原策略',asset:'资源导入',refresh_nodes:'订阅更新',check:'Mihomo 检查',update:'Mihomo 更新',rollback:'Mihomo 回退',scheduled:'自动维护'}[row.kind] || '订阅与策略';
+        const when = new Date((row.started_at || row.created_at || row.updated_at)*1000).toLocaleString();
+        const outcome={core_inactive:'已保存待加载',staged:'已暂存待加载',retained:'部分获取失败，沿用旧节点',unchanged:'内容未变，无需重启',updated:'已更新并加载'}[row.outcome];
+        details.append(el('p',{class:'subtext',text:`${when} · ${kind} · ${statusNames[row.status] || row.status} · ${phaseNames[row.phase || row.stage] || '已记录'}${outcome?' · '+outcome:''}${row.error?' · '+message(row.error):''}${row.recovery==='check_required'?' · 请核实运行与恢复状态':''}${row.backup?' · 备份 '+row.backup:''}`}));
+      }
+      statusHost.replaceChildren(heading, details);
+    }
+    async function pollManagement() {
+      try {
+        const data = await api('status');
+        if (model && !stopped) { model.management=data.management; model.runtime=data.runtime; model.running_mode=data.running_mode; model.recovery_required=data.recovery_required; if(data.source)model.source.local_policy=data.source.local_policy; renderManagement(); }
+      } catch { if (!stopped) { statusFingerprint=''; const heading=statusHost.querySelector('[role=status]'); if(heading)heading.textContent='运行状态暂时无法读取，正在重新连接…'; } }
+      if (!stopped) later(pollManagement, 5000);
+    }
     function render() {
       if (stopped) return;
       const page = /^#\/(subscriptions|ppsub)(?:[?]|$)/.test(location.hash) ? 'subscriptions' : 'settings';
@@ -553,6 +587,7 @@
       $('page-description').textContent = page === 'subscriptions' ? '在同一编辑器中维护订阅、分组与规则，保存后应用到当前网关。' : '按需配置网关，应用前查看生效方式与影响。';
       document.title = $('page-title').textContent + ' · LovestGateWay';
       $('mode-label').textContent = model ? modeNames[model.settings.ini.mode] || model.settings.ini.mode : '连接中';
+      renderManagement();
       $('reload').hidden = editing;
       if (options.editorHost) {
         options.editorHost.hidden = !editing;
@@ -684,7 +719,7 @@
       running = false; notice('仍未确认任务结果。任务号已保留，刷新或重新登录后继续查询；也可使用管理脚本检查状态。'); updateDirty();
     }
     function maintenanceState(data) {
-      const failed = data.operation?.status === 'failed', busy = data.operation?.status === 'running';
+      const failed = ['failed','interrupted'].includes(data.operation?.status), busy = ['running','queued'].includes(data.operation?.status);
       const retryAt = data.operation?.retry_at;
       const reason = data.operation?.error === 'RELEASE_RATE_LIMITED' ? 'GitHub 版本查询已限流。' + (retryAt ? `可在 ${new Date(retryAt * 1000).toLocaleString()} 后重试。` : '请稍后重试。') + '已安装的 Mihomo 可继续使用，也可使用下方本地文件更新。' : (data.operation?.message || '核心维护未完成，请检查维护服务状态。');
       const detail = failed ? reason + (data.operation?.error ? `（${data.operation.error}）` : '') : '';
@@ -844,6 +879,7 @@
     }
     $('reset-policy').onclick = resetPolicy;
     render();
+    later(pollManagement, 5000);
     load().then(async () => {
       if (stopped) return;
       await refreshRuntime();

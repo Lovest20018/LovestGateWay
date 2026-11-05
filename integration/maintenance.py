@@ -5,13 +5,17 @@ import argparse
 import json
 import time
 from mihomo_update import Updater, STATE, atomic_json, error_details
+from manage_common import Layout
+from manage_operations import begin_mihomo, finish_mihomo
 
 
-def main():
+def main(layout=None):
+    layout = layout or Layout()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('scheduled', 'check', 'update', 'rollback', 'install-local'))
     args = parser.parse_args()
     updater = Updater()
+    operation = begin_mihomo(layout, STATE, args.action)
     upload_id = None
     try:
         if args.action == 'check':
@@ -31,11 +35,10 @@ def main():
             updater.check()
             if config.get('auto_update', True) and updater.status().get('update_available'):
                 updater.update()
-        atomic_json(STATE / 'operation.json', {'status': 'complete', 'action': args.action, 'completed_at': time.time()})
+        finish_mihomo(layout, STATE, operation, status='complete')
     except Exception as error:
         details = error_details(error)
-        atomic_json(STATE / 'operation.json', {'status': 'failed', 'action': args.action,
-                    **details, 'completed_at': time.time()})
+        finish_mihomo(layout, STATE, operation, status='failed', **details)
         print(json.dumps(details, ensure_ascii=False))
         raise SystemExit(1)
     finally:

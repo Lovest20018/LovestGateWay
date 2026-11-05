@@ -110,7 +110,8 @@ class UpdaterTests(unittest.TestCase):
             with patch.object(maintenance, 'STATE', state), patch.object(maintenance, 'Updater') as updater, \
                  patch.object(sys, 'argv', ['maintenance.py', 'check']), patch('builtins.print'):
                 updater.return_value.check.side_effect = update.ReleaseFetchError('RELEASE_NETWORK_TIMEOUT', update.API)
-                with self.assertRaises(SystemExit) as exit_info: maintenance.main()
+                from manage_common import Layout
+                with self.assertRaises(SystemExit) as exit_info: maintenance.main(Layout(temporary))
             self.assertEqual(exit_info.exception.code, 1)
             result = json.loads((state / 'operation.json').read_bytes())
             self.assertEqual(result['status'], 'failed')
