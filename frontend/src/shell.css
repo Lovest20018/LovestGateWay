@@ -49,3 +49,16 @@ html,body,#app{min-height:100%;margin:0}
 #shell-nav .shell-appearance button:hover{background:var(--panel-hover);color:var(--text)}
 #shell-nav .shell-appearance button[aria-pressed=true]{background:var(--panel-solid);color:var(--brand-text);box-shadow:0 1px 4px #0000000a}
 .shell-appearance .shell-icon{width:14px;height:14px}
+.page-tabs{display:flex;gap:4px;padding:4px;background:var(--panel);border:1px solid var(--edge);border-radius:12px;overflow-x:auto;align-self:flex-start;max-width:100%;width:fit-content}
+.page-tabs button{flex-shrink:0;border:0;border-radius:8px;background:transparent;color:var(--text-2);font:inherit;font-size:13px;padding:7px 13px;cursor:pointer;white-space:nowrap}
+.page-tabs button:hover{background:var(--row-hover);color:var(--text)}
+.page-tabs button.active{background:var(--brand-soft);color:var(--brand-text);font-weight:600}
+.page-tabs button:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.operation-list{list-style:none;padding:0;margin:0}
+.operation-list>li{padding:14px 0;border-bottom:1px solid var(--edge);overflow-wrap:anywhere}
+.operation-list>li:first-child{padding-top:0}
+.operation-list>li:last-child{padding-bottom:0;border-bottom:0}
+.operation-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+.operation-heading strong{font-weight:550}
+.operation-state{font-size:11px;color:var(--text-2);background:var(--row-hover);border:1px solid var(--edge);border-radius:20px;padding:2px 8px;white-space:nowrap}
+@media(max-width:639.5px){.page-tabs button{padding:7px 10px;font-size:12px}}

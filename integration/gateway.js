@@ -11,7 +11,7 @@
     function pause(ms) { return new Promise(resolve => { const finish = () => { clearTimeout(id); lifetime.signal.removeEventListener('abort', finish); resolve(); }; const id = setTimeout(finish, ms); lifetime.signal.addEventListener('abort', finish, {once: true}); }); }
     const dirty = new Map();
     const openHelp = new Set();
-    let model, category = 'access', subscriptionControls = null, sourceDraft = null, sourceDetails = null;
+    let model, category = 'access', subscriptionPage = 'editor', subscriptionControls = null, sourceDraft = null, sourceDetails = null;
     let passwordConfirmation = '';
     let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0, corePolling = null;
     const bridge = {setEditorBusy: busy => { if(editorBusy!==busy){editorBusy=busy;updateDirty();} },
@@ -326,10 +326,17 @@
         el('h2', {text: title}), el('p', {class: 'subtext', text: description})]), ...children]);
     }
     function fields(items) { return el('div', {class: 'field-grid'}, items.map(([ns, key, wide]) => field(ns, key, {wide}))); }
-    function tabs(items, selected, select) { return el('div', {class: 'tabs', role: 'tablist'}, items.map(([key, label]) => el('button', {
-      type: 'button', role: 'tab', class: key === selected ? 'active' : '', 'aria-selected': String(key === selected), text: label,
-      onclick: () => select(key),
-    }))); }
+    function tabs(items, selected, select, label) {
+      const choose = key => { select(key); navigationHost.querySelector('[aria-selected="true"]')?.focus({preventScroll:true}); };
+      return el('div', {class:'tabs page-tabs', role:'tablist', 'aria-label':label}, items.map(([key, text], index) => el('button', {
+        id:'gateway-tab-'+key, type:'button', role:'tab', class:key===selected?'active':'', 'aria-selected':String(key===selected),
+        'aria-controls':key==='editor'?'subscription-editor-panel':'content', tabIndex:key===selected?0:-1, text,
+        onclick:()=>choose(key), onkeydown:event=>{
+          const next={ArrowRight:(index+1)%items.length,ArrowLeft:(index+items.length-1)%items.length,Home:0,End:items.length-1}[event.key];
+          if(next!==undefined){event.preventDefault();choose(items[next][0]);}
+        },
+      })));
+    }
     function passwordCard() {
       const input = el('input', {id: 'setting-password-confirm', type: 'password', autocomplete: 'new-password',
         value: passwordConfirmation, placeholder: '再次输入新密码'});
@@ -399,8 +406,7 @@
       showAddress(); return section;
     }
     function settingsContent() {
-      const result = [tabs([['access', '访问与统计'], ['maintenance', '维护与 API'], ['network', '网络与出站'], ['advanced', '高级选项']], category,
-        key => { category = key; render(); })];
+      const result = [];
       if (category === 'access') {
         result.push(passwordCard());
         result.push(card('管理与代理访问', '管理认证和访问范围统一在这里维护。', '02', [fields([
@@ -491,16 +497,16 @@
       const names = {yaml:'本地 YAML', ppsub:'原生 PPsub', remote:'远程完整配置', other:modeNames[ini.mode] || ini.mode};
       const locationText = kind === 'yaml' ? ini.yamlfile : kind === 'remote' ? ini.suburl : kind === 'ppsub' ?
         (model.source.native_ppsub ? '本机 PPsub 配置' : ini.suburl.slice(6)) : '请先切换到配置来源，再维护订阅与策略。';
-      const description = kind === 'yaml' ? '下方保存本地覆盖策略，源 YAML 文件保持原样。文件内提供商继续按各自计划更新。' :
-        kind === 'remote' ? '下方修改叠加为本地策略，主订阅继续按计划更新。提供商链接属于配置内部资源。' :
-        kind === 'ppsub' ? '下方直接维护 PPsub 配置，可添加、删除或重命名订阅提供商。' : '当前使用其他出站模式。';
+      const description = kind === 'yaml' ? '在“策略编辑”中保存本地覆盖，源 YAML 文件保持原样。文件内提供商继续按各自计划更新。' :
+        kind === 'remote' ? '“策略编辑”中的修改叠加为本地策略，主订阅继续按计划更新。提供商链接属于配置内部资源。' :
+        kind === 'ppsub' ? '在“策略编辑”中维护 PPsub 配置，可添加、删除或重命名订阅提供商。' : '当前使用其他出站模式。';
       const section = card('当前配置来源', description, '', [el('div', {class:'source-summary'}, [
         el('strong', {class:'source-kind', text:names[kind]}), el('code', {class:'source-location', text:locationText})])]);
       section.classList.add('source-card');
       const explanation = sourceExplanation(sourceDetails);
       if (explanation) section.append(explanation);
-      const details = el('details', {class:'source-switch', open:Boolean(sourceDraft)});
-      details.append(el('summary', {text:sourceDraft?.changed ? '来源切换 · 尚未应用' : '切换配置来源'}));
+      const details = el('section', {class:'source-switch'});
+      details.append(el('h3', {text:sourceDraft?.changed ? '切换配置来源 · 尚未应用' : '切换配置来源'}));
       const draft = sourceDraft || {kind:kind === 'other' ? 'remote' : kind, url:kind === 'remote' ? ini.suburl : '', yaml:ini.yamlfile, changed:false, reset:false, ppsub:null};
       const type = el('select', {id:'source-type'}, [['remote','远程完整配置'],['yaml','本地 YAML'],['ppsub','原生 PPsub']].map(([value,text]) => el('option',{value,text,selected:draft.kind===value})));
       type.onchange = () => { sourceDraft = {...draft, kind:type.value, changed:true}; render(); };
@@ -509,7 +515,7 @@
         const url = el('input',{id:'source-url',type:'url',required:true,value:draft.url,placeholder:'https://example.com/config.yaml'});
         url.oninput = () => { draft.url=url.value; draft.changed=true; sourceDraft=draft; };
         form.append(el('div',{class:'field wide'},[el('label',{htmlFor:url.id,text:'主配置订阅地址'}),url,
-          el('small',{text:'下载整份 Clash / Mihomo 配置的地址，与下方提供商链接分别维护。'})]));
+          el('small',{text:'下载整份 Clash / Mihomo 配置的地址；配置内的提供商链接在“策略编辑”中维护。'})]));
       } else if (draft.kind === 'yaml') {
         const file = el('select',{id:'source-yaml'},model.assets.filter(name=>/\.ya?ml$/.test(name)).map(value=>el('option',{value,text:value,selected:value===draft.yaml})));
         if (!file.options.length) file.append(el('option',{value:'',text:'请先导入 YAML 文件'}));
@@ -558,8 +564,10 @@
       if (subscriptionControls) subscriptionControls.replaceChildren(...(model ? subscriptionGlobals() : []));
     }
     let sessionReset = false;
-    const statusHost = el('section', {class:'ppgw-management card glass', 'aria-label':'运行与操作状态'});
-    root.querySelector('#content').before(statusHost);
+    const navigationHost = el('div', {class:'page-navigation'});
+    const statusHost = el('section', {class:'ppgw-management', 'aria-label':'运行状态'});
+    const recentHost = el('section', {class:'management-history card glass', 'aria-label':'最近操作'});
+    root.querySelector('#content').before(navigationHost, statusHost);
     const phaseNames = {queued:'等待执行',validating:'校验配置',fetching:'获取订阅',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置',complete:'已结束',interrupted:'结果待核实'};
     const statusNames = {succeeded:'成功',complete:'成功',applied:'已应用',unchanged:'内容未变',failed:'失败',interrupted:'结果待核实',running:'进行中',applying:'进行中',queued:'等待执行'};
     let statusFingerprint = '';
@@ -571,18 +579,17 @@
       const names = {loaded:'已生效（本次管理操作已验证）',saved_pending:'已保存，尚未确认加载',retained:'候选校验未通过，沿用上次成功配置',recovery_required:'需要恢复，请检查管理事务',unknown:'暂时无法确认配置是否已全部生效'};
       const runtime = model?.runtime?.data || model?.runtime || {};
       const rows = data?.recent || [];
-      const opened = statusHost.querySelector('details')?.open;
       const policyText = data?.policy_state==='loaded'?' · 本地覆盖策略已加载':model?.source.local_policy?' · 已保存本地覆盖策略，加载结果待确认':'';
       const heading = el('p',{role:'status',text:'运行模式：' + (modeNames[model?.running_mode] || model?.running_mode || '暂时无法确认') + ' · ' + (names[data?.state] || names.unknown) + policyText});
-      const details = el('details',{},[el('summary',{text:'最近操作（' + rows.length + '）'})]);
-      details.open=Boolean(opened);
+      const records = el('ol',{class:'operation-list'});
       for (const row of rows) {
         const kind = {config:'配置修改',policy:'策略保存',policy_reset:'恢复原策略',asset:'资源导入',refresh_nodes:'订阅更新',check:'Mihomo 检查',update:'Mihomo 更新',rollback:'Mihomo 回退',scheduled:'自动维护'}[row.kind] || '订阅与策略';
         const when = new Date((row.started_at || row.created_at || row.updated_at)*1000).toLocaleString();
         const outcome={core_inactive:'已保存待加载',staged:'已暂存待加载',retained:'部分获取失败，沿用旧节点',unchanged:'内容未变，无需重启',updated:'已更新并加载'}[row.outcome];
-        details.append(el('p',{class:'subtext',text:`${when} · ${kind} · ${statusNames[row.status] || row.status} · ${phaseNames[row.phase || row.stage] || '已记录'}${outcome?' · '+outcome:''}${row.error?' · '+message(row.error):''}${row.recovery==='check_required'?' · 请核实运行与恢复状态':''}${row.backup?' · 备份 '+row.backup:''}`}));
+        records.append(el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:kind}),el('span',{class:'operation-state',text:statusNames[row.status] || '待核对'})]),el('p',{class:'subtext',text:`${when} · ${phaseNames[row.phase || row.stage] || '已记录'}${outcome?' · '+outcome:''}${row.error?' · '+message(row.error):''}${row.recovery==='check_required'?' · 请核实运行与恢复状态':''}${row.backup?' · 备份 '+row.backup:''}`})]));
       }
-      statusHost.replaceChildren(heading, details);
+      statusHost.replaceChildren(heading);
+      recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'展示最近 '+rows.length+' 条已记录的配置、订阅与核心维护操作。'})]),rows.length?records:el('p',{class:'empty-state',text:'暂无操作记录。'}));
     }
     async function pollManagement() {
       try {
@@ -595,26 +602,36 @@
       if (stopped) return;
       const page = /^#\/(subscriptions|ppsub)(?:[?]|$)/.test(location.hash) ? 'subscriptions' : 'settings';
       const editing = page === 'subscriptions';
+      const showEditor = editing && subscriptionPage === 'editor';
       root.closest('.ppgw-workspace').dataset.page = page;
       $('page-title').textContent = page === 'subscriptions' ? '订阅与策略' : '网关设置';
       $('page-description').textContent = page === 'subscriptions' ? '在同一编辑器中维护订阅、分组与规则，保存后应用到当前网关。' : '按需配置网关，应用前查看生效方式与影响。';
       document.title = $('page-title').textContent + ' · LovestGateWay';
       $('mode-label').textContent = model ? modeNames[model.settings.ini.mode] || model.settings.ini.mode : '连接中';
       renderManagement();
+      navigationHost.replaceChildren(editing ? tabs([['editor','策略编辑'],['source','配置来源'],['recent','最近操作']],subscriptionPage,key=>{subscriptionPage=key;render();},'订阅与策略分栏') :
+        tabs([['access','访问与统计'],['maintenance','维护与 API'],['network','网络与出站'],['advanced','高级选项'],['recent','最近操作']],category,key=>{category=key;render();},'网关设置分栏'));
+      $('content').setAttribute('role','tabpanel');
+      $('content').setAttribute('aria-labelledby','gateway-tab-'+(editing?subscriptionPage:category));
       $('reload').hidden = editing;
       if (options.editorHost) {
-        options.editorHost.hidden = !editing;
+        options.editorHost.id = 'subscription-editor-panel';
+        options.editorHost.setAttribute('role','tabpanel');
+        options.editorHost.setAttribute('aria-labelledby','gateway-tab-editor');
+        options.editorHost.hidden = !showEditor;
         if (editing) { options.createEditor(); window.ppgwPpsub?.refreshIfNeeded(); }
       }
       const items = [];
       if (!model) {
         if (!editing) items.push(el('div', {class: 'card glass empty-state', text: '正在读取网关配置…'}));
-      } else if (page === 'settings') items.push(...settingsContent());
-      else { items.push(sourceCard()); if(dirty.size) items.push(el('div',{class:'subscription-draft-actions'},[el('span',{class:'subtext',text:'更新计划有未保存修改，将与编辑器一起应用。'}),el('button',{class:'btn',text:'放弃更新计划',onclick:()=>{for(const key of ['ini.subtime','ini.subcron'])dirty.delete(key);render();}})])); }
+      } else if ((editing?subscriptionPage:category)==='recent') items.push(recentHost);
+      else if (!editing) items.push(...settingsContent());
+      else if (subscriptionPage==='source') items.push(sourceCard());
+      else if(dirty.size) items.push(el('div',{class:'subscription-draft-actions'},[el('span',{class:'subtext',text:'更新计划有未保存修改，将与编辑器一起应用。'}),el('button',{class:'btn',text:'放弃更新计划',onclick:()=>{for(const key of ['ini.subtime','ini.subcron'])dirty.delete(key);render();}})]));
       renderSubscriptionGlobals();
       $('content').replaceChildren(...items);
       $('content').setAttribute('aria-busy', String(!model));
-      $('policy-actions').hidden = !editing || !model?.source.local_policy;
+      $('policy-actions').hidden = !showEditor || !model?.source.local_policy;
       updateDirty();
     }
     function patchBody() {

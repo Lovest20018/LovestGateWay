@@ -40,7 +40,8 @@ async function exercise(browser, kind) {
       clashAPIConfigs: [{secret: 'fixture-token'}],
     })));
     let operation = null, saved = null, configReads = 0, expectedSource = null;
-    const model = {...structuredClone(defaults), revision: 'fixture-revision', assets: [], source: {url: kind === 'ppsub' ? 'ppsub@http://127.0.0.1/ppsub.json' : 'https://example.com/sub', native_ppsub: kind === 'ppsub', local_policy: true}, mihomo_installed: true};
+    const management={state:'loaded',policy_state:'loaded',recent:[{kind:'policy',status:'succeeded',phase:'complete',updated_at:1793870400},{kind:'refresh_nodes',status:'unchanged',phase:'complete',updated_at:1793866800}]};
+    const model = {...structuredClone(defaults), revision: 'fixture-revision', assets: [], source: {url: kind === 'ppsub' ? 'ppsub@http://127.0.0.1/ppsub.json' : 'https://example.com/sub', native_ppsub: kind === 'ppsub', local_policy: true}, mihomo_installed: true,management,running_mode:'suburl'};
     let releaseInitialRead;
     const initialRead = new Promise(resolve => { releaseInitialRead = resolve; });
     const maintenanceRequests = [];
@@ -52,6 +53,7 @@ async function exercise(browser, kind) {
         if (target.endsWith('/status')) body = {
           ready: true, edit_kind: kind, ppsub_write_allowed: true, base_revision: 'fixture-revision', operation,
         };
+        if(target==='/sniffbox/settings/status')body={management,running_mode:'suburl',source:{local_policy:true}};
         if (target.endsWith('/config')) {
           if (++configReads === 1) {
             await Promise.race([initialRead, new Promise(resolve => setTimeout(resolve, 5000))]);
@@ -117,6 +119,21 @@ async function exercise(browser, kind) {
     }
     await page.locator('.groups').getByRole('button', {name:'删除',exact:true}).last().waitFor();
     await page.waitForFunction(() => !document.querySelector('[data-ppsub-apply]').disabled);
+    const pageTabs=page.getByRole('tablist',{name:'订阅与策略分栏',exact:true});
+    assert.deepEqual(await pageTabs.getByRole('tab').allTextContents(),['策略编辑','配置来源','最近操作']);
+    const groupName=page.locator('.groups > .item [data-field=name]').first(),savedName=await groupName.inputValue();
+    await groupName.fill(savedName+' tab draft');await groupName.press('Tab');
+    await pageTabs.getByRole('tab',{name:'配置来源',exact:true}).click();
+    assert.equal(await page.locator('#source-type').isVisible(),true);
+    assert.equal(await page.locator('.source-switch summary').count(),0);
+    assert.equal(await page.locator('.ppgw-subscription-editor').isVisible(),false);
+    await pageTabs.getByRole('tab',{name:'最近操作',exact:true}).click();
+    assert.equal(await page.locator('.management-history').isVisible(),true);
+    assert.equal(await page.locator('.management-history details').count(),0);
+    assert.equal(await page.locator('.management-history .operation-list>li').count(),2);
+    await page.keyboard.press('Home');
+    assert.equal(await pageTabs.getByRole('tab',{name:'策略编辑',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await groupName.inputValue(),savedName+' tab draft');await groupName.fill(savedName);await groupName.press('Tab');
     // A source-editor wrapper must never become an implicit second grid column.
     const layoutCheck=async()=>{
       const bounds=await page.evaluate(()=>{
@@ -137,6 +154,15 @@ async function exercise(browser, kind) {
     await page.waitForFunction(()=>!document.querySelector('[data-ppsub-apply]')?.disabled&&document.querySelector('.source-editor .groups'));
     await page.setViewportSize({width:1863,height:878});await layoutCheck();
     await page.screenshot({path:path.join(root,'dist/subscription-unified-'+kind+'-desktop.png'),animations:'disabled'});
+    for(const [tab,name]of [['配置来源','source'],['最近操作','recent']]){
+      await pageTabs.getByRole('tab',{name:tab,exact:true}).click();
+      await page.screenshot({path:path.join(root,'dist/subscription-'+name+'-'+kind+'-desktop.png'),animations:'disabled'});
+      await page.setViewportSize({width:320,height:740});await page.waitForFunction(()=>document.querySelector('#shell-nav').getBoundingClientRect().right<=0);
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('#shell-content *')].map(n=>({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right,scroll:n.scrollWidth})).filter(n=>n.right>innerWidth+1&&n.width>0).slice(0,15))));
+      await page.screenshot({path:path.join(root,'dist/subscription-'+name+'-'+kind+'-mobile.png'),fullPage:true,animations:'disabled'});
+      await page.setViewportSize({width:1863,height:878});
+    }
+    await pageTabs.getByRole('tab',{name:'策略编辑',exact:true}).click();
     const groupCount=await page.locator('.groups > .item').count();
     await page.getByRole('button',{name:'添加节点组',exact:true}).click();
     const added=page.locator('.groups > .item').last();await added.locator('[data-field=name]').fill('新节点组');
@@ -193,7 +219,7 @@ async function exercise(browser, kind) {
     assert.equal(await page.getByRole('radio', {name: '订阅配置', exact: true}).count(), 0);
     assert.equal(await page.locator('.monitor').getByLabel('订阅更新间隔', {exact: true}).count(), 1);
     assert.equal(await page.getByLabel('使用本地 YAML', {exact:true}).count(),0);
-    await page.getByRole('heading',{name:'当前配置来源',exact:true}).waitFor();
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.getByRole('heading',{name:'当前配置来源',exact:true}).waitFor();await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
     assert.equal(await apply.isDisabled(), false);
     await apply.click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});

@@ -125,6 +125,11 @@ async function main() {
     await page.waitForFunction(text=>document.querySelector('.ppgw-management [role=status]')?.textContent===text,originalHeading,{timeout:15000});
     assert.equal(configReads,initialReads,'status polls must not read full config');
     assert.ok(managementPolls>=2);
+    await page.getByRole('tab',{name:'最近操作',exact:true}).click();
+    assert.equal(await page.locator('.management-history').isVisible(),true);
+    assert.equal(await page.locator('.management-history details').count(),0);
+    await page.screenshot({path:path.join(root,'dist/settings-recent-desktop.png')});
+    await page.getByRole('tab',{name:'访问与统计',exact:true}).click();
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     assert.equal(new URL(page.url()).pathname, '/ui/');
     await page.getByRole('heading', {name:'修改管理密码',exact:true}).waitFor();
@@ -300,7 +305,7 @@ async function main() {
     await page.locator('#preview-dialog').waitFor({state: 'visible'});
     await page.locator('#apply').click(); await saved();
     assert.equal(submitted[1].kind, 'policy_reset');
-    await page.locator('.source-switch > summary').click();
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();
     await page.locator('#source-type').selectOption('yaml');
     await page.locator('#asset-file').setInputFiles({name: 'fixture.yaml', mimeType: 'text/yaml', buffer: Buffer.from('proxies: []\nproxy-groups: []\nrules: [MATCH,DIRECT]\n')});
     await page.locator('.source-card').getByRole('button', {name: '导入文件', exact: true}).click();
@@ -309,7 +314,7 @@ async function main() {
     await page.getByRole('button',{name:'预览来源切换',exact:true}).click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});
     await page.locator('#apply').click();
-    assert.equal(await page.getByRole('button', {name: '保存并应用', exact: true}).isDisabled(), true);
+    assert.equal(await page.locator('[data-ppsub-apply]').isDisabled(), true);
     await saved();
     assert.equal(submitted[3].payload.patch.ini.mode, 'yaml');
     assert.equal(await page.getByLabel('订阅更新间隔',{exact:true}).count(),0);

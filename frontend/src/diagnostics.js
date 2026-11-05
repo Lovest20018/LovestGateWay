@@ -53,7 +53,8 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
   const lifetime=new AbortController(),timers=new Set();
   let stopped=false,report=null,pending=pendingRecoveryJob(),preview=null,request=0,loading=false,polling=false,pollTimer=null,offset=0,notFoundId=null,reviewBusy=false;
   const status=el('div',{class:'notice',role:'status','aria-live':'polite',hidden:''}),task=el('section',{class:'card glass diagnostic-task',hidden:''});
-  const overview=el('div',{class:'diagnostic-overview'}),list=el('div',{class:'diagnostic-backups'});
+  const overview=el('div',{id:'diagnostic-overview',class:'diagnostic-overview',role:'tabpanel','aria-labelledby':'diagnostic-tab-overview'}),list=el('div',{class:'diagnostic-backups'});
+  const recentHost=el('section',{id:'diagnostic-recent',class:'card glass',role:'tabpanel','aria-labelledby':'diagnostic-tab-recent',hidden:''});
   const unknownReview=el('div',{'data-unknown-task':'',hidden:''});
   const refresh=button('刷新诊断',()=>refreshAll()),download=button('导出脱敏报告',()=>exportReport()),backup=button('创建完整备份',()=>confirmBackup()),recover=button('预览中断事务恢复',()=>showPreview('recover'));
   const dialog=el('section',{'aria-labelledby':'recovery-preview-title',class:'diagnostic-preview card glass',hidden:'',tabindex:'-1'}),dialogBody=el('div',{class:'dialog-body'});
@@ -61,7 +62,13 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
   dialogBody.append(el('h2',{id:'recovery-preview-title',text:'恢复影响预览'}),detail,el('div',{class:'button-row dialog-actions'},[cancel,apply]));dialog.append(dialogBody);
   dialog.addEventListener('cancel',()=>{preview=null;});
   root.classList.add('diagnostic-page');
-  root.replaceChildren(el('header',{class:'page-head'},[el('h1',{class:'page-title',text:'诊断与恢复'}),refresh]),el('p',{class:'page-description',text:'核对当前服务、配置来源和最近故障。备份恢复会先展示影响范围，再验证实际运行结果。'}),status,task,overview,el('section',{class:'card glass'},[el('h2',{text:'备份与事务恢复'}),el('p',{class:'subtext',text:'完整备份可能包含程序、配置、历史凭据和运行数据。创建备份或恢复时可能短暂停止转发；自动变更备份的范围通常较小。'}),el('div',{class:'button-row'},[backup,recover,download]),list]),dialog);
+  const backupPanel=el('section',{id:'diagnostic-backups',class:'card glass',role:'tabpanel','aria-labelledby':'diagnostic-tab-backups',hidden:''},[el('div',{class:'card-heading'},[el('h2',{text:'备份与事务恢复'}),el('p',{class:'subtext',text:'完整备份包含程序、配置、历史凭据和运行数据。创建或恢复时可能短暂停止转发；应用前会展示影响范围。'})]),el('div',{class:'button-row diagnostic-actions'},[backup,recover]),list]);
+  const panels={overview,backups:backupPanel,recent:recentHost},tabItems=[['overview','运行诊断'],['backups','备份与恢复'],['recent','最近操作']];
+  const tabs=el('div',{class:'tabs page-tabs',role:'tablist','aria-label':'诊断与恢复分栏'},tabItems.map(([key,text],index)=>button(text,()=>selectTab(key),{id:'diagnostic-tab-'+key,role:'tab','aria-controls':panels[key].id,'aria-selected':String(key==='overview'),tabindex:key==='overview'?'0':'-1',class:key==='overview'?'active':'',onkeydown:event=>{
+    const next={ArrowRight:(index+1)%tabItems.length,ArrowLeft:(index+tabItems.length-1)%tabItems.length,Home:0,End:tabItems.length-1}[event.key];if(next!==undefined){event.preventDefault();selectTab(tabItems[next][0]);}
+  }})));
+  function selectTab(key){for(const [name,panel]of Object.entries(panels))panel.hidden=name!==key;for(const tab of tabs.children){const selected=tab.id==='diagnostic-tab-'+key;tab.classList.toggle('active',selected);tab.setAttribute('aria-selected',String(selected));tab.tabIndex=selected?0:-1;}tabs.querySelector('[aria-selected="true"]').focus({preventScroll:true});}
+  root.replaceChildren(el('header',{class:'page-head'},[el('h1',{class:'page-title',text:'诊断与恢复'}),el('div',{class:'button-row'},[download,refresh])]),el('p',{class:'page-description',text:'核对运行状态、配置来源和最近故障，按需备份与恢复。'}),status,tabs,task,overview,backupPanel,recentHost,dialog);
   function later(callback,ms){const id=setTimeout(()=>{timers.delete(id);if(!stopped)callback();},ms);timers.add(id);}
   function schedulePoll(ms){if(pollTimer!==null)clearTimeout(pollTimer);pollTimer=setTimeout(()=>{pollTimer=null;pollJob();},ms);}
   async function api(path,body){
@@ -105,14 +112,15 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
     finally{reviewBusy=false;}
   }
   function renderReport(value){
-    const card=(title,children)=>el('section',{class:'card glass'},[el('h2',{text:title}),...children]);
+    const card=(title,children)=>el('section',{class:'card glass'},[el('div',{class:'card-heading'},[el('h2',{text:title})]),...children]);
     const rows=Object.entries(value.services||{}).filter(([name])=>Object.hasOwn(services,name)).map(([name,state])=>el('li',{text:services[name]+'：'+(state.active?'运行中':'未运行')+' · '+(state.enabled?'开机启用':'未设为开机启用')}));
     const runtime={running:'核心响应正常',staged:'暂存环境，未执行真实服务验收',unknown:'核心状态尚未确认'};
     const source={none:'未配置订阅',local_yaml:'本地 YAML',remote_yaml:'远程完整配置',native_ppsub:'原生 PPsub',unknown:'尚未确认'};
     const policy={active:'本地覆盖生效',none:'无本地覆盖',invalid:'本地策略无法校验',source_mismatch:'本地策略与当前来源不一致',unknown:'尚未确认'};
     const causes=(value.causes||[]).map(code=>el('li',{text:message(code)}));
-    const recent=(value.recent||[]).slice(0,20).map(row=>el('li',{},[el('strong',{text:(kinds[row.kind]||'管理操作')+' · '+({succeeded:'成功',failed:'失败',interrupted:'中断',running:'执行中',queued:'等待中',applying:'应用中',applied:'已应用',unchanged:'未变化',complete:'已完成'}[row.status]||'待核对')}),el('p',{class:'subtext',text:time(row.updated_at)+(row.error?' · '+message(row.error):'')} )]));
-    overview.replaceChildren(card('当前状态',[el('p',{text:'采样时间：'+time(value.generated_at)}),el('p',{text:runtime[value.runtime?.state]||runtime.unknown}),el('ul',{},rows)]),card('配置来源与故障',[el('p',{text:(source[value.source?.kind]||source.unknown)+' · '+(policy[value.source?.policy_state]||policy.unknown)}),el('p',{text:value.recovery?.required?'存在待核对事务：'+(phases[value.recovery.phase]||'状态未知'):'没有已记录的待恢复事务。'}),causes.length?el('ul',{},causes):el('p',{text:'本次诊断未发现已记录的故障。'}),el('p',{class:'subtext',text:'本页核对网关本机状态；客户端 DNS、路由和透明转发仍需从对应客户端验证。'})]),card('最近操作',[recent.length?el('ul',{class:'diagnostic-recent'},recent):el('p',{text:'尚无可展示的操作记录。'})]));
+    const recent=(value.recent||[]).slice(0,20).map(row=>el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:(kinds[row.kind]||'管理操作')+' · '+({succeeded:'成功',failed:'失败',interrupted:'中断',running:'执行中',queued:'等待中',applying:'应用中',applied:'已应用',unchanged:'未变化',complete:'已完成'}[row.status]||'待核对')})]),el('p',{class:'subtext',text:time(row.updated_at)+(row.error?' · '+message(row.error):'')} )]));
+    overview.replaceChildren(card('当前状态',[el('p',{class:'diagnostic-runtime',text:runtime[value.runtime?.state]||runtime.unknown}),el('ul',{class:'diagnostic-services'},rows),el('p',{class:'subtext',text:'采样时间：'+time(value.generated_at)})]),card('配置来源与故障',[el('p',{text:(source[value.source?.kind]||source.unknown)+' · '+(policy[value.source?.policy_state]||policy.unknown)}),el('p',{text:value.recovery?.required?'存在待核对事务：'+(phases[value.recovery.phase]||'状态未知'):'没有已记录的待恢复事务。'}),causes.length?el('ul',{},causes):el('p',{text:'本次诊断未发现已记录的故障。'}),el('p',{class:'subtext',text:'本页核对网关本机状态；客户端 DNS、路由和透明转发仍需从对应客户端验证。'})]));
+    recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'最近 '+recent.length+' 条管理、订阅与核心维护记录。'})]),recent.length?el('ol',{class:'operation-list'},recent):el('p',{class:'empty-state',text:'暂无操作记录。'}));
   }
   function renderBackups(value){
     offset=value.offset||0;
