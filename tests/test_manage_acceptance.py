@@ -2,12 +2,13 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, PropertyMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_acceptance import Acceptance, CHECK
-from manage_common import Layout, ManagementError, write_json
+from manage_common import Layout, ManagementError, operation_lock, write_json
 from manage_model import settings_revision
 from manage_operations import RECEIPT, remember_loaded, summary
 
@@ -64,6 +65,24 @@ class AcceptanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): self.acceptance.check()
         self.system.verify_current.assert_not_called()
         self.assertFalse(self.layout.path(CHECK).exists())
+
+    def test_slow_check_does_not_block_a_writer_and_rejects_its_changed_snapshot(self):
+        probing, release = threading.Event(), threading.Event()
+        def slow(_):
+            probing.set(); self.assertTrue(release.wait(3)); return ['core_ini']
+        self.system.verify_current.side_effect = slow
+        results=[]
+        worker=threading.Thread(target=lambda: results.append(self.acceptance.check()))
+        worker.start()
+        try:
+            self.assertTrue(probing.wait(3))
+            with operation_lock(self.layout):
+                write_json(self.layout, 'etc/paopaogw/maintenance.json', {'auto_update':False})
+        finally:
+            release.set();worker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(results[0]['error'], 'STATE_CHANGED_DURING_CHECK')
+        self.assertFalse(self.layout.path(RECEIPT).exists())
 
     def test_unexpected_errors_are_redacted(self):
         self.system.verify_current.side_effect = ValueError('private-password-in-error')
