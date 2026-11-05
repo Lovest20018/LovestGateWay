@@ -97,8 +97,11 @@ class WebSettingsTests(unittest.TestCase):
 
     def test_status_samples_core_once_and_never_attests_unreachable_runtime(self):
         client = Mock(); client.request.return_value = {'mode':'free','integration':{'boot_id':'boot','config_revision':'rev'}}
+        # Pretending this temporary layout is live must not launch a worker
+        # that can outlive the runtime-sampling test and its directory.
         with patch.object(Layout,'live',new_callable=PropertyMock,return_value=True), \
-             patch.object(self.system,'client',return_value=client,create=True):
+             patch.object(self.system,'client',return_value=client,create=True), \
+             patch.object(self.admin.acceptance,'trigger'):
             value = self.admin.status()
             self.assertEqual(value['running_mode'],'free')
             client.request.assert_called_once_with('/sniffbox/info')
