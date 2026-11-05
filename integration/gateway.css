@@ -61,8 +61,6 @@
 :is(.ppgw-gateway,.ppgw-global-settings) .savebar {position:sticky;bottom:14px;z-index:15;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 18px;background:var(--panel-strong)}
 :is(.ppgw-gateway,.ppgw-global-settings) .savebar strong {display:block;font-size:12px;font-weight:600}
 :is(.ppgw-gateway,.ppgw-global-settings) #save-hint {display:block;font-size:11px;color:var(--text-2);margin-top:4px}
-:is(.ppgw-gateway,.ppgw-global-settings) dialog {width:min(600px,calc(100vw - 24px));max-height:85dvh;background:var(--panel-solid);color:var(--text);border:1px solid var(--edge-strong);border-radius:var(--r-card);box-shadow:var(--shadow-pop);padding:0}
-:is(.ppgw-gateway,.ppgw-global-settings) dialog::backdrop {background:#03071299;backdrop-filter:blur(4px)}
 :is(.ppgw-gateway,.ppgw-global-settings) .dialog-body {padding:24px}
 :is(.ppgw-gateway,.ppgw-global-settings) .dialog-body h2 {font-size:18px;margin-bottom:20px}
 :is(.ppgw-gateway,.ppgw-global-settings) .dialog-actions {justify-content:flex-end;margin-top:22px}
@@ -100,133 +98,27 @@
   :is(.ppgw-gateway,.ppgw-global-settings) .dialog-body {padding:20px 16px}
 }
 
-/* One subscription editor, with consistent sections and restrained actions. */
-.ppgw-workspace[data-page="subscriptions"] {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px 20px;align-items:center;max-width:1180px}
-.ppgw-workspace[data-page="subscriptions"] > .ppgw-gateway,
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor:not([hidden]),
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor > .page,
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .pps {display:contents}
-.ppgw-workspace[data-page="subscriptions"] > .ppgw-gateway > .page-head {grid-column:1;order:0;margin:0;min-height:38px}
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .phead {grid-column:2;order:0;margin:0;gap:8px;justify-content:flex-end;animation:none}
-.ppgw-subscription-editor .phead > .spacer {display:none}
-.ppgw-subscription-editor .phead .btn:not([data-ppsub-apply]) {background:var(--panel);border-color:var(--edge);box-shadow:none;color:var(--text-2);font-weight:500}
-.ppgw-subscription-editor .phead .btn:not([data-ppsub-apply]):hover {background:var(--row-hover);color:var(--text)}
+/* Subscription content follows one vertical page flow. */
+.ppgw-workspace[data-page="subscriptions"] {display:flex;flex-direction:column;align-items:stretch;gap:20px}
+.ppgw-workspace[data-page="subscriptions"] > .ppgw-gateway {display:flex;flex-direction:column;gap:16px}
+.ppgw-subscription-editor .phead {display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0}
 .ppgw-subscription-editor .phead .btn {min-height:36px;font-size:12px;padding:7px 13px;border-radius:9px}
-.ppgw-subscription-editor .phead [data-ppsub-apply] {box-shadow:none}
-.ppgw-workspace[data-page="subscriptions"] .page-description {grid-column:1;order:1;margin:0}
-.ppgw-workspace[data-page="subscriptions"] #policy-actions {grid-column:2;order:1;text-align:right}
-.ppgw-workspace[data-page="subscriptions"] #reset-policy {padding:0;min-height:0;border:0;background:none;box-shadow:none;color:var(--text-2);font-size:11px}
-.ppgw-workspace[data-page="subscriptions"] #reset-policy:hover {color:var(--err-text)}
-.ppgw-workspace[data-page="subscriptions"] #notice,
-.ppgw-workspace[data-page="subscriptions"] #reconnect {grid-column:1/-1;order:2}
-.ppgw-workspace[data-page="subscriptions"] #content {display:none}
-.ppgw-workspace[data-page="subscriptions"] #savebar {grid-column:1/-1;order:4}
-.ppgw-editor-status {display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;grid-column:1/-1;order:3;color:var(--text-2);font-size:12px;line-height:1.65;padding:0 1px 4px;min-width:0}
-.ppgw-editor-status::before {content:"";display:block;width:6px;height:6px;flex:none;border-radius:50%;background:var(--up)}
-.ppgw-editor-status[data-state="error"]::before {background:var(--err)}
-.ppgw-editor-status[data-state="working"]::before {background:var(--brand)}
+.ppgw-subscription-editor .phead .btn:not([data-ppsub-apply]) {background:var(--panel);border-color:var(--edge);box-shadow:none;color:var(--text-2)}
+.ppgw-editor-status {display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;color:var(--text-2);font-size:12px;line-height:1.7;min-width:0}
 .ppgw-editor-status > span {min-width:0;overflow-wrap:anywhere}
-.ppgw-editor-status > button {flex:none;font-size:11px;padding:3px 8px}
-.ppgw-read-note {position:relative;font-size:11px;color:var(--text-2)}
-.ppgw-read-note summary {cursor:pointer;text-decoration:underline;text-underline-offset:3px;list-style:none}
-.ppgw-read-note summary::-webkit-details-marker {display:none}
-.ppgw-read-note[open] {flex-basis:100%;padding:10px 14px;background:var(--panel);border:1px solid var(--edge);border-radius:10px}
-.ppgw-read-note p {margin:8px 0 0;font-size:12px;line-height:1.8;overflow-wrap:anywhere}
-.ppgw-subscription-editor .sect {border:1px solid var(--edge)!important;border-radius:16px;padding:20px 22px;background:var(--panel-strong);box-shadow:none;min-width:0}
-.ppgw-subscription-editor .sect > h3 {font-size:14px;font-weight:650;letter-spacing:0;margin:0}
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .monitor {grid-column:1/-1;order:5;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 24px;align-items:start}
-.ppgw-subscription-editor .monitor > h3 {grid-column:1/-1;margin:0 0 2px}
-.ppgw-subscription-editor .monitor > label.ck,
-.ppgw-subscription-editor .monitor > .row:has(>label.ck) {margin:0!important;padding:9px 0 12px;border:0;border-bottom:1px solid var(--edge);border-radius:0;background:none;min-width:0;min-height:40px}
-.ppgw-subscription-editor .monitor > label.ck,
-.ppgw-subscription-editor .monitor > .row > label.ck {display:flex;flex:1;flex-direction:row-reverse;justify-content:space-between;flex-wrap:nowrap;gap:14px;font-size:12px;margin:0!important}
-.ppgw-subscription-editor .monitor > label.ck input[type=checkbox],
-.ppgw-subscription-editor .monitor > .row > label.ck input[type=checkbox] {width:32px;height:18px;border:0;border-radius:12px;background:var(--edge-strong)}
-.ppgw-subscription-editor .monitor > label.ck input[type=checkbox]::before,
-.ppgw-subscription-editor .monitor > .row > label.ck input[type=checkbox]::before {content:"";position:absolute;left:3px;top:3px;width:12px;height:12px;border-radius:50%;background:var(--text-2);transition:transform .15s}
-.ppgw-subscription-editor .monitor > label.ck input[type=checkbox]:checked,
-.ppgw-subscription-editor .monitor > .row > label.ck input[type=checkbox]:checked {background:var(--brand)}
-.ppgw-subscription-editor .monitor > label.ck input[type=checkbox]:checked::before,
-.ppgw-subscription-editor .monitor > .row > label.ck input[type=checkbox]:checked::before {transform:translateX(14px);background:white}
-.ppgw-subscription-editor .monitor > label.ck input[type=checkbox]::after,
-.ppgw-subscription-editor .monitor > .row > label.ck input[type=checkbox]::after {display:none}
-.ppgw-subscription-editor .monitor input[type=checkbox]:focus-visible {outline:2px solid var(--brand);outline-offset:3px}
-.ppgw-subscription-editor .monitor > :not(h3):not(label.ck):not(.row:has(>label.ck)) {grid-column:1/-1}
-.ppgw-subscription-editor .monitor > .row:has(>label.ck) {flex-wrap:wrap}
-.ppgw-subscription-editor .monitor > .row:has(>label.ck) > .lb {margin-top:8px}
-.ppgw-global-settings {font-size:13px;padding-top:2px;margin:0;min-width:0;display:flex;flex-direction:column;gap:18px}
-.ppgw-global-settings .subscription-global-grid {display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:24px;align-items:start}
-.ppgw-global-settings .field-grid {gap:14px 24px}
-.ppgw-global-settings .field {gap:8px}
-.ppgw-global-settings .field small {color:var(--text-3);font-size:11px}
-.ppgw-global-settings .subscription-local {min-width:0;padding:0}
-.ppgw-global-settings .subscription-local .toggle-field {border:0;padding:0;min-height:86px;align-items:center}
-.ppgw-global-settings .subscription-local .toggle-field > div {gap:10px}
-.ppgw-global-settings .subscription-local .checkline {margin-top:12px}
-.ppgw-global-settings .card {padding:16px;background:var(--panel);box-shadow:none;border:1px solid var(--edge)}
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .subs {grid-column:1/-1;order:6}
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .nodes {grid-column:1/-1;order:7}
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .rules {grid-column:1/-1;order:8}
-.ppgw-subscription-editor :is(.subs,.nodes,.rules) {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px}
-.ppgw-subscription-editor :is(.subs,.nodes,.rules) > h3 {grid-column:1;grid-row:1}
-.ppgw-subscription-editor :is(.subs,.nodes,.rules) > .sfoot {grid-column:2;grid-row:1;margin:0}
-.ppgw-subscription-editor :is(.subs,.nodes,.rules) > :not(h3):not(.sfoot) {grid-column:1/-1;min-width:0}
-.ppgw-subscription-editor .sfoot > .btn {background:var(--panel)!important;color:var(--text-2)!important;border-color:var(--edge)!important;font-size:12px;padding:6px 11px;box-shadow:none;font-weight:500;border-radius:8px}
-.ppgw-subscription-editor .sfoot > .btn:hover {background:var(--brand-soft)!important;color:var(--brand-text)!important;border-color:var(--brand)!important}
-.ppgw-subscription-editor .item {border:1px solid var(--edge);border-radius:11px;background:var(--panel);padding:16px;margin:0;box-shadow:none}
-.ppgw-subscription-editor .item + .item {margin-top:0}
-.ppgw-subscription-editor .ihead {gap:8px;margin-bottom:14px}
-.ppgw-subscription-editor .inum {font-size:11px;font-weight:500;color:var(--text-3);font-family:var(--font-mono)}
-.ppgw-subscription-editor .iname {font-size:13px;font-weight:600}
-.ppgw-subscription-editor .mini {background:transparent;border-color:transparent;font-size:11px;padding:3px 6px;color:var(--text-2)}
-.ppgw-subscription-editor .mini.cyan {color:var(--text-2);border-color:transparent;background:transparent}
-.ppgw-subscription-editor .mini.danger {color:var(--err-text);border-color:transparent}
-.ppgw-subscription-editor .item > .row {margin:12px 0;gap:10px}
-.ppgw-subscription-editor .item > .row:last-child {margin-bottom:0}
-.ppgw-subscription-editor .item .lb {font-size:12px}
-.ppgw-subscription-editor .input {border-radius:8px;min-height:34px}
-.ppgw-subscription-editor .rd {border-radius:7px;font-size:11.5px;padding:5px 9px}
-.ppgw-subscription-editor .emptyst {border-color:var(--edge);background:var(--panel);padding:24px;font-size:12px}
-.ppgw-subscription-editor .subs .item > .row {display:grid;grid-template-columns:auto minmax(120px,.55fr) auto minmax(0,1.45fr);align-items:center}
-.ppgw-subscription-editor .subs .item > .row > input {width:100%!important;min-width:0}
-.ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .pfoot {grid-column:1/-1;order:9;margin-top:4px}
-@media(max-width:1000px) {
-  .ppgw-workspace[data-page="subscriptions"] {grid-template-columns:minmax(0,1fr);gap:14px}
-  .ppgw-workspace[data-page="subscriptions"] > .ppgw-gateway > .page-head,
-  .ppgw-workspace[data-page="subscriptions"] .page-description,
-  .ppgw-workspace[data-page="subscriptions"] #policy-actions,
-  .ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .phead {grid-column:1}
-  .ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .phead {order:2;justify-content:flex-start}
-  .ppgw-workspace[data-page="subscriptions"] #policy-actions {text-align:left}
-}
-@media(max-width:760px) {
-  .ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .monitor {grid-template-columns:minmax(0,1fr);gap:12px}
-  .ppgw-global-settings .subscription-global-grid {grid-template-columns:minmax(0,1fr);gap:18px}
-  .ppgw-global-settings .subscription-local .toggle-field {min-height:0;padding:4px 0;align-items:center}
-  .ppgw-subscription-editor .monitor > label.ck,
-  .ppgw-subscription-editor .monitor > .row:has(>label.ck) {padding:7px 0 12px;min-height:34px}
-}
-@media(max-width:639.5px) {
-  .ppgw-subscription-editor .sect {padding:17px 15px;border-radius:13px}
-  .ppgw-workspace[data-page="subscriptions"] .ppgw-subscription-editor .phead {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;width:100%}
-  .ppgw-subscription-editor .phead .menuwrap {display:block;width:100%}
-  .ppgw-subscription-editor .phead .btn {width:100%}
-  .ppgw-subscription-editor .phead > input {display:none}
-  .ppgw-global-settings .field-grid {grid-template-columns:minmax(0,1fr);gap:16px}
-  .ppgw-subscription-editor :is(.subs,.nodes,.rules) {column-gap:10px;row-gap:16px}
-  .ppgw-subscription-editor .sfoot > .btn {font-size:11px;padding:5px 8px}
-  .ppgw-subscription-editor .item {padding:12px}
-  .ppgw-subscription-editor .ihead {gap:6px}
-  .ppgw-subscription-editor .ihead > .spacer {flex-basis:100%;height:0}
-  .ppgw-subscription-editor .iname {max-width:calc(100% - 35px)}
-  .ppgw-subscription-editor .subs .item > .row {grid-template-columns:38px minmax(0,1fr);gap:10px 8px}
-  .ppgw-subscription-editor .grow {min-width:0;width:100%}
-  .ppgw-subscription-editor .pwwrap {min-width:0;width:100%}
-  .ppgw-subscription-editor .monitor select.input {max-width:100%}
-  .ppgw-editor-status {font-size:11px}
-}
+.ppgw-read-note {font-size:12px;color:var(--text-2)}
+.ppgw-read-note summary {cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.ppgw-read-note p {margin:8px 0 0;line-height:1.8;overflow-wrap:anywhere}
+.ppgw-subscription-editor .item {border:1px solid var(--edge);border-radius:var(--r-card);background:var(--panel);box-shadow:none;min-width:0}
+.ppgw-global-settings {max-width:none;margin-top:20px;padding-top:18px;border-top:1px solid var(--edge)}
+.ppgw-global-settings .subscription-global-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.ppgw-global-settings .subscription-global-grid>.subscription-timing {grid-column:1/-1}
+.ppgw-global-settings .subscription-global-grid .card {padding:0;border:0;background:transparent;box-shadow:none}
+.ppgw-global-settings .subscription-global-grid .card-heading {margin:0 0 14px}
+@media(max-width:760px){.ppgw-global-settings .subscription-global-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:639.5px){.ppgw-subscription-editor .phead{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.ppgw-subscription-editor .phead .btn{width:100%;font-size:11px;padding:8px 6px}}
 /* Source selection and current-source editing have separate save boundaries. */
-.ppgw-workspace[data-page="subscriptions"] #content {display:block;grid-column:1/-1;order:4}
+.ppgw-workspace[data-page="subscriptions"] #content {display:flex}
 .ppgw-workspace[data-page="subscriptions"] #content:empty {display:none}
 .ppgw-gateway .source-card {padding:20px 22px;margin:0}
 .source-summary {display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-top:14px}
@@ -306,3 +198,8 @@
 .ppgw-gateway .preview-change-heading span {color:var(--text-2);white-space:nowrap;font-variant-numeric:tabular-nums}
 .ppgw-gateway .preview-change-counts {margin:5px 0 0;color:var(--brand-text)}
 .ppgw-gateway .preview-change-names {margin:5px 0 0;color:var(--text-2)}
+
+.ppgw-gateway .application-preview {scroll-margin-top:24px;border:1px solid var(--brand);background:var(--panel-solid);width:100%;max-height:none}
+.ppgw-gateway .application-preview .dialog-body {padding:0}
+.ppgw-gateway .application-preview h2 {margin-bottom:18px}
+.ppgw-gateway .application-preview .dialog-actions {display:flex;justify-content:flex-end;gap:10px;margin-top:20px}

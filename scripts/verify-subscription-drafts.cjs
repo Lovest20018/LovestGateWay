@@ -90,6 +90,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.doesNotMatch(await page.locator('#preview-content').textContent(),/https:\/\//);
     await page.screenshot({path:path.join(root,'dist/change-preview-desktop.png'),fullPage:true});
     await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(()=>document.querySelector('#preview-dialog').scrollWidth<=document.querySelector('#preview-dialog').clientWidth);
     assert.equal(await page.locator('#preview-dialog').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
     await page.screenshot({path:path.join(root,'dist/change-preview-mobile.png'),fullPage:true});
     await page.setViewportSize({width:1440,height:980});

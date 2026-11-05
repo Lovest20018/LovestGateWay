@@ -56,8 +56,8 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
   const overview=el('div',{class:'diagnostic-overview'}),list=el('div',{class:'diagnostic-backups'});
   const unknownReview=el('div',{'data-unknown-task':'',hidden:''});
   const refresh=button('刷新诊断',()=>refreshAll()),download=button('导出脱敏报告',()=>exportReport()),backup=button('创建完整备份',()=>confirmBackup()),recover=button('预览中断事务恢复',()=>showPreview('recover'));
-  const dialog=el('dialog',{'aria-labelledby':'recovery-preview-title',class:'diagnostic-dialog'}),dialogBody=el('div',{class:'dialog-body'});
-  const cancel=button('返回',()=>{preview=null;dialog.close();}),apply=button('确认执行',()=>submitPreview(),{class:'btn btn-brand'}),detail=el('div');
+  const dialog=el('section',{'aria-labelledby':'recovery-preview-title',class:'diagnostic-preview card glass',hidden:'',tabindex:'-1'}),dialogBody=el('div',{class:'dialog-body'});
+  const cancel=button('返回',()=>{preview=null;dialog.hidden=true;}),apply=button('确认执行',()=>submitPreview(),{class:'btn btn-brand'}),detail=el('div');
   dialogBody.append(el('h2',{id:'recovery-preview-title',text:'恢复影响预览'}),detail,el('div',{class:'button-row dialog-actions'},[cancel,apply]));dialog.append(dialogBody);
   dialog.addEventListener('cancel',()=>{preview=null;});
   root.classList.add('diagnostic-page');
@@ -145,12 +145,12 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
       if(impact.settings_worker_state_preserved)notes.push('管理任务服务的运行与开机启用状态保留当前值，作为本次恢复的明确例外；不会自动恢复为备份记录的状态。');
       notes.push('将恢复并核对服务状态；目标核心与 API 启用时，还会验证其实际响应。');
       if(impact.service_restart?.length)notes.push('需要恢复运行的服务：'+impact.service_restart.map(name=>services[name]||'管理服务').join('、')+'。');
-      detail.append(el('ul',{},notes.map(text=>el('li',{text}))));apply.textContent=action==='restore'?'确认恢复此备份':'确认恢复中断事务';dialog.showModal();
+      detail.append(el('ul',{},notes.map(text=>el('li',{text}))));apply.textContent=action==='restore'?'确认恢复此备份':'确认恢复中断事务';dialog.hidden=false;dialog.scrollIntoView({behavior:'smooth',block:'start'});dialog.focus({preventScroll:true});
     }catch(error){if(!stopped)notice(error.message,'error');}finally{loading=false;controls();}
   }
-  function confirmBackup(){if(loading||pending)return;preview={action:'backup'};detail.replaceChildren(el('p',{text:'将短暂停止受影响服务，创建完整文件快照后恢复原服务状态，并验证转发核心与已启用 API。活动连接可能中断。'}),el('p',{text:'备份包含程序、配置、资源和运行数据，保存在本机受限目录中。'}));apply.textContent='确认创建完整备份';dialog.showModal();}
+  function confirmBackup(){if(loading||pending)return;preview={action:'backup'};detail.replaceChildren(el('p',{text:'将短暂停止受影响服务，创建完整文件快照后恢复原服务状态，并验证转发核心与已启用 API。活动连接可能中断。'}),el('p',{text:'备份包含程序、配置、资源和运行数据，保存在本机受限目录中。'}));apply.textContent='确认创建完整备份';dialog.hidden=false;dialog.scrollIntoView({behavior:'smooth',block:'start'});dialog.focus({preventScroll:true});}
   async function submitPreview(){
-    if(!preview||pending||loading)return;const selected=preview;preview=null;dialog.close();
+    if(!preview||pending||loading)return;const selected=preview;preview=null;dialog.hidden=true;
     const id=[...crypto.getRandomValues(new Uint8Array(16))].map(value=>value.toString(16).padStart(2,'0')).join('');
     pending={id,kind:selected.action};notFoundId=null;unknownReview.hidden=true;unknownReview.replaceChildren();persist();renderTask();controls();
     try{const value=await api('apply',{id,kind:selected.action,payload:selected.action==='backup'?{}:{preview_token:selected.value.preview_token}});if(stopped)return;renderTask(value);await pollJob();}

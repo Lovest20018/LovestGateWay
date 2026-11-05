@@ -1,17 +1,36 @@
-// Public DOM/hash boundary only; the upstream bundle is never patched.
-(() => {
-  if(parent===window){location.replace('/ui/'+location.hash);return;}
-  // The opaque app rewrites its auth object on verification/logout. Retain
-  // unrelated settings while adapting that public storage boundary.
+// Mount the upstream public entry point in the shared document.
+let started=false,runtimeHost=null;
+export async function mountRuntime(host,{onUnauthorized,onLocation,onHistoryPush}) {
+  if(started)return;
+  started=true;runtimeHost=host;
+  const push=history.pushState.bind(history),replace=history.replaceState.bind(history);
+  history.pushState=(state,title,url)=>{push({...state,ppgwIndex:onHistoryPush(state?.ppgwIndex)},title,url);onLocation();};
+  history.replaceState=(state,title,url)=>{replace({...state,ppgwIndex:state?.ppgwIndex??history.state?.ppgwIndex??0},title,url);};
+  // Preserve saved profiles and preferences when upstream writes its secret.
   const setItem=Storage.prototype.setItem,removeItem=Storage.prototype.removeItem;
   Storage.prototype.setItem=function(key,value){if(this===localStorage&&key==='PaoPaoGateWay'){try{const previous=JSON.parse(this.getItem(key)||'{}'),next=JSON.parse(value);if(previous&&next&&typeof previous==='object'&&typeof next==='object'&&!Array.isArray(previous)&&!Array.isArray(next)){const merged={...previous,...next};if(Array.isArray(next.clashAPIConfigs)&&Array.isArray(previous.clashAPIConfigs)){merged.clashAPIConfigs=next.clashAPIConfigs.map((row,index)=>({...previous.clashAPIConfigs[index],...row}));const authOnly=Object.keys(next).length===1&&next.clashAPIConfigs.length===1&&next.clashAPIConfigs[0]&&Object.keys(next.clashAPIConfigs[0]).length===1&&Object.hasOwn(next.clashAPIConfigs[0],'secret');if(authOnly)merged.clashAPIConfigs.push(...previous.clashAPIConfigs.slice(1));}value=JSON.stringify(merged);}}catch{}}return setItem.call(this,key,value);};
   Storage.prototype.removeItem=function(key){if(this===localStorage&&key==='PaoPaoGateWay'){try{const saved=JSON.parse(this.getItem(key)||'null');if(saved&&typeof saved==='object'&&!Array.isArray(saved)){if('secret'in saved)saved.secret='';if(Array.isArray(saved.clashAPIConfigs))saved.clashAPIConfigs=saved.clashAPIConfigs.map(row=>({...row,secret:''}));return setItem.call(this,key,JSON.stringify(saved));}}catch{}}return removeItem.call(this,key);};
-  const originalFetch=window.fetch;window.fetch=async function(...args){const response=await originalFetch.apply(this,args);if(response.status===401)parent.postMessage({type:'ppgw:expired'},location.origin);return response;};
-  new MutationObserver(()=>{const login=document.querySelector('input[autocomplete="current-password"]');if(login){login.closest('.wrap')?.setAttribute('hidden','');parent.postMessage({type:'ppgw:expired'},location.origin);}}).observe(document.documentElement,{childList:true,subtree:true});
-  const style=document.createElement('style');style.textContent='aside{position:fixed!important;left:auto!important;top:auto!important;right:12px!important;bottom:8px!important;width:auto!important;height:auto!important;z-index:70!important;padding:5px!important;border-radius:12px!important}aside>nav,aside>.brand,.appbar{display:none!important}aside>.tools{display:flex!important;flex-direction:row!important;margin:0!important;padding:0!important}.main-col{margin-left:0!important;width:100%!important}.app{display:block!important}main{padding-top:16px!important}';document.head.append(style);
-  const routes=new Set(['overview','proxies','rules','connections','traffic','distribution','logs','region','subscriptions','settings','ppsub']);
-  document.addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link||event.ctrlKey||event.metaKey||event.shiftKey)return;const url=new URL(link.href,location.href);if(url.origin!==location.origin||!routes.has(url.hash.slice(2)))return;event.preventDefault();event.stopImmediatePropagation();parent.postMessage({type:'ppgw:route',hash:url.hash},location.origin);},true);
-  window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==parent||!event.data)return;const data=event.data;if(data.type==='ppgw:navigate'&&typeof data.hash==='string'&&routes.has(data.hash.slice(2)))location.hash=data.hash;
-    if(data.type==='ppgw:theme'&&['light','dark'].includes(data.theme)){document.documentElement.dataset.theme=data.theme;for(const key of ['--bg','--bg-elev','--text','--nav-bg','--nav-text','--brand','--brand-deep','--brand-text','--brand-soft','--brand-grad'])if(typeof data.tokens?.[key]==='string')document.documentElement.style.setProperty(key,data.tokens[key]);}
-  });
-})();
+  let hadLogin=false;
+  new MutationObserver(()=>{const login=host.querySelector('input[autocomplete="current-password"]');if(login){login.closest('.wrap')?.setAttribute('hidden','');if(!hadLogin)onUnauthorized();}hadLogin=!!login;}).observe(host,{childList:true,subtree:true});
+  globalThis.__sveltekit_1higjzk={base:'/ui',assets:'/ui'};
+  const runtime=await import('/ui/@@runtime-bundle@@');
+  runtime.start(host);
+}
+
+// Reauthenticate through the public form, retaining the source editor draft.
+export function authenticateRuntime(host,password){
+  const input=host?.querySelector('input[autocomplete="current-password"]');
+  if(!input)return;
+  input.value=password;
+  input.dispatchEvent(new Event('input',{bubbles:true}));
+  input.closest('form')?.requestSubmit();
+}
+
+// Let the upstream router handle its public links. Its route state and browser
+// history stay valid; source routes retain the same history keys while hidden.
+export function navigateRuntime(hash,replace=false){
+  if(!runtimeHost?.querySelector('main'))return false;
+  const link=document.createElement('a');link.href=hash;link.hidden=true;
+  if(replace)link.setAttribute('data-sveltekit-replacestate','true');
+  document.body.append(link);link.click();link.remove();return true;
+}

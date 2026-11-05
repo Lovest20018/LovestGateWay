@@ -214,10 +214,10 @@ async function main() {
     const themeSettled = color => page.waitForFunction(expected =>
       getComputedStyle(document.querySelector('.toggle-field input:checked')).backgroundColor === expected, color);
     await themeButton.click();
-    await page.getByRole('dialog', {name: '主题与自定义配色', exact: true}).waitFor();
+    await page.getByRole('region', {name: '主题与自定义配色', exact: true}).waitFor();
     await page.getByLabel('自定义基础主题', {exact:true}).selectOption('dark');
     await page.getByLabel('主题色', {exact: true}).fill('#7c5cff');
-    await page.getByRole('button', {name: '关闭', exact: true}).click();
+    await page.getByRole('button', {name: '返回网关设置', exact: true}).click();
     assert.equal(await page.evaluate(() => localStorage.getItem('ppgw-theme')), 'custom');
     assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--brand').trim()), '#7c5cff');
     assert.equal(await page.locator('.ppgw-gateway').evaluate(node => getComputedStyle(node).color === getComputedStyle(document.body).color), true);
@@ -225,13 +225,13 @@ async function main() {
     await page.screenshot({path: path.join(root, 'dist/settings-unified-custom.png'), fullPage: true});
     await themeButton.click();
     await page.getByLabel('主题', {exact:true}).selectOption('dark');
-    await page.getByRole('button', {name:'关闭',exact:true}).click();
+    await page.getByRole('button', {name:'返回网关设置',exact:true}).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-dark.png'), fullPage: true});
     await themeButton.click();
     await page.getByLabel('主题', {exact:true}).selectOption('light');
-    await page.getByRole('button', {name:'关闭',exact:true}).click();
+    await page.getByRole('button', {name:'返回网关设置',exact:true}).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-light.png'), fullPage: true});
