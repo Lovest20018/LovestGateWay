@@ -274,10 +274,12 @@ def summary(layout, revision, runtime, recovery=False):
     if not actual.get('boot_id') or not actual.get('config_revision'):
         state = 'unknown'
     if recovery: state = 'recovery_required'
-    from manage_acceptance import latest_check
+    from manage_acceptance import latest_check, runtime_identity
     check = latest_check(layout)
     if check:
-        check['current'] = check.get('revision') == revision and all(check.get(k) == actual.get(k) for k in ('boot_id', 'config_revision'))
+        check['current'] = (check.get('revision') == revision and
+                            (check.get('boot_id'), check.get('config_revision'), check.get('runtime_scope')) == runtime_identity(actual))
+        if state == 'loaded' and check.get('result') == 'verified' and not check['current']: state = 'unknown'
     if (not recovery and check.get('revision') == revision and check.get('result') == 'unconfirmed'
             and check.get('checked_at', 0) >= receipt.get('checked_at', 0)):
         state = 'saved_pending' if check.get('error') != 'STATE_SAMPLE_UNAVAILABLE' else 'unknown'
