@@ -18,7 +18,7 @@ API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板�
 
 ```sh
 node frontend/build.mjs
-node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs frontend/tests/overview.test.mjs frontend/tests/proxies.test.mjs
+node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs frontend/tests/overview.test.mjs frontend/tests/proxies.test.mjs frontend/tests/rules.test.mjs
 ```
 
 ```sh
@@ -39,6 +39,7 @@ node scripts/verify-runtime-navigation.cjs dist/test-ui
 node scripts/verify-unified-runtime.cjs dist/test-ui
 node scripts/verify-overview-fixture.cjs dist/test-ui
 node scripts/verify-proxies-fixture.cjs dist/test-ui
+node scripts/verify-rules-fixture.cjs dist/test-ui
 node scripts/verify-subscription-flow.cjs dist/test-ui
 node scripts/verify-subscription-drafts.cjs dist/test-ui
 node scripts/verify-source-editor.cjs dist/test-ui
@@ -56,6 +57,8 @@ node scripts/verify-observer-api-fixture.cjs dist/test-ui
 概览验证直接加载可维护源码，断言不请求兼容 bundle，所有状态请求只读；覆盖动态采样、计数与启动身份变化、静态嵌套字段保留、API 故障重试、重新登录、主题、图表悬停、页面离开后的取消与迟到响应，以及 390px/320px 手机布局。冷启动节点选择的单元与真实 Mihomo 隔离复验见 [节点选择保留](node-selection-persistence.md)。
 
 代理页验证直接加载可维护源码，断言初次读取不测速、不更新、不切换。覆盖 Selector 与自动组的行为差异、普通及智能锁定/解锁、长按、组测速前解锁、URL 编码与验证、提供商更新、限定旧连接关闭范围、仅模式字段的 PATCH、状态失败及 ETag、重新登录后不重放操作、搜索焦点和偏好保留、节点详情字段白名单、源码/兼容页前进后退、离页停止与迟到响应。大列表使用 60 个节点组和 1000 个候选，检查每组分批展开、末尾节点搜索与 390px/320px 手机布局。这些是合成 UI 验证，不替代真实 Mihomo 或客户端业务验收。路径段名称 `.` 和 `..` 无法可靠通过浏览器发送，界面会拒绝相关操作并要求调整配置名称。
+
+规则页通过 `scripts/verify-rules-fixture.cjs` 验证初次只读、后端规则索引、临时启停与失败保留、重复操作抑制、仅模式字段 PATCH、分层节点组与手动选择、自动/智能组只读、提供商更新、GEO 二次确认和逐文件失败、主动 URL 测试及日志定位、429 提示、状态失败与畸形响应恢复、重新登录不重放、搜索焦点与偏好、源码/兼容页前进后退、隐藏/离页及队列终止。规模检查包含 10000 条规则、1000 个组候选，核对默认分页、末尾规则搜索、分批展开及 390px/320px 表格内部滚动。`--baseline` 从单独的基线构建记录原页面。以上为合成 UI 验证，真实网关和客户端业务需另行验收。
 
 复杂编辑器验证使用 12 个提供商、60 个节点组、200 条规则和 1000 个节点候选，分别检查原生 PPsub、完整 Clash 配置的 1440px 桌面和 320px 手机布局。长名称包含按文本展示的 HTML 样例；测试末尾分组的编辑、复制、移动、删除、节点标签提交、模式切换及预览保存，并检查提供商后台刷新与页签切换保留草稿。提交交给实际后端校验或合并函数，逐项比较未编辑分组、规则、扩展字段和隐藏凭据；完整配置重命名分组时还检查规则引用按原顺序同步更新。证据默认写入 `dist/complex-editor-evidence/`，第三个参数可指定其他证据目录。该验证不访问真实机场，也不代表终端网络已通过验收。
 

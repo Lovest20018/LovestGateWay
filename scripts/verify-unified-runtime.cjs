@@ -71,11 +71,11 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     for(const key of ['proxies','rules','connections','traffic','distribution','logs','region']){
       await page.locator('#shell-nav [data-route="'+key+'"]').click();
       await page.waitForURL('**/#/'+key);
-      const current=key==='proxies'?page.locator('#proxies-page'):runtime;
+      const source=['proxies','rules'].includes(key),current=source?page.locator('#'+key+'-page'):runtime;
       await current.locator('h1').first().waitFor();
       await page.waitForTimeout(80);
-      pages.push({key,heading:await current.locator('h1').first().innerText(),source:key==='proxies'});
-      if(key!=='proxies')assert.equal(await runtime.locator('aside').first().isVisible(),false);
+      pages.push({key,heading:await current.locator('h1').first().innerText(),source});
+      if(!source)assert.equal(await runtime.locator('aside').first().isVisible(),false);
       assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document');
     }
     assert.equal(new Set(pages.map(row=>row.heading)).size,7,'each navigation must render its own source or compatibility component');
