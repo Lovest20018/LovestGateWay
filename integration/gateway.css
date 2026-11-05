@@ -297,3 +297,12 @@
 .ppgw-management summary { cursor: pointer; }
 .ppgw-provider-status { flex-basis: 100%; margin: 4px 0; white-space: pre-line; color: var(--text-2); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .ppgw-provider-plan { flex-wrap: wrap; }
+.ppgw-gateway .source-override {margin-top:14px;padding:12px 14px;border:1px solid var(--edge);border-radius:10px;background:var(--panel);font-size:12px;line-height:1.75;overflow-wrap:anywhere}
+.ppgw-gateway .source-override strong {font-weight:600}
+.ppgw-gateway .source-override p {margin:4px 0 0;color:var(--text-2)}
+.ppgw-gateway .preview-structure {display:grid;gap:10px;margin:16px 0}
+.ppgw-gateway .preview-change {padding:12px 14px;border:1px solid var(--edge);border-radius:10px;min-width:0;font-size:12px;line-height:1.75;overflow-wrap:anywhere}
+.ppgw-gateway .preview-change-heading {display:flex;justify-content:space-between;gap:16px}
+.ppgw-gateway .preview-change-heading span {color:var(--text-2);white-space:nowrap;font-variant-numeric:tabular-nums}
+.ppgw-gateway .preview-change-counts {margin:5px 0 0;color:var(--brand-text)}
+.ppgw-gateway .preview-change-names {margin:5px 0 0;color:var(--text-2)}

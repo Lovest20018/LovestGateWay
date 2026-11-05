@@ -21,6 +21,11 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.addInitScript(()=>localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]})));
     const model={...defaults,revision:'a'.repeat(64),assets:['custom.yaml','second.yaml'],source:{url:'https://example.com/main-config',native_ppsub:false,local_policy:true},mihomo_installed:true};
     let operation=null,job=null,savedEditor=null,sourceSwitched=0,mismatchSettings=false;
+    const sourceDetails={kind:'remote_yaml',url:'https://example.com/main-config',local_policy:{present:true,applies:true,sections:['proxy-groups','rules']}};
+    let previewPlan={action:'restart',core_action:'restart',core_active:true,pending_load:false,services:[]};
+    const changeSummary={schema:1,changed:true,subscriptions:{counts:{before:1,after:1,added:0,removed:0,modified:1},changed:true,order_changed:false,names:{modified:['Airport']}},
+      node_groups:{counts:{before:1,after:2,added:1,removed:0,modified:0},changed:true,order_changed:true,names:{added:['<img src=x onerror=alert(1)>']},names_truncated:true},
+      rule_providers:{counts:{before:0,after:0,added:0,removed:0,modified:0},changed:false},rules:{counts:{before:1,after:2,added:1,removed:0,modified:0},changed:true,unit:'lines'},features:{changed:true,modified:1,changed_keys:['global_monitor']}};
     let providerRows=[],providerPolls=0,editorConfigReads=0;
     const kind=()=>model.source.native_ppsub?'ppsub':'clash_patch';
     await page.route(origin+'/**',async route=>{
@@ -31,7 +36,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
         if(target==='/sniffbox/settings/status')return reply({management:{state:'unknown',recent:[]},runtime:{},running_mode:model.settings.ini.mode,source:model.source});
         if(target==='/sniffbox/subscription/providers'){providerPolls++;return reply({subscriptions:providerRows});}
         if(target==='/sniffbox/subscription/status')return reply({ready:true,ppsub_write_allowed:true,edit_kind:kind(),base_revision:model.revision,operation});
-        if(target==='/sniffbox/subscription/config'){editorConfigReads++;return reply({config:model.source.native_ppsub?native:projected,write_allowed:true,edit_kind:kind(),base_revision:model.revision,settings_revision:model.revision,snapshot_id:'snapshot',node_choices:['N1'],notice:'Fixture source: '+model.settings.ini.mode});}
+        if(target==='/sniffbox/subscription/config'){editorConfigReads++;return reply({config:model.source.native_ppsub?native:projected,write_allowed:true,edit_kind:kind(),base_revision:model.revision,settings_revision:model.revision,source_details:sourceDetails,snapshot_id:'snapshot',node_choices:['N1'],notice:'Fixture source: '+model.settings.ini.mode});}
         if(target==='/sniffbox/settings/preview'){
           requests.push({target,body});
           if(model.source.local_policy&&Object.keys(body.patch.ini||{}).some(key=>['mode','suburl','yamlfile'].includes(key))&&!body.reset_source)return reply({error:'SOURCE_CONFLICT'},409);
@@ -51,7 +56,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
         if(target.startsWith('/sniffbox/settings/jobs/'))return reply({id:job.id,status:'succeeded',result:{runtime:{status:'running'}}});
         if(target==='/sniffbox/subscription/apply'){
           requests.push({target,body});
-          if(body.dry_run)return reply({action:'restart',changes:body.settings_patch,editor_changed:true,save_target:'local_policy'});
+          if(body.dry_run)return reply({action:'restart',changes:body.settings_patch,editor_changed:true,save_target:'local_policy',change_summary:changeSummary,application:previewPlan,source_details:{...sourceDetails,url:undefined}});
           savedEditor=body;
           projected=JSON.parse(body.value);model.settings.ini.subtime=body.settings_patch.ini.subtime;model.source.local_policy=true;
           model.revision=(BigInt('0x'+model.revision)+1n).toString(16).padStart(64,'0');operation={id:body.operation_id,status:'applied',message:'Combined fixture saved'};
@@ -75,7 +80,37 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await health.check();await page.getByRole('button',{name:'保存并应用',exact:true}).click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});
     assert.equal(requests.at(-1).body.settings_revision,model.revision);
+    assert.match(await page.locator('.source-override').first().textContent(),/节点组、规则/);
+    assert.match(await page.locator('#preview-content .source-override').textContent(),/此次将使用本地覆盖/);
+    assert.match(await page.locator('.source-card .source-override').textContent(),/已保存与当前来源绑定的本地覆盖/);
+    assert.match(await page.locator('[data-change-section="subscriptions"]').textContent(),/修改 1.*修改：Airport/s);
+    assert.match(await page.locator('[data-change-section="node_groups"]').textContent(),/新增 1.*顺序已调整/s);
+    assert.match(await page.locator('[data-change-section="rules"]').textContent(),/1 → 2/);
+    assert.equal(await page.locator('#preview-content img').count(),0,'names must render as text');
+    assert.doesNotMatch(await page.locator('#preview-content').textContent(),/https:\/\//);
+    await page.screenshot({path:path.join(root,'dist/change-preview-desktop.png'),fullPage:true});
+    await page.setViewportSize({width:390,height:844});
+    assert.equal(await page.locator('#preview-dialog').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
+    await page.screenshot({path:path.join(root,'dist/change-preview-mobile.png'),fullPage:true});
+    await page.setViewportSize({width:1440,height:980});
     await page.locator('#cancel-preview').click();await reload(true);
+    for(const plan of [{action:'reload',core_active:true,pending_load:false,services:[]},{action:'auxiliary',core_active:true,pending_load:false,services:['api']},{action:'auxiliary',core_active:false,pending_load:false,services:['api']},{action:'auxiliary',core_active:null,pending_load:false,services:['api']},{action:'none',core_active:false,pending_load:true,services:[]}]){
+      previewPlan=plan;await health.check();await page.getByRole('button',{name:'保存并应用',exact:true}).click();
+      await page.locator('#preview-dialog').waitFor({state:'visible'});
+      const text=await page.locator('#preview-content').textContent();
+      assert.match(text,plan.pending_load?/仅保存配置/:plan.action==='reload'?/热更新转发核心/:/仅调整辅助服务/);
+      if(plan.pending_load)assert.doesNotMatch(text,/将重启网关/);
+      if(plan.action==='auxiliary'&&plan.core_active!==true){assert.doesNotMatch(text,/保持运行/);assert.match(text,plan.core_active===false?/此次不会启动/:/不改变转发核心的运行状态/);}
+      await page.locator('#cancel-preview').click();await reload(true);
+    }
+    previewPlan={action:'restart',core_active:true,pending_load:false,services:[]};
+    for(const action of ['reload','restart']){
+      previewPlan={action,core_active:null,runtime_state:'unknown',pending_load:false,services:[],possible_services:['api'],services_uncertain:true};
+      await health.check();await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});
+      const text=await page.locator('#preview-content').textContent();assert.match(text,/运行状态暂无法确认/);assert.match(text,/具体调整范围以执行时状态为准/);assert.doesNotMatch(text,/将重启网关|将热更新转发核心/);
+      await page.locator('#cancel-preview').click();await reload(true);
+    }
+    previewPlan={action:'restart',core_active:true,pending_load:false,services:[]};
     mismatchSettings=true;
     await page.getByRole('button',{name:'重新读取',exact:true}).click();
     await page.getByText('读取当前配置失败，请点击“重新读取”后再保存。',{exact:true}).waitFor();
@@ -131,7 +166,8 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.deepEqual(errors,[]);
     const result={syntheticOnly:true,reloadSynchronizesRevisionAndValues:true,mixedSnapshotsRejectedAndRetryable:true,
       editorDraftBlocksSecondSettingsDraft:true,settingsDraftBlocksSecondEditorDraft:true,bothOriginalSavePathsComplete:true,
-      scheduleDraftProtected:true,sourceDraftProtected:true,draftsPreservedAcrossRoutes:true,idleProviderUpdatePreservesDraft:true,pageErrors:errors};
+      scheduleDraftProtected:true,sourceDraftProtected:true,draftsPreservedAcrossRoutes:true,idleProviderUpdatePreservesDraft:true,
+      structuredPreview:true,sourceOverridesVisible:true,safeTextNames:true,applicationPlans:true,mobilePreviewFits:true,pageErrors:errors};
     await fs.writeFile(path.join(root,'dist/subscription-drafts-browser-evidence.json'),JSON.stringify(result,null,2)+'\n');
     console.log(JSON.stringify(result));
   }finally{await browser.close();}

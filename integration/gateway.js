@@ -487,6 +487,8 @@
       const section = card('当前配置来源', description, '', [el('div', {class:'source-summary'}, [
         el('strong', {class:'source-kind', text:names[kind]}), el('code', {class:'source-location', text:locationText})])]);
       section.classList.add('source-card');
+      const explanation = sourceExplanation(sourceDetails);
+      if (explanation) section.append(explanation);
       const details = el('details', {class:'source-switch', open:Boolean(sourceDraft)});
       details.append(el('summary', {text:sourceDraft?.changed ? '来源切换 · 尚未应用' : '切换配置来源'}));
       const draft = sourceDraft || {kind:kind === 'other' ? 'remote' : kind, url:kind === 'remote' ? ini.suburl : '', yaml:ini.yamlfile, changed:false, reset:false, ppsub:null};
@@ -616,17 +618,66 @@
       url.pathname = '/ui/'; url.hash = location.hash || '#/settings';
       return url.href;
     }
+    const policySectionNames = {'proxy-providers':'配置内节点提供商','proxy-groups':'节点组','rule-providers':'规则订阅',rules:'规则',features:'全局选项',reference_renames:'分组引用更名'};
+    function sourceExplanation(details, proposed = false) {
+      const policy = details?.local_policy;
+      if (!policy?.present) return null;
+      const sections = (policy.sections || []).map(key => policySectionNames[key] || key);
+      if (policy.feature_keys?.length && !sections.includes('全局选项')) sections.push('全局选项');
+      return el('div', {class:'source-override'}, [
+        el('strong', {text:policy.state === 'invalid' ? '本地策略需要检查' : policy.applies ? (proposed ? '此次将使用本地覆盖' : '已保存与当前来源绑定的本地覆盖') : '存在未作用于当前来源的本地策略'}),
+        el('p', {text:policy.state === 'invalid' ? '暂时无法读取本地策略，无法确认覆盖范围。请检查配置或恢复提示。' : policy.applies ? (sections.length ? '覆盖范围：' + sections.join('、') + '。' : '本地策略已绑定当前配置来源。') + '更新或重新生成配置后仍会应用这些本地修改；“恢复订阅原策略”可撤销覆盖。' : '当前来源与本地策略不匹配，这份策略不会合并到当前配置。'})
+      ]);
+    }
+    function structuredChanges(summary) {
+      if (!summary || summary.schema !== 1) return [];
+      const sections = [];
+      for (const [key, title] of [['subscriptions','订阅提供商'],['node_groups','节点组'],['rule_providers','规则订阅'],['rules','规则']]) {
+        const change = summary[key];
+        if (!change?.changed) continue;
+        const counts = change.counts;
+        const row = el('section', {class:'preview-change', 'data-change-section':key}, [
+          el('div', {class:'preview-change-heading'}, [el('strong', {text:title}), el('span', {text:`${counts.before} → ${counts.after}` + (change.unit === 'blocks' ? ' 个规则块' : change.unit === 'lines' ? ' 条' : '')})]),
+          el('p', {class:'preview-change-counts', text:[counts.added && `新增 ${counts.added}`, counts.removed && `删除 ${counts.removed}`, counts.modified && `修改 ${counts.modified}`, change.order_changed && '顺序已调整', change.priority_changed && '优先级已调整'].filter(Boolean).join(' · ') || '内容已修改'})
+        ]);
+        for (const [operation, label] of [['added','新增'],['removed','删除'],['modified','修改']]) {
+          const names = change.names?.[operation];
+          if (names?.length) row.append(el('p', {class:'preview-change-names',text:label + '：' + names.join('、')}));
+        }
+        if (change.renamed?.length) row.append(el('p', {class:'preview-change-names',text:'更名：' + change.renamed.map(item => item.before + ' → ' + item.after).join('、')}));
+        if (change.names_truncated || change.renames_truncated) row.append(el('p', {class:'subtext',text:'名称较多，仅展示部分；数量包含全部变更。'}));
+        if (key === 'rules') {
+          if (change.inline_rules?.changed) row.append(el('p', {class:'subtext',text:`手写规则：${change.inline_rules.counts.before} → ${change.inline_rules.counts.after} 条。`}));
+          row.append(el('p', {class:'subtext',text:'规则内容与目标地址不在预览中展示。'}));
+        }
+        sections.push(row);
+      }
+      const features = summary.features;
+      if (features?.changed) sections.push(el('section', {class:'preview-change', 'data-change-section':'features'}, [
+        el('strong', {text:'全局选项'}), el('p', {class:'preview-change-counts', text:`已修改 ${features.modified} 项：` + (features.changed_keys || []).map(key => ({global_monitor:'全局监测',restart_cron:'定时重启',shadowsocks_in:'Shadowsocks 入站','node-groups':'节点组选项'})[key] || key).join('、') + '。敏感内容不显示。'})
+      ]));
+      if (summary.other_fields?.changed) sections.push(el('p', {class:'subtext', text:`另有 ${summary.other_fields.modified} 项编辑配置已修改。`}));
+      return sections.length ? [el('div', {class:'preview-structure'}, sections)] : [];
+    }
     function previewDescription(data, kind) {
       const items = [];
-      const action = data.effects?.core || data.action;
-      items.push(el('div', {class: 'notice', text: action === 'restart' ? '将重启网关并验证新配置，现有连接可能中断。' :
-        action === 'reload' ? '将热更新转发核心，保留核心进程和现有 Mihomo 配置。' : '无需重启转发核心。'}));
-      if (data.effects?.services?.length) items.push(el('p', {class: 'subtext', text: '调整辅助服务：' + data.effects.services.map(v => ({api: '对外观测 API', history: '历史采集', maintenance_timer: '自动维护', subscription: '订阅服务'})[v]).join('、')}));
+      const plan = data.application;
+      const action = plan?.action || data.effects?.core || data.action;
+      items.push(el('div', {class: 'notice', 'data-application-action':action, text: plan?.runtime_state === 'unknown' ? '运行状态暂无法确认，后台将按实际状态保存或加载配置，应用结果以任务验收为准。' : plan?.runtime_state === 'staged' ? '此次仅保存到离线目录，尚未验证运行加载。' : plan?.pending_load ? '网关当前未运行。此次仅保存配置，启动后再加载；保存成功不代表已加载。' :
+        action === 'restart' ? '将重启网关并验证新配置，现有连接可能中断。' :
+        action === 'reload' ? '将热更新转发核心，保留核心进程和现有 Mihomo 配置。' : action === 'auxiliary' ? (plan?.core_active === true ? '仅调整辅助服务，转发核心保持运行。' : plan?.core_active === false ? '仅调整辅助服务，转发核心当前未运行，此次不会启动。' : '仅调整辅助服务，不改变转发核心的运行状态。') : '无需重启转发核心。'}));
+      const services = plan?.services || data.effects?.services;
+      if (services?.length) items.push(el('p', {class: 'subtext', text: '调整辅助服务：' + services.map(v => ({api: '对外观测 API', history: '历史采集', maintenance_timer: '自动维护', subscription: '订阅服务',settings:'设置服务'})[v] || v).join('、')}));
+      if (plan?.services_uncertain) items.push(el('p', {class:'subtext',text:'辅助服务的运行状态尚未确认，具体调整范围以执行时状态为准。'}));
+      if (plan?.reload_fallback_possible) items.push(el('p', {class:'subtext',text:'若热更新条件不满足，后台会改用重启并验证；届时现有连接可能中断。'}));
+      items.push(...structuredChanges(data.change_summary));
+      const explanation = sourceExplanation(data.source_details, true);
+      if (explanation) items.push(explanation);
       if (kind === 'config') {
         const list = el('ul', {class: 'change-list'});
         for (const [ns, fields] of Object.entries(data.changes || {})) for (const [key, value] of Object.entries(fields)) {
           list.append(el('li', {}, [el('strong', {text: labels[key]?.[0] || (key === 'box' ? '流量阻断选项' : key)}),
-            el('span', {text: model.schema[ns][key]?.secret ? '已更新（不显示内容）' : typeof value === 'boolean' ? value ? '开启' : '关闭' : Array.isArray(value) ? value.join('、') || '清空' : String(value) || '清空'})]));
+            el('span', {text: model.schema[ns]?.[key]?.secret ? '已更新（不显示内容）' : typeof value === 'boolean' ? value ? '开启' : '关闭' : Array.isArray(value) ? value.join('、') || '清空' : String(value) || '清空'})]));
         }
         items.push(list);
         if (data.effects?.source_reset) items.push(el('p', {class: 'subtext', text: '旧本地 PPsub / 策略将清除，并包含在此次备份中。'}));
@@ -826,6 +877,7 @@
           throw Error('配置已变化，请刷新网关设置后重新编辑。');
         model = value;
         if (details !== undefined) sourceDetails = details;
+        else if (value.source_details) sourceDetails = {...value.source_details, url:sourceDetails?.url};
         render();
         if (model.recovery_required) notice(message('RECOVERY_REQUIRED'), 'error');
         else if (model.latest_job?.status === 'failed' && !pending()) notice(message(model.latest_job.error), 'error');
