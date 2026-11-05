@@ -32,10 +32,13 @@ node scripts/verify-settings-fixture.cjs dist/test-ui
 node scripts/verify-dashboard-fixture.cjs dist/test-ui
 node scripts/verify-runtime-navigation.cjs dist/test-ui
 node scripts/verify-subscription-flow.cjs dist/test-ui
+node scripts/verify-subscription-drafts.cjs dist/test-ui
 node scripts/verify-observer-api-fixture.cjs dist/test-ui
 ```
 
 `PPGW_PLAYWRIGHT_MODULE` 和 `PPGW_PYTHON` 可指定本地工具位置。生成资源、截图和日志保存在被忽略的 `dist/` 中。
+
+订阅草稿验证同时检查结构化变化预览、来源覆盖说明、敏感内容隐藏、名称按文本显示、后台生效计划及手机预览尺寸；API 使用合成响应，不触碰真实订阅或服务。
 
 ## 隔离运行验证
 

@@ -15,6 +15,7 @@ from manage_model import SCHEMA, SECRET_KEYS, load_settings, settings_revision, 
 from manage_runtime import System
 from manage_assets import import_asset
 from manage_policy import PolicyManager
+from manage_preview import effects, complete_preview, source_details, native_summary
 
 JOBS = 'var/lib/paopaogw/admin/web-jobs/'
 IDENTIFIER = re.compile(r'^[0-9a-f]{32}$')
@@ -41,20 +42,6 @@ def source_options(body):
         raise ManagementError('INVALID_CONFIG_REQUEST')
     from unified_editor import validate_ppsub
     return {'ppsub_update': validate_ppsub(json.loads(body['source_ppsub']))}
-
-
-def effects(preview):
-    changes = preview.get('changes', {})
-    services = []
-    if changes.get('api'): services.append('api')
-    maintenance = changes.get('maintenance', {})
-    if 'enabled' in changes.get('api', {}) or set(maintenance) & {'history_enabled', 'history_retention_days'}: services.append('history')
-    if 'auto_update' in maintenance: services.append('maintenance_timer')
-    if 'TZ' in changes.get('service', {}): services.extend(['subscription', 'history'])
-    return {'core': preview['action'], 'services': list(dict.fromkeys(services)),
-            'web_listen': changes.get('service', {}).get('PPGW_WEB_LISTEN'),
-            'access_changed': bool(set(changes.get('ini', {})) & {'admin_cidr', 'clash_web_password'}),
-            'source_reset': False}
 
 
 class SettingsAdmin:
@@ -112,6 +99,7 @@ class SettingsAdmin:
                     value['assets'].append(path.name)
         value['source'] = {'native_ppsub': self.layout.path('etc/paopaogw/files/ppsub.json').exists(),
                            'local_policy': self.layout.path('etc/paopaogw/files/clash-policy.json').exists()}
+        value['source_details'] = source_details(self.layout)
         value['mihomo_installed'] = self.layout.path('usr/local/lib/paopaogw/bin/clash').is_file()
         journal = self.manager.journal()
         value['recovery_required'] = bool(journal and journal.get('phase') not in {'complete', 'rolled_back'})
@@ -150,12 +138,26 @@ class SettingsAdmin:
 
     def preview(self, body):
         patch, revision, reset, restart = envelope(body)
-        value = self.manager.apply(patch, revision, dry_run=True, reset_source=reset, restart=restart, **source_options(body))
+        options = source_options(body)
+        value = self.manager.apply(patch, revision, dry_run=True, reset_source=reset, restart=restart, **options)
         value['effects'] = effects(value)
+        updates, changes, _ = self.manager.plan(patch, reset)
         if reset:
-            updates, _, _ = self.manager.plan(patch, reset)
             value['effects']['source_reset'] = any(raw is None for raw in updates.values())
-        return value
+        values = load_settings(self.layout)['ini']
+        values.update(changes.get('ini', {}))
+        overrides = {}
+        if updates.get('etc/paopaogw/files/clash-policy.json', False) is None: overrides['policy'] = None
+        if updates.get('etc/paopaogw/files/ppsub.json', False) is None: overrides['native'] = False
+        summary = None
+        if 'ppsub_update' in options:
+            previous = self.layout.path('etc/paopaogw/files/ppsub.json')
+            old = json.loads(previous.read_bytes()) if previous.is_file() else None
+            summary = native_summary(old, json.loads(options['ppsub_update']))
+            overrides['native'] = True
+        details = source_details(self.layout, values, **overrides)
+        details['previous_kind'] = source_details(self.layout)['kind']
+        return complete_preview(value, self.layout, self.system, summary, details)
 
     def latest_job(self):
         raw = read_bytes(self.layout, JOBS + 'latest.json')

@@ -149,12 +149,21 @@ def refresh_nodes(layout, system, names=None, progress=None):
         except Exception:
             if published:
                 progress('rolling_back')
-                for target in cache.glob('*.json'):
-                    if re.fullmatch(r'(?:[0-9a-f]{64}|status)\.json', target.name) and target.name not in original:
-                        target.unlink()
-                for filename, raw in original.items():
-                    atomic_write(layout, 'var/lib/paopaogw/subscriptions/' + filename, raw)
-                system.command('systemctl', 'restart', 'paopaogw')
-                system.wait(settings)
+                try:
+                    for target in cache.glob('*.json'):
+                        if re.fullmatch(r'(?:[0-9a-f]{64}|status)\.json', target.name) and target.name not in original:
+                            target.unlink()
+                    for filename, raw in original.items():
+                        atomic_write(layout, 'var/lib/paopaogw/subscriptions/' + filename, raw)
+                    system.command('systemctl', 'restart', 'paopaogw')
+                    system.wait(settings)
+                except Exception:
+                    # Restored cache bytes do not prove that forwarding recovered.
+                    # Keep this distinction even if writing provider status fails.
+                    try:
+                        record_results(layout, configured, selected, [], error='SUBSCRIPTION_ROLLBACK_UNCONFIRMED')
+                    except Exception:
+                        pass
+                    raise ManagementError('SUBSCRIPTION_ROLLBACK_UNCONFIRMED') from None
             record_results(layout, configured, selected, [], error='APPLY_FAILED_ROLLED_BACK' if published else 'FETCH_FAILED' if phase == 'fetching' else 'VALIDATION_FAILED')
             raise

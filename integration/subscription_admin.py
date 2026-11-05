@@ -323,8 +323,13 @@ class Admin:
             if missing: message += '；以下提供商尚无可用节点：' + '、'.join(missing)
             with self.lock: self.operation.update(status='unchanged' if unchanged else 'applied', message=message, retained_subscriptions=failed,
                                                   outcome='retained' if failed else 'unchanged' if unchanged else 'updated')
-        except Exception:
-            with self.lock: self.operation.update(status='failed', message='订阅更新未完成，已保存节点和原运行配置继续保留。请检查订阅是否已开启，再手动重试。')
+        except Exception as error:
+            code = str(error).split(':', 1)[0]
+            if code == 'SUBSCRIPTION_ROLLBACK_UNCONFIRMED':
+                with self.lock: self.operation.update(status='failed', error=code, recovery='check_required',
+                    message='订阅更新失败，已尝试还原原配置，运行恢复尚未确认；请检查系统服务和恢复提示。')
+            else:
+                with self.lock: self.operation.update(status='failed', message='订阅更新未完成，已保存节点和原运行配置继续保留。请检查订阅是否已开启，再手动重试。')
 
     def scheduled_tick(self):
         from manage_model import load_settings, settings_revision
@@ -361,7 +366,12 @@ class Admin:
         values = config_values()
         suburl = values.get('suburl', '')
         local = FILES / 'ppsub.json'
-        runtime = Path('/var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json')
+        runtime = layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json')
+        from manage_preview import source_details
+        details = source_details(layout, values)
+        # The editable source URL is retained for the existing source editor;
+        # preview explanations use only the safe kind/section fields.
+        details['url'] = suburl
         if native_ppsub_source(values) and (local.is_file() or runtime.is_file()):
             data = json.loads((local if local.is_file() else runtime).read_bytes())
             source, notice = 'ppsub', '已载入当前 PPsub 配置，编辑完成后可直接保存并应用。'
@@ -390,7 +400,7 @@ class Admin:
             return {'config': data, 'source': source, 'notice': notice, 'counts': counts,
                     'base_revision': revision(raw), 'write_allowed': True,
                     'edit_kind': 'clash_patch', 'snapshot_id': snapshot_id,
-                    'settings_revision': full_revision, 'source_details': {'url': suburl},
+                    'settings_revision': full_revision, 'source_details': details,
                     'synthetic_source': not bool(document.get('proxy-providers')),
                     'node_choices': [row['name'] for row in document.get('proxies', [])
                                      if isinstance(row, dict) and isinstance(row.get('name'), str)]}
@@ -399,7 +409,7 @@ class Admin:
                     'subs': [], 'node-groups': [], 'rules': []}
             source, notice = 'empty', '当前不是订阅或 YAML 模式，请先在上方切换配置来源。'
         return {'config': data, 'source': source, 'notice': notice, 'node_cache': self.node_cache(), 'base_revision': revision(raw), 'write_allowed': source != 'empty',
-                'settings_revision': full_revision, 'source_details': {'url': suburl}}
+                'settings_revision': full_revision, 'source_details': details}
 
     def status(self):
         raw = CONFIG.read_bytes()

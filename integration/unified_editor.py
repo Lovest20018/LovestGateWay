@@ -11,6 +11,7 @@ from manage_runtime import System
 from clash_ppsub import (merge_editor, feature_options, apply_features, fingerprint,
                          source_identity, logical_document)
 from clash_policy import build_policy
+from manage_preview import clash_summary, native_summary, complete_preview, source_details
 
 
 def validate_ppsub(value):
@@ -33,7 +34,7 @@ def validate_ppsub(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
 
 
-def candidate(admin, body):
+def candidate(admin, body, preview=None):
     import subscription_admin as source
     allowed = {'kind', 'edit_kind', 'value', 'base_revision', 'settings_revision', 'settings_patch',
                'operation_id', 'snapshot_id', 'dry_run'}
@@ -84,6 +85,16 @@ def candidate(admin, body):
                     if status.get('status') != 'loaded' or status.get('policy_revision') != protected_revision(policy, key):
                         raise ManagementError('POLICY_NOT_LOADED')
         else: effective = None
+        if preview is not None:
+            old_providers = {row.get('_clash_id'): row.get('name') for row in snapshot['baseline'].get('rules', [])
+                             if row.get('type') == 'rule-set' and row.get('_clash_id')}
+            provider_renames = {old_providers[row['_clash_id']]: row.get('name') for row in submitted.get('rules', [])
+                                if row.get('_clash_id') in old_providers}
+            preview['summary'] = clash_summary(snapshot['document'], merged,
+                feature_options(snapshot['baseline']), features, renames, provider_renames)
+            policy = json.loads(options['policy_update']) if options['policy_update'] is not None else (
+                json.loads(snapshot['policy']) if snapshot['policy'] else None)
+            preview['source'] = source_details(layout, settings['ini'], policy=policy)
     else:
         if not source.native_ppsub_source(source.config_values()):
             raise ManagementError('SOURCE_CHANGE_REQUIRES_SWITCH')
@@ -95,6 +106,12 @@ def candidate(admin, body):
             if isinstance(value, dict): value.pop('exported_at', None)
             return value
         if stable(old) != stable(submitted): options['ppsub_update'] = raw
+        if preview is not None:
+            runtime = layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json')
+            comparison = old if old is not None else json.loads(runtime.read_bytes()) if runtime.is_file() else None
+            preview['summary'] = native_summary(comparison, submitted)
+            preview['source'] = source_details(layout, settings['ini'], native=True)
+            preview['source']['materializes_native'] = old is None
         # Saving a remote PPsub materializes it as the local authoritative source.
         patch = deepcopy(patch)
         patch.setdefault('ini', {}).update(mode='suburl', suburl='ppsub@http://127.0.0.1/ppsub.json', fast_node='no')
@@ -128,12 +145,13 @@ def handle(admin, body):
         with admin.lock:
             if admin.operation and admin.operation.get('id') == body.get('operation_id'):
                 return dict(admin.operation)
-    layout, system, patch, options, verify = candidate(admin, body)
+    preview = {} if body.get('dry_run') else None
+    layout, system, patch, options, verify = candidate(admin, body, preview)
     if body.get('dry_run'):
         result = ConfigManager(layout, system).apply(patch, body['settings_revision'], dry_run=True, **options)
         result['editor_changed'] = any(raw is not None for raw in options.values())
         result['save_target'] = 'local_policy' if body['edit_kind'] == 'clash_patch' else 'ppsub'
-        return result
+        return complete_preview(result, layout, system, preview['summary'], preview['source'])
     with admin.lock:
         if admin.operation and admin.operation.get('id') == body['operation_id']:
             return dict(admin.operation)

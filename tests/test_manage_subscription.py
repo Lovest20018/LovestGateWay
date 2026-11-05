@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
-from manage_common import Layout
+from manage_common import Layout, ManagementError
 from manage_model import validate
 from manage_subscription import refresh_nodes, payload_content
 
@@ -124,6 +124,28 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
         self.assertEqual(json.loads((self.cache / self.filename).read_bytes())['saved_at'], 2)
         self.assertEqual(self.waits, 0)
         self.assertFalse(any('restart' in cmd for cmd in self.commands))
+
+    def test_failed_recovery_records_attempt_and_requires_runtime_check(self):
+        from manage_subscription_schedule import read_state, identity
+        def failed_wait(settings):
+            self.waits += 1
+            raise ManagementError('READINESS_TIMEOUT')
+        self.system.wait = failed_wait
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute):
+            with self.assertRaisesRegex(ManagementError, '^SUBSCRIPTION_ROLLBACK_UNCONFIRMED$'):
+                refresh_nodes(self.layout, self.system)
+        self.assertEqual((self.cache / self.filename).read_bytes(), self.original)
+        self.assertEqual(self.waits, 2)
+        entry = read_state(self.layout)[identity({'name':'Airport','url':'https://example.com/a'})]
+        self.assertEqual(entry['result'], 'failed')
+        self.assertEqual(entry['error_category'], 'SUBSCRIPTION_ROLLBACK_UNCONFIRMED')
+
+    def test_recovery_error_is_not_hidden_by_failure_to_record_result(self):
+        self.system.wait = lambda settings: (_ for _ in ()).throw(ManagementError('READINESS_TIMEOUT'))
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute), \
+                patch('manage_subscription_schedule.record_results', side_effect=OSError('status unavailable')):
+            with self.assertRaisesRegex(ManagementError, '^SUBSCRIPTION_ROLLBACK_UNCONFIRMED$'):
+                refresh_nodes(self.layout, self.system)
 
     def test_comparison_preserves_credentials_scalar_types_hosts_and_node_order(self):
         def content(text): return payload_content(json.dumps({'raw_yaml': text, 'saved_at': 1}).encode())

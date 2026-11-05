@@ -104,4 +104,93 @@ class UnifiedEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError,'CONFIG_CHANGED'):
             editor.handle(self.admin,{'kind':'export_yaml','snapshot_id':result['snapshot_id'],'base_revision':result['base_revision']})
 
+    def test_full_clash_noop_preview_uses_merged_document_not_editor_defaults(self):
+        result=self.admin.current_config()
+        config=deepcopy(self.submitted);config['subs']=result['config']['subs']
+        body={'kind':'editor','edit_kind':'clash_patch','value':json.dumps(config),
+              'base_revision':result['base_revision'],'settings_revision':result['settings_revision'],
+              'snapshot_id':result['snapshot_id'],'operation_id':'preview-noop-001','dry_run':True}
+        value=editor.handle(self.admin,body)
+        self.assertFalse(value['editor_changed'])
+        self.assertFalse(value['change_summary']['changed'])
+        self.assertEqual(value['application']['action'],'none')
+        self.assertEqual(value['source_details']['kind'],'remote_yaml')
+        self.assertFalse((self.files/'clash-policy.json').exists())
+
+    def test_full_clash_preview_explains_rename_and_real_policy_sections(self):
+        body=self.request();value=editor.handle(self.admin,{**body,'dry_run':True})
+        groups=value['change_summary']['node_groups']
+        self.assertEqual(groups['counts']['modified'],1)
+        self.assertEqual(groups['counts']['added'],0)
+        self.assertEqual(groups['renamed'],[{'before':'Main','after':'Renamed'}])
+        self.assertEqual(value['source_details']['local_policy']['sections'],['proxy-groups','rule-providers','rules'])
+        self.assertTrue(value['source_details']['local_policy']['applies'])
+        public=json.dumps(value)
+        for private in ('private-node','private-core','private.mrs','private-agent','example.exe'):
+            self.assertNotIn(private,public)
+
+    def test_full_clash_provider_url_and_rule_edit_have_counts_without_content(self):
+        result=self.admin.current_config();config=deepcopy(result['config'])
+        config['rules'][0]['url']='https://example.com/?token=changed-private-url'
+        config['rules'][-1]['fixrule'][0]='DOMAIN,https://private-rule.example/?token=raw-private,DIRECT'
+        body={'kind':'editor','edit_kind':'clash_patch','value':json.dumps(config),
+              'base_revision':result['base_revision'],'settings_revision':result['settings_revision'],
+              'snapshot_id':result['snapshot_id'],'operation_id':'preview-secret-001','dry_run':True}
+        value=editor.handle(self.admin,body)
+        self.assertEqual(value['change_summary']['rule_providers']['counts']['modified'],1)
+        self.assertEqual(value['change_summary']['rules']['counts']['added'],1)
+        self.assertNotIn('changed-private-url',json.dumps(value));self.assertNotIn('raw-private',json.dumps(value))
+
+    def test_native_preview_matches_old_ppsub_and_distinguishes_name_replacement(self):
+        self.ini.write_text(self.original.decode().replace('https://example.com/config','ppsub@http://127.0.0.1/ppsub.json'))
+        old={'exported_at':'old','subs':[{'name':'Original','url':'https://example.com/?token=old-private'}],
+             'node-groups':[{'name':'First'},{'name':'Second'}], 'rules':[{'fixrule':['MATCH,DIRECT']}]}
+        local=self.files/'ppsub.json';local.write_text(json.dumps(old));previous=local.read_bytes()
+        result=self.admin.current_config();config=deepcopy(old);config['exported_at']='new'
+        body={'kind':'editor','edit_kind':'ppsub','value':json.dumps(config),'base_revision':result['base_revision'],
+              'settings_revision':result['settings_revision'],'operation_id':'native-preview-001','dry_run':True}
+        noop=editor.handle(self.admin,body)
+        self.assertFalse(noop['change_summary']['changed']);self.assertFalse(noop['editor_changed'])
+        config['subs'][0]['name']='Replacement';config['subs'][0]['url']='https://example.com/?token=new-private'
+        config['node-groups'].reverse();body['value']=json.dumps(config)
+        value=editor.handle(self.admin,body)
+        self.assertEqual(value['change_summary']['subscriptions']['counts']['added'],1)
+        self.assertEqual(value['change_summary']['subscriptions']['counts']['removed'],1)
+        self.assertEqual(value['change_summary']['subscriptions']['renamed'],[])
+        self.assertTrue(value['change_summary']['node_groups']['order_changed'])
+        self.assertEqual(value['source_details']['kind'],'native_ppsub')
+        self.assertNotIn('new-private',json.dumps(value));self.assertEqual(local.read_bytes(),previous)
+
+    def test_full_clash_password_only_preview_changes_feature_without_policy_sections(self):
+        policy={'schema':1,'source_identity':source_identity(load_settings(self.layout)['ini']),
+                'sections':{},'reference_renames':{},'features':{
+                    'shadowsocks_in':{'enable':True,'cipher':'aes-128-gcm','password':'original-feature-password'}}}
+        path=self.files/'clash-policy.json';path.write_text(json.dumps(policy));old=path.read_bytes()
+        with patch.object(source,'POLICY',path):
+            result=self.admin.current_config();config=deepcopy(result['config'])
+            config['shadowsocks_in']['password']='replacement-feature-password'
+            body={'kind':'editor','edit_kind':'clash_patch','value':json.dumps(config),
+                  'base_revision':result['base_revision'],'settings_revision':result['settings_revision'],
+                  'snapshot_id':result['snapshot_id'],'operation_id':'preview-password-001','dry_run':True}
+            value=editor.handle(self.admin,body)
+        self.assertTrue(value['editor_changed']);self.assertEqual(value['action'],'restart')
+        self.assertEqual(value['change_summary']['features']['changed_keys'],['shadowsocks_in'])
+        self.assertEqual(value['source_details']['local_policy']['sections'],[])
+        for section in ('subscriptions','node_groups','rule_providers','rules'):
+            self.assertFalse(value['change_summary'][section]['changed'])
+        self.assertNotIn('original-feature-password',json.dumps(value))
+        self.assertNotIn('replacement-feature-password',json.dumps(value));self.assertEqual(path.read_bytes(),old)
+
+    def test_refresh_rollback_unconfirmed_requires_recovery_without_claiming_restore(self):
+        body={'base_revision':source.revision(self.ini.read_bytes()),'settings_revision':settings_revision(self.layout)}
+        self.admin.operation={'id':'refresh-recovery-001','status':'applying','kind':'refresh_nodes'}
+        with patch('manage_subscription.refresh_nodes',side_effect=ManagementError('SUBSCRIPTION_ROLLBACK_UNCONFIRMED')):
+            self.admin.refresh_nodes_worker(body)
+        value=dict(self.admin.operation)
+        self.assertEqual(value['status'],'failed');self.assertEqual(value['result'],'failed')
+        self.assertEqual(value['phase'],'complete');self.assertEqual(value['recovery'],'check_required')
+        self.assertEqual(value['error'],'SUBSCRIPTION_ROLLBACK_UNCONFIRMED')
+        self.assertIn('已尝试还原',value['message']);self.assertIn('尚未确认',value['message'])
+        self.assertNotIn('继续保留',value['message'])
+
 if __name__=='__main__':unittest.main()

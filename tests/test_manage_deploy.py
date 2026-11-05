@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import time
 from types import SimpleNamespace
+from unittest.mock import Mock, patch, PropertyMock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from manage_common import Layout, ManagementError, operation_lock, atomic_write
@@ -92,6 +93,41 @@ class DeployTests(unittest.TestCase):
         self.assertEqual(restored[-1]['paopaogw-settings'], {'active': True, 'enabled': False})
         self.assertEqual(restored[-1]['paopaogw-observe'], system.states['paopaogw-observe'])
         self.assertEqual(restored[-1]['paopaogw-maintenance.timer'], system.states['paopaogw-maintenance.timer'])
+
+    def test_interrupted_live_recovery_requires_readiness_and_remains_retryable(self):
+        from manage_config import JOURNAL
+        from manage_common import write_json
+        layout = Layout(self.base / 'root'); system = FakeSystem()
+        system.stop_all = Mock(); system.verify_services = Mock()
+        system.wait = Mock(side_effect=ManagementError('READINESS_TIMEOUT'))
+        system.wait_api = Mock()
+        write_json(layout, JOURNAL, {'kind':'deploy','phase':'installing','backup':None,'services':system.states})
+        deployer = Deployer(layout, system)
+        with patch.object(Layout, 'live', new_callable=PropertyMock, return_value=True), patch.object(Layout, 'require_root'):
+            with self.assertRaisesRegex(ManagementError, '^ROLLBACK_UNCONFIRMED$'):
+                deployer.recover()
+            self.assertEqual(json.loads(layout.path(JOURNAL).read_bytes())['phase'], 'rollback_unconfirmed')
+            system.wait.side_effect = None
+            self.assertEqual(deployer.recover()['status'], 'rolled_back')
+        self.assertEqual(json.loads(layout.path(JOURNAL).read_bytes())['phase'], 'rolled_back')
+        self.assertEqual(system.wait.call_count, 2)
+        system.wait_api.assert_not_called()
+
+    def test_recovery_preserves_inactive_core_and_verifies_enabled_api(self):
+        from manage_config import JOURNAL
+        from manage_common import write_json
+        layout = Layout(self.base / 'root'); system = FakeSystem()
+        system.states = {'paopaogw':{'active':False,'enabled':False}, 'paopaogw-api':{'active':True,'enabled':True}}
+        system.stop_all = Mock(); system.verify_services = Mock(); system.wait = Mock()
+        system.wait_api = Mock(side_effect=ManagementError('API_READINESS_TIMEOUT'))
+        write_json(layout, 'etc/paopaogw/api.json', {'enabled':True})
+        write_json(layout, JOURNAL, {'kind':'deploy','phase':'installing','backup':None,'services':system.states})
+        with patch.object(Layout, 'live', new_callable=PropertyMock, return_value=True), patch.object(Layout, 'require_root'):
+            with self.assertRaisesRegex(ManagementError, '^ROLLBACK_UNCONFIRMED$'):
+                Deployer(layout, system).recover()
+        system.verify_services.assert_called_once_with(system.states)
+        system.wait.assert_not_called(); system.wait_api.assert_called_once()
+        self.assertEqual(json.loads(layout.path(JOURNAL).read_bytes())['phase'], 'rollback_unconfirmed')
 
     @unittest.skipUnless(os.name == 'posix', 'Debian installer FD inheritance requires POSIX')
     def test_orphan_installer_blocks_recovery_until_its_last_write(self):
