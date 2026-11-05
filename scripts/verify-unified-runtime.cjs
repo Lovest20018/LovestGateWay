@@ -71,13 +71,14 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     for(const key of ['proxies','rules','connections','traffic','distribution','logs','region']){
       await page.locator('#shell-nav [data-route="'+key+'"]').click();
       await page.waitForURL('**/#/'+key);
-      await runtime.locator('main h1').first().waitFor();
+      const current=key==='proxies'?page.locator('#proxies-page'):runtime;
+      await current.locator('h1').first().waitFor();
       await page.waitForTimeout(80);
-      pages.push({key,heading:await runtime.locator('main h1').first().innerText()});
-      assert.equal(await runtime.locator('aside').first().isVisible(),false);
+      pages.push({key,heading:await current.locator('h1').first().innerText(),source:key==='proxies'});
+      if(key!=='proxies')assert.equal(await runtime.locator('aside').first().isVisible(),false);
       assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document');
     }
-    assert.equal(new Set(pages.map(row=>row.heading)).size,7,'each compatibility navigation must render its own runtime component');
+    assert.equal(new Set(pages.map(row=>row.heading)).size,7,'each navigation must render its own source or compatibility component');
     assert.equal(await page.locator('iframe').count(),0);
     await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('#overview-page').waitFor();
     await page.screenshot({path:path.join(root,'dist/unified-overview-desktop.png')});
@@ -98,7 +99,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     page.once('dialog',dialog=>dialog.dismiss());await page.goBack();await page.waitForURL('**/#/settings');await page.waitForTimeout(150);
     assert.equal(await limit.inputValue(),'9010','rejected Back must retain the draft');
     page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="proxies"]').click();
-    await runtime.getByText('Fixture Main',{exact:true}).first().waitFor();
+    await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
     // Changing the accepted secret forces the mounted upstream form to reauth.
     const password='ChangedFixturePassword8',newSecret=require('node:crypto').createHash('sha256').update(password).digest('hex');
@@ -111,11 +112,11 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.locator('#reauth-panel').waitFor({state:'detached'});
     await runtime.locator('main').waitFor();
     await page.locator('#shell-nav [data-route="proxies"]').click();
-    await runtime.getByText('Fixture Main',{exact:true}).first().waitFor();
-    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+newSecret),'upstream must use the new secret after reauth');
+    await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
+    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+newSecret),'the source proxy page must use the new secret after runtime reauth');
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','reauthentication must not reload the document');
     await page.goBack();await page.waitForURL('**/#/traffic');await runtime.locator('main h1').filter({hasText:'流量'}).waitFor();
-    await page.goForward();await page.waitForURL('**/#/proxies');await runtime.getByText('Fixture Main',{exact:true}).first().waitFor();
+    await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','browser Back and Forward must not reload the document');
     await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route="overview"]').click();

@@ -73,11 +73,11 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     await page.getByRole('group',{name:'外观',exact:true}).getByRole('button',{name:'暗色',exact:true}).click();
     await capture('overview-source-dark.png');
     await page.locator('#shell-nav [data-route=proxies]').click();
-    await page.locator('#runtime-panel').getByRole('heading',{name:'代理',exact:true}).waitFor();
+    await page.locator('#proxies-page').getByRole('heading',{name:'代理',exact:true}).waitFor();
     const stoppedAt=dynamic;await page.waitForTimeout(1200);assert.equal(dynamic,stoppedAt,'leaving overview must stop source polling');
     await page.goBack();await page.waitForURL('**/#/overview');await page.locator('#overview-page').waitFor();
     assert.equal(await page.locator('#runtime-panel').isVisible(),false);assert.equal(await page.evaluate(()=>window.documentIdentity),'overview-source');
-    await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#runtime-panel').getByRole('heading',{name:'代理',exact:true}).waitFor();
+    await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#proxies-page').getByRole('heading',{name:'代理',exact:true}).waitFor();
     await page.locator('#shell-nav [data-route=overview]').click();
     for(const width of [390,320]){
       await page.setViewportSize({width,height:900});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
