@@ -155,6 +155,12 @@ def main():
             time.sleep(.3)
         assert result['status']=='succeeded', result
         value = request('/sniffbox/settings/config')
+        # Full running-state verification is asynchronous and follows the new
+        # saved/runtime identity; the previous check must not certify this apply.
+        for _ in range(100):
+            if value['management']['state'] == 'loaded': break
+            time.sleep(.2)
+            value = request('/sniffbox/settings/status')
         assert value['management']['state']=='loaded', value['management']
         assert any(r['id']==job_id for r in value['management']['recent'])
         assert any(r['source']=='subscription' for r in value['management']['recent'])
