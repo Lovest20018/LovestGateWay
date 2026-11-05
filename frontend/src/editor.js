@@ -1,16 +1,35 @@
 import {clone,documentModel,exported,move,groupMode,setGroupMode,ruleType,setRuleType} from './model.js';
 
 export function mountEditor(host) {
-  let doc=documentModel(),destroy,serial=0;
+  let doc=documentModel(),destroy,serial=0,editRevision=0,importSequence=0,stopped=false;
   const el=(tag,attrs={},children=[])=>{const node=document.createElement(tag);for(const [key,value]of Object.entries(attrs)){if(key==='text')node.textContent=value;else if(key.startsWith('on'))node.addEventListener(key.slice(2),value);else if(key==='class')node.className=value;else node.setAttribute(key,value);}node.append(...children);return node;};
   const button=(text,onclick)=>el('button',{type:'button',class:'btn',text,onclick});
   const root=el('section',{class:'source-editor','aria-label':'订阅与策略编辑器'}),header=el('header',{class:'phead'}),body=el('div',{class:'editor-body'});
   const menu=(text,action)=>el('span',{class:'menuwrap'},[button(text,action)]);
   const download=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(doc,null,2)],{type:'application/json'}));const a=el('a',{href:url,download:'ppsub.json'});a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   const upload=el('input',{type:'file',accept:'.json,application/json',hidden:''});
-  upload.onchange=async()=>{try{const file=upload.files[0];if(!file)return;if(window.ppgwPpsub.hasChanges()&&!confirm('导入将替换未保存的编辑内容，继续吗？'))return;const value=JSON.parse(await file.text());if(!value||typeof value!=='object'||Array.isArray(value))throw Error('请选择 PPsub JSON 配置');doc=documentModel(value);render();root.dispatchEvent(new Event('input',{bubbles:true}));}catch(error){alert('导入失败：'+error.message);}finally{upload.value='';}};
+  const importStatus=el('p',{'data-import-status':'',role:'status','aria-live':'polite',hidden:''});
+  function importNotice(text){importStatus.textContent=text;importStatus.hidden=!text;}
+  // File.text cannot be aborted. Reject stale reads after any new edit, action,
+  // reload, second import, or unmount rather than replacing a newer document.
+  const edited=event=>{if(event.target!==upload)++editRevision;};
+  for(const type of ['input','change','click'])root.addEventListener(type,edited,true);
+  upload.onchange=async()=>{
+    const sequence=++importSequence,revision=editRevision,baseline=JSON.stringify(doc),file=upload.files[0];
+    try{
+      if(!file||stopped)return;
+      if(window.ppgwPpsub.hasChanges()&&!confirm('导入将替换未保存的编辑内容，继续吗？'))return;
+      importNotice('正在读取导入文件；期间的新编辑会保留。');
+      const raw=await file.text();
+      if(stopped||sequence!==importSequence)return;
+      if(revision!==editRevision||baseline!==JSON.stringify(doc)){importNotice('编辑内容或操作已变化，已取消迟到的导入。请重新选择文件。');return;}
+      const value=JSON.parse(raw);if(!value||typeof value!=='object'||Array.isArray(value))throw Error('请选择 PPsub JSON 配置');
+      doc=documentModel(value);render();importNotice('已导入编辑器，保存并应用后生效。');root.dispatchEvent(new Event('input',{bubbles:true}));
+    }catch(error){if(!stopped&&sequence===importSequence)importNotice('导入失败：'+error.message);}
+    finally{if(!stopped&&sequence===importSequence)upload.value='';}
+  };
   header.append(menu('导出编辑内容',download),menu('导入 PPsub',()=>upload.click()),button('重新读取',()=>window.ppgwPpsub.loadCurrent(importConfig)),upload);
-  root.append(header,body);host.append(root);
+  root.append(header,importStatus,body);host.append(root);
   function field(row,key,label,type='text',options={}) {
     const id='editor-field-'+(++serial),wrap=el('label',{class:'editor-field',for:id}),input=el(type==='lines'||type==='textarea'?'textarea':type==='select'?'select':'input',{id,'data-field':key});
     wrap.append(el('span',{text:label}),input);input.className='input';
@@ -62,6 +81,7 @@ export function mountEditor(host) {
     for(const [key,title,fields]of specs){const value=doc[key]||{};const group=el('fieldset',{},[el('legend',{text:title})]);const enable=field(value,'enable','启用','checkbox',{change:()=>{doc[key]=value;render();}});group.append(enable);if(value.enable)for(const [name,label,type,options]of fields)group.append(field(value,name,label,type,options));area.append(group);}return area;
   }
   function render(){
+    ++editRevision;
     const optionsHost=root.querySelector('.ppgw-global-settings');
     const full=window.ppgwPpsub.clashEditing(),list=el('datalist',{id:'node-choices'}),names=[...new Set(['DIRECT','REJECT',...doc['node-groups'].map(r=>r.name),...window.ppgwPpsub.nodeChoices().map(r=>r.name)])];for(const name of names)list.append(el('option',{value:name}));
     body.replaceChildren(list,features(),section('subs','订阅提供商',()=>({name:'',url:''}),subscription),section('node-groups','节点组',()=>({name:'',subs:['all'],include:[]}),group),section('rules','规则',()=>({priority:(doc.rules.length+1)*10,fixrule:[]}),rules));
@@ -70,5 +90,5 @@ export function mountEditor(host) {
   }
   function importConfig(value){doc=documentModel(value);render();}
   render();destroy=window.ppgwPpsub.mount({header,exportConfig:()=>exported(doc),importConfig,providers:()=>doc.subs});
-  return ()=>{destroy();root.remove();};
+  return ()=>{stopped=true;++importSequence;destroy();root.remove();};
 }
