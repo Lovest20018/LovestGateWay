@@ -4,7 +4,7 @@ import re
 import threading
 import time
 
-from manage_common import ManagementError, digest, operation_lock, read_bytes, require_idle, write_json
+from manage_common import ManagementError, digest, read_bytes, require_idle, write_json
 from manage_model import load_settings, settings_revision
 
 CHECK = 'var/lib/paopaogw/admin/settings-check.json'
@@ -45,36 +45,40 @@ class Acceptance:
 
     def check(self):
         if not self.layout.live: return {'result': 'staged', 'checked_at': time.time(), 'checks': []}
-        with operation_lock(self.layout):
+        # Checks are optimistic readers. Holding the writer lock while probing
+        # services can reject a user's apply; all successful evidence is instead
+        # bound to the saved/runtime identities on both sides of the read.
+        require_idle(self.layout)
+        revision = settings_revision(self.layout)
+        value = {'revision': revision, 'checked_at': time.time(), 'result': 'unconfirmed', 'checks': []}
+        try:
+            before = self.system.runtime()
+            actual = before.get('data', before)
+            value.update(boot_id=actual.get('boot_id'), config_revision=actual.get('config_revision'),
+                         runtime_scope=runtime_identity(before)[2])
+            if (not isinstance(actual.get('boot_id'), str) or not re.fullmatch(r'[0-9a-f-]{36}', actual['boot_id']) or
+                    not isinstance(actual.get('config_revision'), str) or not re.fullmatch(r'[0-9a-f]{64}', actual['config_revision']) or
+                    actual.get('configuration_state') != 'loaded' or actual.get('last_load_result') != 'success'):
+                raise ManagementError('CORE_NOT_RUNNING')
+            value['checks'] = self.system.verify_current(load_settings(self.layout))
+            after = self.system.runtime()
+            after = after.get('data', after)
             require_idle(self.layout)
-            revision = settings_revision(self.layout)
-            value = {'revision': revision, 'checked_at': time.time(), 'result': 'unconfirmed', 'checks': []}
-            try:
-                before = self.system.runtime()
-                actual = before.get('data', before)
-                value.update(boot_id=actual.get('boot_id'), config_revision=actual.get('config_revision'),
-                             runtime_scope=runtime_identity(before)[2])
-                if (not isinstance(actual.get('boot_id'), str) or not re.fullmatch(r'[0-9a-f-]{36}', actual['boot_id']) or
-                        not isinstance(actual.get('config_revision'), str) or not re.fullmatch(r'[0-9a-f]{64}', actual['config_revision']) or
-                        actual.get('configuration_state') != 'loaded' or actual.get('last_load_result') != 'success'):
-                    raise ManagementError('CORE_NOT_RUNNING')
-                value['checks'] = self.system.verify_current(load_settings(self.layout))
-                after = self.system.runtime()
-                after = after.get('data', after)
-                if (settings_revision(self.layout) != revision or
-                        runtime_identity(before) != runtime_identity(after)):
-                    raise ManagementError('STATE_CHANGED_DURING_CHECK')
-                value['result'] = 'verified'
-                from manage_operations import remember_loaded
-                remember_loaded(self.layout, revision, after, checked_at=value['checked_at'])
-            except Exception as error:
-                code = str(error).split(':', 1)[0]
-                allowed = {'CORE_NOT_RUNNING', 'RUNNING_CONFIG_MISMATCH', 'SERVICE_ENV_MISMATCH',
-                           'SERVICE_STATE_MISMATCH', 'SOURCE_NOT_CONFIRMED', 'POLICY_NOT_CONFIRMED',
-                           'API_READINESS_TIMEOUT', 'STATE_CHANGED_DURING_CHECK'}
-                value['error'] = code if isinstance(error, ManagementError) and code in allowed else 'STATE_SAMPLE_UNAVAILABLE'
-            write_json(self.layout, CHECK, value)
-            return value
+            if (settings_revision(self.layout) != revision or
+                    runtime_identity(before) != runtime_identity(after)):
+                raise ManagementError('STATE_CHANGED_DURING_CHECK')
+            value['result'] = 'verified'
+            from manage_operations import remember_loaded
+            remember_loaded(self.layout, revision, after, checked_at=value['checked_at'])
+        except Exception as error:
+            if isinstance(error, ManagementError) and str(error) == 'RECOVERY_REQUIRED': raise
+            code = str(error).split(':', 1)[0]
+            allowed = {'CORE_NOT_RUNNING', 'RUNNING_CONFIG_MISMATCH', 'SERVICE_ENV_MISMATCH',
+                       'SERVICE_STATE_MISMATCH', 'SOURCE_NOT_CONFIRMED', 'POLICY_NOT_CONFIRMED',
+                       'API_READINESS_TIMEOUT', 'STATE_CHANGED_DURING_CHECK'}
+            value['error'] = code if isinstance(error, ManagementError) and code in allowed else 'STATE_SAMPLE_UNAVAILABLE'
+        write_json(self.layout, CHECK, value)
+        return value
 
 
 def latest_check(layout):
