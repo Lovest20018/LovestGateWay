@@ -70,6 +70,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);
     await ready();
     const health=page.locator('.monitor [data-field="enable"]').first();
+    await page.locator('.editor-schedule > summary').click();
     const interval=page.getByLabel('订阅更新间隔',{exact:true});
     const navigation=page.locator('#shell-nav');
     const settings=()=>navigation.locator('a[href="#/settings"]').click();

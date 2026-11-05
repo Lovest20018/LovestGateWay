@@ -31,7 +31,7 @@ export function mountEditor(host) {
   header.append(menu('导出编辑内容',download),menu('导入 PPsub',()=>upload.click()),button('重新读取',()=>window.ppgwPpsub.loadCurrent(importConfig)),upload);
   root.append(header,importStatus,body);host.append(root);
   function field(row,key,label,type='text',options={}) {
-    const id='editor-field-'+(++serial),wrap=el('label',{class:'editor-field',for:id}),input=el(type==='lines'||type==='textarea'?'textarea':type==='select'?'select':'input',{id,'data-field':key});
+    const id='editor-field-'+(++serial),wrap=el('label',{class:'editor-field'+(type==='checkbox'?' editor-check':''),for:id}),input=el(type==='lines'||type==='textarea'?'textarea':type==='select'?'select':'input',{id,'data-field':key});
     wrap.append(el('span',{text:label}),input);input.className='input';
     if(type==='select') for(const [value,title]of options.choices)input.append(el('option',{value,text:title}));
     else if(type!=='textarea'&&type!=='lines')input.type=type;
@@ -47,24 +47,43 @@ export function mountEditor(host) {
     details.addEventListener('toggle',()=>{if(details.open)area.value=JSON.stringify(row,null,2);});return details;
   }
   function section(key,title,create,fields) {
-    const rows=doc[key],full=window.ppgwPpsub.clashEditing(),area=el('section',{class:key==='node-groups'?'groups':key==='subs'?'subs':'rules'}),top=el('div',{class:'editor-section-heading'},[el('h3',{text:title})]);
-    const add=button('添加'+title,()=>{rows.push(create());if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')add.hidden=true;top.append(add);area.append(top);
+    const rows=doc[key],full=window.ppgwPpsub.clashEditing(),sectionClass=key==='node-groups'?'groups':key==='subs'?'subs':'rules',area=el('section',{class:sectionClass+' editor-section glass'}),top=el('div',{class:'editor-section-heading'},[el('h3',{text:title})]);
+    const add=button('＋ 添加'+title,()=>{rows.push(create());if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();const item=root.querySelector('.'+sectionClass+' > .item:last-of-type');item?.querySelector('input')?.focus({preventScroll:true});item?.scrollIntoView({block:'nearest',behavior:'smooth'});});add.setAttribute('aria-label','添加'+title);add.classList.add('editor-add');if(full&&key==='subs')add.hidden=true;area.append(top);
     rows.forEach((row,index)=>{
-      const item=el('article',{class:'item glass'}),tools=el('div',{class:'editor-item-tools'},[el('strong',{text:(index+1)+'. '+(row.name||row.remark||title)})]);
+      const item=el('article',{class:'item'}),tools=el('div',{class:'editor-item-tools'},[el('strong',{text:(index+1)+'. '+(row.name||row.remark||title)})]);
       for(const [label,offset]of [['上移',-1],['下移',1]]){const b=button(label,()=>{move(rows,index,offset);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});b.disabled=index+offset<0||index+offset>=rows.length;if(full&&key==='subs')b.hidden=true;tools.append(b);}
       const remove=button('删除',()=>{if(!confirm('删除此'+title+'？'))return;rows.splice(index,1);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')remove.hidden=true;tools.append(remove);
       const copy=button('复制',()=>{const duplicate=clone(row);delete duplicate._clash_id;if(duplicate.name)duplicate.name+=' 副本';rows.splice(index+1,0,duplicate);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')copy.hidden=true;tools.append(copy);
       item.append(tools,...fields(row,full));if(!full)item.append(advanced(row));area.append(item);
-    });return area;
+    });area.append(el('div',{class:'editor-section-footer'},[add]));return area;
   }
   function subscription(row,full){return [el('div',{class:'row editor-grid'},[field(row,'name','名称','text',{readOnly:full}),field(row,'url','订阅链接','url')]),...(!full?[field(row,'isforced','强制覆盖节点名称','checkbox')]:[])];}
+  function chips(row,key,label,{choices=[],placeholder='添加',display=value=>value}={}) {
+    const wrap=el('div',{class:'editor-token-row',role:'group','aria-label':label}),tokens=el('div',{class:'editor-tokens'}),entry=el('div',{class:'editor-token-entry',hidden:''}),input=el('input',{class:'input','aria-label':'新增'+label,'data-field':key,placeholder}),add=button('＋ '+placeholder,()=>{entry.hidden=false;add.hidden=true;input.focus();});
+    const values=()=>Array.isArray(row[key])?row[key]:[];
+    const changed=()=>root.dispatchEvent(new Event('input',{bubbles:true}));
+    function paint(){tokens.replaceChildren(...values().map((value,index)=>el('span',{class:'editor-token'},[el('span',{text:display(value)}),el('button',{type:'button','aria-label':'移除'+label+'：'+value,text:'×',onclick:()=>{row[key]=values().filter((_,i)=>i!==index);paint();changed();}})])));}
+    const commit=()=>{const additions=input.value.split(/\r?\n/).map(value=>value.trim()).filter(Boolean);if(additions.length){row[key]=[...values()];for(const value of additions)if(!row[key].includes(value))row[key].push(value);paint();changed();}input.value='';entry.hidden=true;add.hidden=false;};
+    input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();commit();}if(event.key==='Escape'){event.preventDefault();event.stopPropagation();input.value='';entry.hidden=true;add.hidden=false;add.focus();}};
+    // Keep a typed token in the document when the user moves to another field.
+    input.onchange=commit;
+    if(choices.length){const id='editor-choices-'+(++serial),list=el('datalist',{id});for(const name of choices)list.append(el('option',{value:name}));input.setAttribute('list',id);entry.append(list);}
+    entry.prepend(input);entry.append(button('添加',commit));paint();wrap.append(el('span',{class:'editor-inline-label',text:label}),tokens,add,entry);return wrap;
+  }
   function group(row){
-    const mode=el('select',{'aria-label':'节点组模式',class:'input'});for(const [value,text]of [['manual','手动选择'],['speedtest','自动测速'],['smart','智能选择'],['fallback','故障转移']])mode.append(el('option',{value,text}));mode.value=groupMode(row);mode.onchange=()=>{setGroupMode(row,mode.value);render();};
-    const grid=el('div',{class:'editor-grid'},[field(row,'name','节点组名称'),el('label',{class:'editor-field'},[el('span',{text:'节点组模式'}),mode]),field(row,'subs','订阅提供商（每行一个，all 表示全部）','lines'),field(row,'include','固定节点 / 组（每行一个）','lines',{list:'node-choices'}),field(row,'keywords','包含关键词（每行一个，exp# 为正则）','lines'),field(row,'exclude_keywords','排除关键词（每行一个）','lines'),field(row,'use_pre_proxy','启用前置代理','checkbox'),field(row,'pre_proxy_group','前置代理组','text',{list:'node-choices'})]);
-    const choices=el('select',{'aria-label':'可选节点或代理组',class:'input'});for(const name of [...new Set(['DIRECT','REJECT',...doc['node-groups'].map(r=>r.name),...window.ppgwPpsub.nodeChoices().map(r=>r.name)])].filter(name=>name&&name!==row.name))choices.append(el('option',{value:name,text:name}));grid.append(el('div',{class:'editor-field'},[el('span',{text:'添加固定节点或代理组'}),choices,button('加入固定列表',()=>{row.include=[...new Set([...(row.include||[]),choices.value])];render();})]));
-    if(['smart','speedtest'].includes(groupMode(row)))grid.append(field(row,'speedtest_url','测速地址','url'));
-    if(groupMode(row)==='speedtest')grid.append(field(row,'interval','测速间隔（秒）','number',{min:1,default:600}));
-    if(row.failover)grid.append(field(row,'monitor_url','检测地址','url'),field(row,'expected_status','期望 HTTP 状态码'),field(row,'retries','重试次数','number',{min:1,default:3}));return[grid];
+    const modes=el('div',{class:'editor-modes',role:'radiogroup','aria-label':'节点组模式'}),modeName='editor-mode-'+(++serial);
+    for(const[value,title]of [['manual','手动选择'],['speedtest','自动测速'],['smart','智能测速'],['fallback','故障转移']]){const input=el('input',{type:'radio',name:modeName,value});input.checked=groupMode(row)===value;input.onchange=()=>{if(input.checked){setGroupMode(row,value);render();}};modes.append(el('label',{},[input,el('span',{text:title})]));}
+    const names=[...new Set(['DIRECT','REJECT',...doc['node-groups'].map(r=>r.name),...window.ppgwPpsub.nodeChoices().map(r=>r.name)])].filter(name=>name&&name!==row.name);
+    const sources=chips(row,'subs','订阅来源',{choices:['all',...doc.subs.map(value=>value.name).filter(Boolean)],placeholder:'选择订阅来源',display:value=>value==='all'?'全部订阅':value});
+    const fixed=chips(row,'include','固定节点 / 组',{choices:names,placeholder:'添加节点或组'});
+    const grid=el('div',{class:'editor-group-body'},[el('div',{class:'editor-group-basics'},[field(row,'name','节点组名称'),modes]),chips(row,'keywords','包含关键词',{placeholder:'添加关键词'}),chips(row,'exclude_keywords','排除关键词',{placeholder:'添加排除关键词'}),sources,fixed]);
+    const extra=el('div',{class:'editor-group-extra'});
+    if(['smart','speedtest'].includes(groupMode(row)))extra.append(field(row,'speedtest_url','测速地址','url'));
+    if(groupMode(row)==='speedtest')extra.append(field(row,'interval','测速间隔（秒）','number',{min:1,default:600}));
+    if(row.failover)extra.append(field(row,'monitor_url','检测地址','url'),field(row,'expected_status','期望 HTTP 状态码'),field(row,'retries','重试次数','number',{min:1,default:3}));
+    grid.append(field(row,'use_pre_proxy','使用前置代理','checkbox',{change:()=>render()}));
+    if(row.use_pre_proxy)extra.append(field(row,'pre_proxy_group','前置代理组','text',{list:'node-choices'}));
+    if(extra.childElementCount)grid.append(extra);return[grid];
   }
   function rules(row,full){
     const choices=full?[['manual','完整规则'],['rule-set','规则集提供商']]:[['manual','手动规则'],['url','URL 下载'],['rule-set','规则集提供商']];
@@ -78,11 +97,11 @@ export function mountEditor(host) {
   function features(){
     const area=el('section',{class:'monitor glass'},[el('h3',{text:'全局选项'})]);
     const specs=[['global_monitor','全局连通监测',[['url','检测地址','url'],['retries','重试次数','number'],['expected_status','期望 HTTP 状态','text']]],['shadowsocks_in','Shadowsocks 入站',[['password','入站密码','password'],['cipher','加密方式','select',{choices:[['aes-128-gcm','aes-128-gcm'],['2022-blake3-aes-128-gcm','2022-blake3-aes-128-gcm']]}]]],['restart_cron','定时重启',[['hour','每天重启时间（0–23 时）','number',{min:0,max:23}]]]];
-    for(const [key,title,fields]of specs){const value=doc[key]||{};const group=el('fieldset',{},[el('legend',{text:title})]);const enable=field(value,'enable','启用','checkbox',{change:()=>{doc[key]=value;render();}});group.append(enable);if(value.enable)for(const [name,label,type,options]of fields)group.append(field(value,name,label,type,options));area.append(group);}return area;
+    for(const [key,title,fields]of specs){const value=doc[key]||{};const group=el('fieldset',{'aria-label':title});const enable=field(value,'enable',title,'checkbox',{change:()=>{doc[key]=value;render();}});group.append(enable);if(value.enable){const inputs=el('div',{class:'editor-feature-fields'});for(const [name,label,type,options]of fields)inputs.append(field(value,name,label,type,options));group.append(inputs);}area.append(group);}return area;
   }
   function render(){
     ++editRevision;
-    const optionsHost=root.querySelector('.ppgw-global-settings');
+    const optionsHost=root.querySelector('.editor-schedule')||root.querySelector('.ppgw-global-settings');
     const full=window.ppgwPpsub.clashEditing(),list=el('datalist',{id:'node-choices'}),names=[...new Set(['DIRECT','REJECT',...doc['node-groups'].map(r=>r.name),...window.ppgwPpsub.nodeChoices().map(r=>r.name)])];for(const name of names)list.append(el('option',{value:name}));
     body.replaceChildren(list,features(),section('subs','订阅提供商',()=>({name:'',url:''}),subscription),section('node-groups','节点组',()=>({name:'',subs:['all'],include:[]}),group),section('rules','规则',()=>({priority:(doc.rules.length+1)*10,fixrule:[]}),rules));
     if(optionsHost)body.querySelector('.monitor').append(optionsHost);

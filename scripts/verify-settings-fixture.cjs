@@ -210,15 +210,15 @@ async function main() {
     assert.doesNotMatch(await page.locator('.ppgw-gateway').innerText(), /HomeNet|HNM/i);
     for (const title of ['网络与出站', '高级选项', '访问与统计']) await page.getByRole('tab', {name: title, exact: true}).click();
     await page.evaluate(() => scrollTo(0, 0));
-    const appearance = navigation.getByLabel('外观', {exact:true});
+    const appearance = navigation.getByRole('group', {name:'外观',exact:true});
     const themeSettled = color => page.waitForFunction(expected =>
       getComputedStyle(document.querySelector('.toggle-field input:checked')).backgroundColor === expected, color);
-    await appearance.selectOption('dark');
+    await appearance.getByRole('button',{name:'暗色',exact:true}).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     assert.equal(await page.locator('.ppgw-gateway').evaluate(node => getComputedStyle(node).color === getComputedStyle(document.body).color), true);
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-dark.png'), fullPage: true});
-    await appearance.selectOption('light');
+    await appearance.getByRole('button',{name:'亮色',exact:true}).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-light.png'), fullPage: true});

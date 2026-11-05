@@ -137,7 +137,20 @@ async function exercise(browser, kind) {
     await page.waitForFunction(()=>!document.querySelector('[data-ppsub-apply]')?.disabled&&document.querySelector('.source-editor .groups'));
     await page.setViewportSize({width:1863,height:878});await layoutCheck();
     await page.screenshot({path:path.join(root,'dist/subscription-unified-'+kind+'-desktop.png'),animations:'disabled'});
-    await page.setViewportSize({width:1440,height:960});
+    const groupCount=await page.locator('.groups > .item').count();
+    await page.getByRole('button',{name:'添加节点组',exact:true}).click();
+    const added=page.locator('.groups > .item').last();await added.locator('[data-field=name]').fill('新节点组');
+    const compact=await added.evaluate(item=>({height:item.getBoundingClientRect().height,groupTextareas:item.querySelectorAll('.editor-group-body textarea').length,width:item.getBoundingClientRect().width}));
+    assert.ok(compact.height<=340,'a new desktop group must remain compact: '+JSON.stringify(compact));assert.equal(compact.groupTextareas,0);
+    await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-desktop.png')});
+    const appearance=page.getByRole('group',{name:'外观',exact:true});await appearance.getByRole('button',{name:'暗色',exact:true}).click();await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-dark.png')});await appearance.screenshot({path:path.join(root,'dist/appearance-segments-dark.png')});await appearance.getByRole('button',{name:'亮色',exact:true}).click();await appearance.screenshot({path:path.join(root,'dist/appearance-segments-light.png')});
+    await page.setViewportSize({width:390,height:844});
+    await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('.source-editor *')].map(n=>({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right})).filter(n=>n.right>innerWidth+1&&n.width>0).slice(0,20))));
+    compact.mobileHeight=await added.evaluate(item=>item.getBoundingClientRect().height);assert.ok(compact.mobileHeight<=560,'a mobile group must fit within a screen');
+    await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-mobile.png')});
+    await page.setViewportSize({width:1440,height:960});page.once('dialog',dialog=>dialog.accept());await added.getByRole('button',{name:'删除',exact:true}).click();assert.equal(await page.locator('.groups > .item').count(),groupCount);
+
     if (kind === 'ppsub') {
       const name = page.locator('.subs [data-field="name"]').first();
       await name.fill('Temporary draft');
@@ -164,6 +177,7 @@ async function exercise(browser, kind) {
       await page.getByLabel('流量记录上限', {exact: true}).waitFor();
       await page.getByRole('link', {name: '订阅与策略', exact: true}).click();
       assert.equal(await name.inputValue(), 'Edited native provider');
+      await page.locator('.editor-schedule > summary').click();
       const interval = page.getByLabel('订阅更新间隔', {exact: true});
       await interval.fill('9h'); await interval.press('Tab');
       assert.equal(await page.locator('#savebar').isVisible(),false);
@@ -219,7 +233,7 @@ async function exercise(browser, kind) {
     assert.deepEqual(maintenanceRequests, []);
     return {kind, autoLoadCurrent: true, readFailureRetry: kind === 'ppsub', explicitSave: true,
       actualEditorExport: true, reloadDraftGuard: kind === 'ppsub', sharedLogin: true, routeCleanup: true,
-      maintenanceConsolidated: true, globalOptionsMerged: true, singleSubscriptionForm: true, sourceUrlSaved: true, ...(kind === 'ppsub' ? {draftAcrossSettings: true, combinedDraftSave: true, importFileDraft: true} : {}), pageErrors: errors};
+      compactNewGroupDesktopMobile: true,newGroup: compact,maintenanceConsolidated: true, globalOptionsMerged: true, singleSubscriptionForm: true, sourceUrlSaved: true, ...(kind === 'ppsub' ? {draftAcrossSettings: true, combinedDraftSave: true, importFileDraft: true} : {}), pageErrors: errors};
   } finally { await context.close(); }
 }
 
