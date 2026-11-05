@@ -15,6 +15,11 @@ import mihomo_update as update
 
 
 class UpdaterTests(unittest.TestCase):
+    def setUp(self):
+        cpu = patch.object(update, 'cpu_capabilities', return_value={
+            'cpu_level': 'v1', 'cpu_detection': 'baseline-fallback', 'supported_variants': ['v1']})
+        cpu.start(); self.addCleanup(cpu.stop)
+
     def release(self, raw):
         return {'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False,
                 'assets': [{'name': 'mihomo-linux-amd64-compatible-v1.2.3.gz',
@@ -217,3 +222,186 @@ class UpdaterTests(unittest.TestCase):
                 selected = updater._check()
                 self.assertTrue(selected['url'].startswith('https://github.com/MetaCubeX/mihomo/'))
                 network.assert_called_once()
+
+
+class CpuSelectionTests(unittest.TestCase):
+    def capabilities(self, level='v3'):
+        return {'cpu_level': level, 'cpu_detection': 'glibc-hwcaps',
+                'supported_variants': ['v1', 'v2', 'v3'][:int(level[1])]}
+
+    def release(self, raw=b'asset'):
+        assets = []
+        for level in ('v1', 'v2', 'v3', 'compatible'):
+            name = f'mihomo-linux-amd64-{level}-v1.2.3.gz'
+            assets.append({'name': name, 'browser_download_url':
+                f'https://github.com/MetaCubeX/mihomo/releases/download/v1.2.3/{name}',
+                'digest': 'sha256:' + hashlib.sha256(raw).hexdigest(), 'size': len(raw)})
+        return {'tag_name': 'v1.2.3', 'draft': False, 'prerelease': False, 'assets': assets}
+
+    def elf(self, level):
+        return UpdaterTests().elf() + b'\nbuild\tGOAMD64=' + level.encode() + b'\n'
+
+    def updater(self, temporary):
+        root = Path(temporary)
+        return update.Updater(root / 'code', root / 'state', root / 'config.json')
+
+    def test_cpu_probe_requires_positive_os_and_hypervisor_aware_loader_result(self):
+        for output, level in [('x86-64-v3 (supported, searched)\n', 'v3'),
+                              (' x86-64-v3\n x86-64-v2 (supported, searched)\n', 'v2'),
+                              (' x86-64-v3\n x86-64-v2\n', 'v1')]:
+            with self.subTest(level=level), patch.object(update.platform, 'system', return_value='Linux'), \
+                 patch.object(Path, 'is_file', return_value=True), patch.object(update.subprocess, 'run') as run:
+                run.return_value.stdout = output
+                self.assertEqual(update.cpu_capabilities('x86_64')['cpu_level'], level)
+                self.assertEqual(run.call_args.kwargs['env']['LC_ALL'], 'C')
+
+    def test_probe_failure_is_baseline_and_other_architectures_are_rejected(self):
+        with patch.object(update.platform, 'system', return_value='Linux'), patch.object(Path, 'is_file', return_value=True), \
+             patch.object(update.subprocess, 'run', side_effect=TimeoutError()):
+            self.assertEqual(update.cpu_capabilities('x86_64')['cpu_level'], 'v1')
+        with self.assertRaisesRegex(ValueError, 'UNSUPPORTED_ARCHITECTURE'): update.cpu_capabilities('aarch64')
+
+    def test_highest_confirmed_level_selects_exact_modern_asset(self):
+        for level in ('v1', 'v2', 'v3'):
+            with self.subTest(level=level), patch.object(update, 'cpu_capabilities', return_value=self.capabilities(level)):
+                asset = update.release_asset(self.release())
+                self.assertEqual(asset['architecture'], 'amd64-' + level)
+                self.assertEqual(asset['asset'], f'mihomo-linux-amd64-{level}-v1.2.3.gz')
+
+    def test_v1_alias_is_used_only_when_modern_v1_is_absent(self):
+        release = self.release()
+        release['assets'] = [row for row in release['assets'] if '-v1-v' not in row['name']]
+        with patch.object(update, 'cpu_capabilities', return_value=self.capabilities('v1')):
+            self.assertIn('-compatible-', update.release_asset(release)['asset'])
+        release['assets'].append(self.release()['assets'][0])
+        release['assets'][-1]['digest'] = None
+        with patch.object(update, 'cpu_capabilities', return_value=self.capabilities('v1')):
+            with self.assertRaisesRegex(ValueError, 'DIGEST'): update.release_asset(release)
+
+    def test_no_silent_substitution_for_missing_or_untrusted_selected_asset(self):
+        for kind in ('missing', 'duplicate', 'url', 'digest'):
+            release = self.release(); selected = release['assets'][2]
+            if kind == 'missing': release['assets'].remove(selected)
+            elif kind == 'duplicate': release['assets'].append(selected)
+            elif kind == 'url': selected['browser_download_url'] = 'https://evil.example/core.gz'
+            else: selected['digest'] = None
+            with self.subTest(kind=kind), patch.object(update, 'cpu_capabilities', return_value=self.capabilities()):
+                with self.assertRaises(ValueError): update.release_asset(release)
+
+    def test_manual_lower_level_is_allowed_but_unsupported_level_is_rejected(self):
+        with patch.object(update, 'cpu_capabilities', return_value=self.capabilities('v2')):
+            self.assertEqual(update.release_asset(self.release(), variant='v1')['architecture'], 'amd64-v1')
+            with self.assertRaisesRegex(ValueError, 'CORE_VARIANT_UNSUPPORTED'):
+                update.release_asset(self.release(), variant='v3')
+
+    def test_settings_default_to_auto_and_do_not_mislabel_current_binary(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(update, 'cpu_capabilities', return_value=self.capabilities()), \
+             patch.object(update, 'version_of', return_value='v1.2.3'):
+            updater = self.updater(temporary)
+            updater.binary.parent.mkdir(parents=True); updater.binary.write_bytes(self.elf('v1'))
+            status = updater.status()
+            self.assertEqual(status['selection'], 'auto')
+            self.assertEqual(status['architecture'], 'amd64-v3')
+            self.assertEqual(status['installed_architecture'], 'amd64-v1')
+            updater.config.write_text('{"core_variant":"v2"}')
+            self.assertEqual(updater.status()['architecture'], 'amd64-v2')
+            updater.config.write_text('{"core_variant":"evil"}')
+            with self.assertRaisesRegex(ValueError, 'INVALID_CORE_VARIANT'): updater.status()
+
+    def test_version_comparison_handles_numeric_order_and_never_auto_downgrades(self):
+        for current, available, newer in [('v1.2.2', True, False), ('v1.2.3', False, False),
+                                           ('v1.2.10', False, True), ('alpha-test', False, False)]:
+            with self.subTest(current=current), tempfile.TemporaryDirectory() as temporary, \
+                 patch.object(update, 'cpu_capabilities', return_value=self.capabilities()), \
+                 patch.object(update, 'version_of', return_value=current), \
+                 patch.object(update, 'fetch', return_value=json.dumps(self.release()).encode()):
+                updater = self.updater(temporary)
+                updater.binary.parent.mkdir(parents=True); updater.binary.write_bytes(self.elf('v3'))
+                updater._check(); status = updater.status()
+                self.assertEqual(status['update_available'], available)
+                self.assertEqual(status['installed_newer'], newer)
+                if newer:
+                    with patch.object(update, 'operation_lock'), patch.object(update, 'fetch') as network:
+                        self.assertEqual(updater.update(force=True)['reason'], 'installed_newer')
+                        network.assert_not_called()
+
+    def test_same_version_variant_change_is_separate_from_scheduled_upgrade(self):
+        compressed = gzip.compress(self.elf('v3'))
+        with tempfile.TemporaryDirectory() as temporary, patch.object(update, 'cpu_capabilities', return_value=self.capabilities()), \
+             patch.object(update, 'version_of', return_value='v1.2.3'), patch.object(update, 'operation_lock'):
+            updater = self.updater(temporary)
+            updater.binary.parent.mkdir(parents=True); updater.binary.write_bytes(self.elf('v1'))
+            with patch.object(update, 'fetch', return_value=json.dumps(self.release(compressed)).encode()): updater._check()
+            self.assertFalse(updater.status()['update_available'])
+            self.assertTrue(updater.status()['variant_change_available'])
+            with patch.object(update, 'fetch', return_value=compressed), patch.object(updater, 'validate_config'), \
+                 patch.object(updater, 'restart_and_check') as health:
+                self.assertEqual(updater.update()['status'], 'updated')
+                health.assert_called_once_with('v1.2.3')
+            self.assertEqual(updater.status()['installed_architecture'], 'amd64-v3')
+            self.assertFalse(updater.status()['variant_change_available'])
+
+    def test_cache_is_reselected_after_cpu_or_preference_change_without_new_request(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(update, 'cpu_capabilities', return_value=self.capabilities()):
+            updater = self.updater(temporary)
+            with patch.object(update, 'fetch', return_value=json.dumps(self.release()).encode()):
+                self.assertEqual(updater._check()['architecture'], 'amd64-v3')
+            updater.config.write_text('{"core_variant":"v1"}')
+            with patch.object(update, 'fetch') as network:
+                self.assertEqual(updater._check()['architecture'], 'amd64-v1')
+                network.assert_not_called()
+
+    def test_unrecognized_existing_version_is_not_overwritten_by_online_update(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(update, 'cpu_capabilities', return_value=self.capabilities()), \
+             patch.object(update, 'operation_lock'), patch.object(update, 'version_of', return_value='alpha-lab'):
+            updater = self.updater(temporary)
+            updater.binary.parent.mkdir(parents=True); updater.binary.write_bytes(b'existing')
+            with patch.object(update, 'fetch', return_value=json.dumps(self.release()).encode()): updater._check()
+            with patch.object(update, 'fetch') as network:
+                with self.assertRaisesRegex(ValueError, 'INSTALLED_VERSION_UNKNOWN'): updater.update()
+                network.assert_not_called()
+            self.assertEqual(updater.binary.read_bytes(), b'existing')
+
+    def test_same_version_offline_switches_variant_but_identical_data_never_restarts(self):
+        data = self.elf('v3'); compressed = gzip.compress(data)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(update, 'cpu_capabilities', return_value=self.capabilities()), \
+             patch.object(update, 'operation_lock'), patch.object(update, 'version_of', return_value='v1.2.3'):
+            updater = self.updater(temporary); archive = Path(temporary) / 'asset.gz'; archive.write_bytes(compressed)
+            updater.binary.parent.mkdir(parents=True); updater.binary.write_bytes(self.elf('v1'))
+            with patch.object(updater, 'validate_config'), patch.object(updater, 'restart_and_check') as health:
+                self.assertEqual(updater.install_local(archive, hashlib.sha256(compressed).hexdigest(), 'v1.2.3')['status'], 'updated')
+                health.assert_called_once()
+            self.assertEqual(updater.previous.read_bytes(), self.elf('v1'))
+            with patch.object(updater, 'validate_config') as config, patch.object(updater, 'restart_and_check') as health:
+                self.assertEqual(updater.install_local(archive, hashlib.sha256(compressed).hexdigest(), 'v1.2.3')['reason'], 'identical_binary')
+                health.assert_not_called(); config.assert_not_called()
+
+    def test_candidate_that_cannot_run_never_replaces_current_binary(self):
+        data = self.elf('v3'); compressed = gzip.compress(data)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(update, 'cpu_capabilities', return_value=self.capabilities()), \
+             patch.object(update, 'operation_lock'):
+            updater = self.updater(temporary); updater.binary.parent.mkdir(parents=True); updater.binary.write_bytes(b'old')
+            release = update.release_asset(self.release(compressed))
+            with patch.object(update, 'version_of', return_value=None), patch.object(updater, 'restart_and_check') as health:
+                with self.assertRaisesRegex(ValueError, 'VERSION_MISMATCH'): updater._install(release, compressed)
+                health.assert_not_called()
+            self.assertEqual(updater.binary.read_bytes(), b'old')
+
+    def test_prerelease_version_is_not_truncated_into_a_comparable_stable_tag(self):
+        with patch.object(update.subprocess, 'run') as run:
+            run.return_value.stdout = 'Mihomo Meta v1.2.3-alpha-lab linux amd64 with go1.26.10\n'
+            version = update.version_of(Path('/fixture/core'))
+            self.assertEqual(version, 'v1.2.3-alpha-lab')
+            self.assertIsNone(update.stable_version(version))
+
+    def test_scheduled_maintenance_does_not_switch_same_version_variant(self):
+        import maintenance
+        from manage_common import Layout
+        with tempfile.TemporaryDirectory() as temporary, patch.object(maintenance, 'STATE', Path(temporary) / 'state'), \
+             patch.object(maintenance, 'Updater') as updater, patch.object(maintenance, 'Path') as config_path, \
+             patch.object(sys, 'argv', ['maintenance.py', 'scheduled']):
+            config_path.return_value.read_bytes.return_value = b'{"auto_update":true}'
+            updater.return_value.status.return_value = {'update_available': False, 'variant_change_available': True}
+            maintenance.main(Layout(temporary))
+            updater.return_value.check.assert_called_once()
+            updater.return_value.update.assert_not_called()

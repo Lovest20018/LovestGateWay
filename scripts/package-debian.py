@@ -67,6 +67,8 @@ def main():
             if source.suffix in {'.service', '.timer'}:
                 copy(source, 'units/' + source.name)
         prepare_dashboard(stage / 'ui')
+        (stage / 'ui/ui-build.json').write_text(json.dumps({'kind': 'complete-release',
+            'source_commit': args.commit, 'ui_version': args.version}, indent=2) + '\n')
         for filename in ('LICENSE',):
             copy(ROOT / filename, filename)
         for filename in ('debian-deployment.md', 'debian-management.md', 'debian-web-settings.md', 'integration-api-v1.md', 'openapi-v1.json'):

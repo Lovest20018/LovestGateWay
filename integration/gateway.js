@@ -67,6 +67,7 @@
       history_enabled: ['API 历史采集', '仅在对外观测 API 开启时采集；关闭后已有历史保留。'],
       history_retention_days: ['历史保留天数', '1–90 天；由历史采集服务执行。'],
       auto_update: ['Mihomo 自动更新', '启用官方稳定版检查与维护定时器。'],
+      core_variant: ['Mihomo CPU 型号', '自动选择系统确认支持的 v3/v2/v1；检测不确定时使用 v1。先应用设置，再检查或安装核心；保存型号不会立即替换核心。'],
       name: ['API 实例名称', '观测客户端中显示的设备名称。'],
       listen: ['API 监听地址', '另一台设备连接时填写网关的局域网 IP；127.0.0.1 仅限本机。'],
       port: ['API 端口', ''], probe_urls: ['允许探测的地址', '每行一个公共 HTTP(S) URL，最多 16 个。'],
@@ -286,7 +287,8 @@
         return wrap;
       }
       if (spec.type === 'choice') {
-        input = el('select', {id}, spec.constraints[0].map(value => el('option', {value, text: modeNames[value] || value, selected: saved === value})));
+        const names = key === 'core_variant' ? {auto:'自动（按 CPU 选择）',v1:'v1（基础兼容）',v2:'v2',v3:'v3'} : modeNames;
+        input = el('select', {id}, spec.constraints[0].map(value => el('option', {value, text: names[value] || value, selected: saved === value})));
       } else if (spec.type === 'asset') {
         const names = [...new Set([saved, ...model.assets.filter(v => key === 'ovpnfile' ? v.endsWith('.ovpn') : /\.ya?ml$/.test(v))])];
         input = el('select', {id}, names.map(value => el('option', {value, text: value, selected: saved === value})));
@@ -409,7 +411,9 @@
         const actions = el('div', {class: 'button-row'}, [['检查稳定版', 'check'], ['安装 / 更新 Mihomo', 'update'], ['回退上一版本', 'rollback']].map(([label, action]) => el('button', {
           class: 'button secondary', type: 'button', text: label, onclick: () => coreAction(action),
         })));
-        result.push(card('Mihomo 核心', '从官方稳定版更新；版本检查与网关配置分别应用。', '02', [status, el('div', {class: 'divider'}), actions, localCoreForm()]));
+        result.push(card('Mihomo 核心', '自动维护只升级更高稳定版；同版本切换 CPU 型号请点击安装 / 更新。', '02', [
+          ...(model.schema.maintenance.core_variant ? [fields([['maintenance','core_variant']])] : []),
+          status, el('div', {class: 'divider'}), actions, localCoreForm()]));
         result.push(observerApiCard());
       } else if (category === 'network') {
         result.push(card('网卡与监听', 'Debian 继续管理宿主 IP、默认路由和时钟。', '01', [fields([
@@ -776,7 +780,12 @@
       const retryAt = data.operation?.retry_at;
       const reason = data.operation?.error === 'RELEASE_RATE_LIMITED' ? 'GitHub 版本查询已限流。' + (retryAt ? `可在 ${new Date(retryAt * 1000).toLocaleString()} 后重试。` : '请稍后重试。') + '已安装的 Mihomo 可继续使用，也可使用下方本地文件更新。' : (data.operation?.message || '核心维护未完成，请检查维护服务状态。');
       const detail = failed ? reason + (data.operation?.error ? `（${data.operation.error}）` : '') : '';
-      if ($('maintenance-state')) $('maintenance-state').textContent = `当前 Mihomo ${data.core.installed_version || '未安装'} · 官方稳定版 ${data.core.latest_version || (failed ? (data.operation?.error === 'RELEASE_RATE_LIMITED' ? '查询受限' : '未取得版本信息') : '尚未检查')}` + (busy ? ' · 后台正在处理，请稍候…' : detail ? ' · ' + detail : '');
+      const cpu = data.core.architecture ? ` · 当前型号 ${data.core.installed_architecture || '未识别'} · ${data.core.selection === 'auto' ? '自动目标' : '指定目标'} ${data.core.architecture}` : '';
+      const selection = data.core.selection_supported === false ? ' · 当前系统未确认支持指定型号，请选择自动或较低型号' :
+        data.core.cpu_detection === 'baseline-fallback' ? ' · CPU 检测未确认更高等级，按 v1 兼容处理' : '';
+      const available = data.core.version_unrecognized ? ' · 当前版本无法比较，自动维护保留现有核心' : data.core.installed_newer ? ' · 当前版本较新，不自动降级' :
+        data.core.update_available ? ' · 可安装新稳定版' : data.core.variant_change_available ? ' · 可手动切换同版本 CPU 型号' : '';
+      if ($('maintenance-state')) $('maintenance-state').textContent = `当前 Mihomo ${data.core.installed_version || '未安装'} · 官方稳定版 ${data.core.latest_version || (failed ? (data.operation?.error === 'RELEASE_RATE_LIMITED' ? '查询受限' : '未取得版本信息') : '尚未检查')}` + cpu + selection + available + (busy ? ' · 后台正在处理，请稍候…' : detail ? ' · ' + detail : '');
       return {failed, busy, detail};
     }
     async function pollCore(action) {
@@ -814,7 +823,7 @@
       const progress = el('p', {id: 'core-upload-progress', class: 'subtext', role: 'status', text: ''});
       const field = (label, input) => el('div', {class: 'field'}, [el('label', {htmlFor: input.id, text: label}), input]);
       const form = el('form', {class: 'core-local-form'}, [
-        el('p', {class: 'subtext', text: '遇到 GitHub 限流或服务器无法下载时，可从官方 Releases 下载适用于 Linux amd64 的 Mihomo .gz（建议 compatible），并复制对应的官方 SHA256。上传安装无需在线查询版本。'}),
+        el('p', {class: 'subtext', text: '遇到 GitHub 限流或服务器无法下载时，可从官方 Releases 下载适用于 Linux amd64 和本机 CPU 等级的 Mihomo .gz；不确定时选 v1（旧名称 compatible）。复制对应官方 SHA256，上传安装无需在线查询版本。'}),
         el('a', {href: 'https://github.com/MetaCubeX/mihomo/releases', target: '_blank', rel: 'noopener noreferrer', text: '打开 Mihomo 官方发布页 ↗'}),
         el('div', {class: 'field-grid'}, [field('Mihomo 官方 .gz 文件', file), field('核心版本', version), field('官方 SHA256', sha)]),
         el('p', {class: 'subtext', text: '最大 64 MiB。上传完成后验证摘要、架构和版本；安装可能重启网关，启动验收失败会回退。'}),

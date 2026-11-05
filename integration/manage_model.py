@@ -39,7 +39,8 @@ SCHEMA = {
  'api': {'enabled': ('bool', False), 'listen': ('ipv4', '127.0.0.1'), 'port': ('int', 8788, 1, 65535),
          'name': ('name', 'LovestGateWay'), 'probe_urls': ('probe_urls', []), 'read_token': ('observer_token', '')},
  'maintenance': {'history_enabled': ('bool', True), 'history_retention_days': ('int', 30, 1, 90),
-                 'auto_update': ('bool', True), 'timezone': ('timezone', 'Asia/Shanghai')},
+                 'auto_update': ('bool', True), 'timezone': ('timezone', 'Asia/Shanghai'),
+                 'core_variant': ('choice', 'auto', ('auto', 'v1', 'v2', 'v3'))},
 }
 SECRET_KEYS = {'clash_web_password', 'openport_auth', 'socks5_password', 'ovpn_password', 'suburl', 'read_token'}
 BOX = {'route.block_bittorrent': 'bool', 'route.block_quic': 'bool', 'route.block_unknown': 'bool'}

@@ -24,7 +24,7 @@ class InstallerTests(unittest.TestCase):
             import hashlib
             with verify_package(archive_path, hashlib.sha256(archive_path.read_bytes()).hexdigest()) as verified:
                 for name in ('lib/manage_web.py', 'lib/manage_policy.py', 'lib/manage_subscription.py', 'lib/manage_subscription_schedule.py', 'units/paopaogw-settings.service',
-                             'ui/gateway.html', 'docs/debian-web-settings.md'):
+                             'ui/gateway.html', 'ui/ui-build.json', 'docs/debian-web-settings.md'):
                     self.assertIn(name, verified.manifest)
             with tarfile.open(work / 'lovestgateway-test-debian-amd64.tar.gz') as archive:
                 for name in ('lib/bin/sniffbox', 'lib/network.py', 'lib/ppg.sh', 'uninstall.sh', 'install.py'):
@@ -58,6 +58,12 @@ class InstallerTests(unittest.TestCase):
             maintenance = __import__('json').loads((stage / 'etc/paopaogw/maintenance.json').read_text())
             self.assertFalse(__import__('json').loads((stage / 'etc/paopaogw/api.json').read_text())['enabled'])
             self.assertFalse(maintenance['auto_update']); self.assertFalse(maintenance['history_enabled'])
+            self.assertEqual(maintenance['core_variant'], 'auto')
+            metadata = __import__('json').loads((stage / 'var/lib/paopaogw/clash/clash-dashboard/ui/ui-build.json').read_text())
+            self.assertEqual(metadata['source_commit'], 'a' * 40)
+            self.assertEqual(metadata['kind'], 'complete-release')
+            maintenance['core_variant'] = 'v2'
+            (stage / 'etc/paopaogw/maintenance.json').write_text(__import__('json').dumps(maintenance))
             config.write_text(config.read_text() + 'net_cleanday=15\n')
             state = stage / 'var/lib/paopaogw/clash/retained.json'
             state.write_text('{"keep":true}')
@@ -66,6 +72,7 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual((stage / 'etc/paopaogw/read-token').read_text(), token)
             self.assertIn('net_cleanday=15', config.read_text())
             self.assertEqual(state.read_text(), '{"keep":true}')
+            self.assertEqual(__import__('json').loads((stage / 'etc/paopaogw/maintenance.json').read_text())['core_variant'], 'v2')
             config.write_text(config.read_text() + 'box="route.block_unknown=true,route.block_quic=true"\n')
             (stage / 'etc/paopaogw/test-profile.initialized').unlink()
             subprocess.run(args, check=True, capture_output=True)
