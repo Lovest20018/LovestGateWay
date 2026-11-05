@@ -206,17 +206,21 @@ class DiagnosticsTests(unittest.TestCase):
 
     def test_preview_rejects_external_file_aba_even_when_final_bytes_match(self):
         historical = self.program.read_bytes()
-        self.program.write_bytes(b'current program differs from backup')
-        current = self.program.read_bytes()
         original = self.diagnostics._scope
-        def transient_target(index, full):
-            self.program.write_bytes(historical)
-            value = original(index, full)  # would incorrectly display no program change
-            self.program.write_bytes(current)
-            return value
-        with patch.object(self.diagnostics, '_scope', transient_target):
-            with self.assertRaisesRegex(ManagementError, 'STALE_RECOVERY_PREVIEW'): self.preview()
-        self.assertEqual(self.program.read_bytes(), current)
+        for action in ('restore', 'recover'):
+            if action == 'recover': self.journal()
+            self.program.write_bytes(b'current program differs from backup')
+            current = self.program.read_bytes()
+            def transient_target(index, full):
+                self.program.write_bytes(historical)
+                value = original(index, full)  # would incorrectly display no program change
+                self.program.write_bytes(current)
+                return value
+            with self.subTest(action=action), patch.object(self.diagnostics, '_scope', transient_target):
+                with self.assertRaisesRegex(ManagementError, 'STALE_RECOVERY_PREVIEW'):
+                    if action == 'restore': self.preview()
+                    else: self.diagnostics.preview_recover({})
+            self.assertEqual(self.program.read_bytes(), current)
         self.assertEqual(self.system.calls, [])
 
     def test_token_expires_and_tampering_cannot_call_transaction(self):
