@@ -34,7 +34,7 @@ async function main() {
     });
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
     let stale = false, fail = false, expireLogin = false, runningJob, polls = 0, configDelay = 0, coreFailed = true, coreLimited = false, localUpload = null, localInstalled = false, localOperations = [];
-    let managementOffline=false, managementPolls=0, configReads=0;
+    let managementOffline=false, managementPolls=0, configReads=0, rechecks=0;
     let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreSuperseded=false;
     const management={state:'unknown',policy_state:'saved_unconfirmed',recent:[],latest:null};
     model.management=management;
@@ -75,7 +75,11 @@ async function main() {
         assert.equal(req.headers().authorization, 'Bearer fixture-token');
         const body = req.method() === 'POST' ? req.postDataJSON() : undefined;
         let data, status = 200;
-        if (target.endsWith('/status')) {
+        if (target.endsWith('/recheck')) {
+          assert.deepEqual(JSON.parse(route.request().postData()),{});rechecks++;
+          management.state='loaded';management.verification={current:true,result:'verified',checked_at:1793863200,checks:['core_ini','service_environment','management_services']};
+          data=management.verification;
+        } else if (target.endsWith('/status')) {
           managementPolls++;
           if(managementOffline)return route.abort('failed');
           data={management:coreSuperseded?{...management,recent:[{id:coreId,source:'mihomo',status:coreGate?'running':'complete',action:'rollback'}]}:management,runtime:model.runtime||{status:'staged'},running_mode:model.running_mode||null,source:{local_policy:true}};
@@ -133,8 +137,18 @@ async function main() {
     await page.locator('#reload').click();
     await page.waitForFunction(()=>document.querySelector('.ppgw-management [role=status]')?.textContent.includes('核心配置已加载'));
     assert.equal(await page.locator('#notice').isVisible(),false);
-    assert.match(await page.locator('.ppgw-management [role=status]').textContent(),/核心配置已加载.*当前保存版本尚无匹配的整体验收记录/);
-    assert.doesNotMatch(await page.locator('.ppgw-management [role=status]').textContent(),/尚未确认加载|当前保存版本已通过管理验收/);
+    assert.match(await page.locator('.ppgw-management [role=status]').textContent(),/核心配置已加载.*保存版本与运行状态待核对/);
+    assert.doesNotMatch(await page.locator('.ppgw-management [role=status]').textContent(),/尚未确认加载|已核对当前运行配置/);
+    const readsBeforeCheck=configReads;
+    const draftInput=page.getByLabel('流量记录上限',{exact:true}),savedInput=await draftInput.inputValue();
+    await draftInput.fill('12345');
+    await page.getByRole('button',{name:'重新核对',exact:true}).click();
+    await page.getByText(/最近核对：.*通过.*网关配置、启动环境、管理服务/).waitFor();
+    assert.equal(rechecks,1);assert.equal(configReads,readsBeforeCheck,'recheck must preserve the current form and drafts');
+    assert.equal(await draftInput.inputValue(),'12345');await draftInput.fill(savedInput);
+    assert.match(await page.locator('.ppgw-management [role=status]').textContent(),/已核对当前运行配置与管理服务/);
+    management.verification={...management.verification,current:false};
+    await page.waitForFunction(()=>document.querySelector('.ppgw-management')?.textContent.includes('运行状态已变化，等待重新核对'),null,{timeout:15000});
     await page.screenshot({path:path.join(root,'dist/historical-alert-20261105/current-state.png')});
     model.recovery_required=true;await page.locator('#reload').click();
     await page.getByText('上一次事务需要恢复。请在宿主运行 sudo ppgw-admin recover --yes，再刷新页面。',{exact:true}).waitFor();
@@ -386,7 +400,7 @@ async function main() {
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
       sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, appearanceSelection: true, mobileMenu: true,
-      unmountDuringFetch: true, observerApiSettings: true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
+      unmountDuringFetch: true, observerApiSettings: true, recheckPreservesDraft:true, staleCheckDistinguished:true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
   } finally { await browser.close(); }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

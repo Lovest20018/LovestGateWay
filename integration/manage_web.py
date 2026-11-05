@@ -57,8 +57,11 @@ class SettingsAdmin:
         self.lock = threading.Lock()
         self.active = None
         self.revision_sample = RevisionSample()
+        from manage_acceptance import Acceptance
+        self.acceptance = Acceptance(self.layout, self.system)
         self.start_job = start_job or self.schedule
         self.reconcile_jobs()
+        self.acceptance.start()
 
     @staticmethod
     def schedule(callback):
@@ -111,6 +114,7 @@ class SettingsAdmin:
         value.update(self.runtime_sample())
         from manage_operations import summary
         value['management'] = summary(self.layout, value['revision'], value['runtime'], value['recovery_required'])
+        self.acceptance.trigger(value['revision'], value['runtime'])
         return value
 
     def runtime_sample(self):
@@ -132,6 +136,7 @@ class SettingsAdmin:
         try:
             revision = self.revision_sample.sample(self.layout)
             value['management'] = summary(self.layout, revision, value['runtime'], value['recovery_required'])
+            self.acceptance.trigger(revision, value['runtime'])
         except Exception:
             from manage_operations import history
             rows = history(self.layout)
@@ -335,6 +340,9 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/api/policy/preview': value = self.server.admin.policy.preview(body)
             elif self.path == '/api/apply': return self.respond(202, self.server.admin.submit(body))
             elif self.path == '/api/observer-token': value = self.server.admin.observer_token(body)
+            elif self.path == '/api/recheck':
+                if body != {}: raise ManagementError('INVALID_CONFIG_REQUEST')
+                value = self.server.admin.acceptance.check()
             elif self.path == '/api/backups/list': value = self.server.admin.diagnostics.backups(body)
             elif self.path == '/api/restore/preview': value = self.server.admin.diagnostics.preview_restore(body)
             elif self.path == '/api/recover/preview': value = self.server.admin.diagnostics.preview_recover(body)

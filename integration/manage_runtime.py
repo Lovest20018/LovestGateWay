@@ -159,6 +159,65 @@ class System:
             value = values.get(key, SCHEMA['ini'][key][1])
             if value == '' and SCHEMA['ini'][key][1] != '': value = SCHEMA['ini'][key][1]
             if validate('ini', key, value, stored=True) != expected: raise ValueError()
+    def verify_current(self, settings):
+        """One bounded read-only check; no network subscription fetch or service action."""
+        states = self.status()
+        if not states.get('paopaogw', {}).get('active'): raise ManagementError('CORE_NOT_RUNNING')
+        try: self.verify_loaded(settings)
+        except (ValueError, OSError): raise ManagementError('RUNNING_CONFIG_MISMATCH') from None
+        checks = ['core_ini']
+        pid = self.command('systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip()
+        if not pid.isascii() or not pid.isdigit() or int(pid) <= 0: raise ManagementError('CORE_NOT_RUNNING')
+        raw = (Path('/proc') / pid / 'environ').read_bytes()
+        env = dict(item.split('=', 1) for item in raw.decode().split('\0') if '=' in item)
+        from manage_model import SCHEMA
+        for key, expected in settings['service'].items():
+            if validate('service', key, env.get(key, SCHEMA['service'][key][1]), stored=True) != expected:
+                raise ManagementError('SERVICE_ENV_MISMATCH')
+        checks.append('service_environment')
+        if settings['ini']['mode'] in {'yaml', 'suburl'}:
+            from manage_common import read_bytes
+            from clash_policy import protected_revision
+            from clash_ppsub import source_identity
+            status = json.loads(read_bytes(self.layout, 'var/lib/paopaogw/admin/policy-status.json', b'{}'))
+            if status.get('status') != 'loaded' or status.get('source_identity') != source_identity(settings['ini']):
+                raise ManagementError('SOURCE_NOT_CONFIRMED')
+            key = read_bytes(self.layout, 'etc/paopaogw/revision-key', b'').strip()
+            if not key: raise ManagementError('SOURCE_NOT_CONFIRMED')
+            policy = read_bytes(self.layout, 'etc/paopaogw/files/clash-policy.json')
+            if protected_revision(json.loads(policy) if policy else None, key) != status.get('policy_revision'):
+                raise ManagementError('POLICY_NOT_CONFIRMED')
+            native = read_bytes(self.layout, 'etc/paopaogw/files/ppsub.json')
+            if settings['ini']['mode'] == 'suburl' and native:
+                loaded = read_bytes(self.layout, 'var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json', b'{}')
+                saved, current = json.loads(native), json.loads(loaded)
+                saved.pop('exported_at', None); current.pop('exported_at', None)
+                if saved != current: raise ManagementError('SOURCE_NOT_CONFIRMED')
+            elif settings['ini']['mode'] == 'yaml':
+                import yaml
+                raw = read_bytes(self.layout, 'etc/paopaogw/files/' + settings['ini']['yamlfile'])
+                loaded = Path('/proc') / pid / 'root/tmp/ppgw.yaml.down'
+                if raw is None or loaded.stat().st_size > 2*1024*1024 or yaml.safe_load(raw) != yaml.safe_load(loaded.read_bytes()):
+                    raise ManagementError('SOURCE_NOT_CONFIRMED')
+            self.client().request('/proxies')
+            checks.append('mihomo_source_policy')
+        elif settings['ini']['mode'] == 'ovpn':
+            # OpenVPN has no loaded-resource fingerprint yet.
+            raise ManagementError('SOURCE_NOT_CONFIRMED')
+        expected = {'paopaogw-api': settings['api']['enabled'],
+                    'paopaogw-observe': settings['api']['enabled'] and settings['maintenance']['history_enabled'],
+                    'paopaogw-maintenance.timer': settings['maintenance']['auto_update']}
+        for unit, enabled in expected.items():
+            # Installation may deliberately use manual startup. Verify live
+            # operation here without inventing a different enablement plan.
+            if states.get(unit, {}).get('active') != enabled: raise ManagementError('SERVICE_STATE_MISMATCH')
+        for unit in ('paopaogw-settings', 'paopaogw-subscription'):
+            if not states.get(unit, {}).get('active'): raise ManagementError('SERVICE_STATE_MISMATCH')
+        checks.append('management_services')
+        if settings['api']['enabled']:
+            System(self.layout, timeout=2).wait_api(settings)
+            checks.append('observer_api')
+        return checks
     def wait(self, settings, old=None, action=None):
         if not self.layout.live: return {'status': 'staged'}
         deadline = time.monotonic() + self.timeout
