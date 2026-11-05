@@ -1,43 +1,41 @@
 from pathlib import Path
+import hashlib
+import json
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import prepare_dashboard as dashboard
 
-
 class DashboardTests(unittest.TestCase):
-    def test_shipped_dashboard_prepares_editor_and_removes_cloudflared(self):
+    def test_source_build_and_opaque_compatibility(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = Path(temporary)
-            name = dashboard.prepare_dashboard(output)
-            index = (output / 'index.html').read_text(encoding='utf-8')
-            bundle = (output / name).read_text(encoding='utf-8')
-            self.assertIn(name, index)
-            self.assertIn('/ui/ppsub-panel.', index)
-            self.assertIn('window.ppgwPpsub.loadCurrent(', bundle)
-            self.assertIn('window.ppgwPpsub?.mount(', bundle)
-            self.assertIn('_clash_id:e._clash_id', bundle)
-            self.assertNotIn('{id:"/cloudflared",', bundle)
-            self.assertNotIn(',"/cloudflared":[3]', bundle)
+            output=Path(temporary)
+            entry=dashboard.prepare_dashboard(output)
+            index=(output/'index.html').read_text(encoding='utf-8')
+            manifest=json.loads((output/'manifest.json').read_text())
+            self.assertIn(entry,index)
+            self.assertIn('/ui/'+manifest['assets']['ppsub_panel.js'],index)
+            self.assertIn('/ui/'+manifest['assets']['gateway.js'],index)
+            self.assertIn('ppgw-gateway-view',index)
+            upstream=ROOT/'FILES/etc/config/clash/clash-dashboard/ui'
+            bundle=next(upstream.glob('bundle.*.js'))
+            self.assertEqual((output/bundle.name).read_bytes(),bundle.read_bytes())
+            shell=(output/entry).read_text(encoding='utf-8')
+            self.assertIn('/ui/legacy.html',shell)
+            self.assertIn('window.ppgwGateway.mount',shell)
+            self.assertIn('mountEditor',shell)
+            self.assertNotIn('ppgwGatewayRoute',shell)
+            self.assertNotIn('Fl(()=>',shell)
+            self.assertNotIn('Fl(()=>',Path(dashboard.__file__).read_text(encoding='utf-8'))
+            for label,name in manifest['assets'].items():
+                self.assertIn(hashlib.sha256((output/name).read_bytes()).hexdigest()[:12],name)
+            before={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir() if p.is_file()}
+            self.assertEqual(dashboard.prepare_dashboard(output),entry)
+            after={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in output.iterdir() if p.is_file()}
+            self.assertEqual(before,after)
 
-    def test_changed_editor_hook_is_rejected(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = root / 'FILES/etc/config/clash/clash-dashboard/ui'
-            source.mkdir(parents=True)
-            (source / 'bundle.unknown.js').write_text(
-                ',"/cloudflared":[3],'
-                '{id:"/cloudflared",icon:"cloud",label:gi("nav.cloudflared")},'
-                'function changedEditor(){}', encoding='utf-8')
-            (source / 'index.html').write_text('</head>', encoding='utf-8')
-            with patch.object(dashboard, 'ROOT', root):
-                with self.assertRaisesRegex(ValueError, 'integration hook changed upstream'):
-                    dashboard.prepare_dashboard(root / 'output')
-
-
-if __name__ == '__main__':
+if __name__=='__main__':
     unittest.main()

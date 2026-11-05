@@ -123,8 +123,8 @@ async function main() {
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.screenshot({path:path.join(root,'dist/password-settings-mobile.png'),fullPage:true});
     await page.setViewportSize({width:1440,height:1000}); await page.waitForTimeout(400);
-    const shell = await page.locator('aside').elementHandle();
-    const navigation = page.locator('aside');
+    const shell = await page.locator('#shell-nav').elementHandle();
+    const navigation = page.locator('#shell-nav');
     assert.equal(await navigation.count(), 1);
     assert.equal(await navigation.locator('a[href="#/settings"].active').count(), 1);
     await page.getByRole('tab', {name: '维护与 API', exact: true}).click();
@@ -166,7 +166,7 @@ async function main() {
     await navigation.getByRole('link', {name: '订阅与策略', exact: true}).click();
     await page.getByRole('button', {name: '保存并应用', exact: true}).waitFor();
     assert.equal(await page.locator('#setting-ini-suburl').count(), 0);
-    assert.equal(await shell.evaluate(node => node === document.querySelector('aside')), true);
+    assert.equal(await shell.evaluate(node => node === document.querySelector('#shell-nav')), true);
     assert.equal(await navigation.locator('a[href="#/subscriptions"].active').count(), 1);
     await navigation.getByRole('link', {name: '网关设置', exact: true}).click();
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).inputValue(), '8999');
@@ -210,12 +210,12 @@ async function main() {
     assert.doesNotMatch(await page.locator('.ppgw-gateway').innerText(), /HomeNet|HNM/i);
     for (const title of ['网络与出站', '高级选项', '访问与统计']) await page.getByRole('tab', {name: title, exact: true}).click();
     await page.evaluate(() => scrollTo(0, 0));
-    const themeButton = navigation.locator('.theme-wrap > button');
+    const themeButton = navigation.getByRole('button', {name: '主题与配色', exact:true});
     const themeSettled = color => page.waitForFunction(expected =>
       getComputedStyle(document.querySelector('.toggle-field input:checked')).backgroundColor === expected, color);
-    await themeButton.click(); // light -> custom; use the original theme editor.
-    await page.getByRole('dialog', {name: '主题编辑器', exact: true}).waitFor();
-    await page.getByRole('button', {name: '黑暗', exact: true}).click();
+    await themeButton.click();
+    await page.getByRole('dialog', {name: '主题与自定义配色', exact: true}).waitFor();
+    await page.getByLabel('自定义基础主题', {exact:true}).selectOption('dark');
     await page.getByLabel('主题色', {exact: true}).fill('#7c5cff');
     await page.getByRole('button', {name: '关闭', exact: true}).click();
     assert.equal(await page.evaluate(() => localStorage.getItem('ppgw-theme')), 'custom');
@@ -223,24 +223,28 @@ async function main() {
     assert.equal(await page.locator('.ppgw-gateway').evaluate(node => getComputedStyle(node).color === getComputedStyle(document.body).color), true);
     await themeSettled('rgb(124, 92, 255)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-custom.png'), fullPage: true});
-    await themeButton.click(); // custom -> dark
+    await themeButton.click();
+    await page.getByLabel('主题', {exact:true}).selectOption('dark');
+    await page.getByRole('button', {name:'关闭',exact:true}).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-dark.png'), fullPage: true});
-    await themeButton.click(); // dark -> light
+    await themeButton.click();
+    await page.getByLabel('主题', {exact:true}).selectOption('light');
+    await page.getByRole('button', {name:'关闭',exact:true}).click();
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-light.png'), fullPage: true});
     await page.setViewportSize({width: 390, height: 844});
-    await page.waitForFunction(() => document.querySelector('aside').getBoundingClientRect().right <= 0);
+    await page.waitForFunction(() => document.querySelector('#shell-nav').getBoundingClientRect().right <= 0);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: path.join(root, 'dist/settings-unified-mobile.png'), fullPage: true});
-    await page.locator('.appbar button').click();
+    await page.locator('#shell-menu').click();
     await navigation.getByRole('link', {name: '订阅与策略', exact: true}).click();
     await page.getByRole('button', {name: '保存并应用', exact: true}).waitFor();
     assert.equal(await page.locator('#setting-ini-suburl').count(), 0);
-    await page.waitForFunction(() => document.querySelector('aside').getBoundingClientRect().right <= 0);
-    await page.locator('.appbar button').click();
+    await page.waitForFunction(() => document.querySelector('#shell-nav').getBoundingClientRect().right <= 0);
+    await page.locator('#shell-menu').click();
     await navigation.getByRole('link', {name: '网关设置', exact: true}).click();
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     await page.setViewportSize({width: 320, height: 740});

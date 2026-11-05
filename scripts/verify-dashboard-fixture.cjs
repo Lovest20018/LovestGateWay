@@ -1,4 +1,4 @@
-/* Exercise the shipped patched editor with synthetic data; no live Gateway. */
+/* Exercise the source editor and opaque compatibility dashboard with synthetic data; no live Gateway. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -97,9 +97,9 @@ async function exercise(browser, kind) {
     await page.evaluate(() => { window.fixtureDocument = 'unchanged'; });
     await page.waitForURL('**/#/subscriptions');
     await page.getByRole('heading', {name: '订阅与策略', exact: true}).waitFor();
-    await page.locator('aside a[href="#/subscriptions"]').waitFor();
-    assert.equal(await page.locator('aside a[href="#/ppsub"]').count(), 0);
-    assert.equal(await page.locator('aside a[href="#/subscriptions"]').count(), 1);
+    await page.locator(' #shell-nav a[href="#/subscriptions"]').waitFor();
+    assert.equal(await page.locator(' #shell-nav a[href="#/ppsub"]').count(), 0);
+    assert.equal(await page.locator(' #shell-nav a[href="#/subscriptions"]').count(), 1);
     await page.getByRole('heading', {name: '订阅与策略', exact: true}).waitFor();
     const apply = page.getByRole('button', {name: '保存并应用', exact: true});
     await apply.waitFor();
@@ -115,10 +115,10 @@ async function exercise(browser, kind) {
       assert.equal(await apply.isDisabled(), true);
       await reload.click();
     }
-    await page.getByRole('button', {name: '删除此节点组', exact: true}).last().waitFor();
+    await page.locator('.groups').getByRole('button', {name:'删除',exact:true}).last().waitFor();
     await page.waitForFunction(() => !document.querySelector('[data-ppsub-apply]').disabled);
     if (kind === 'ppsub') {
-      const name = page.getByPlaceholder('例如: 某机场');
+      const name = page.locator('.subs [data-field="name"]').first();
       await name.fill('Temporary draft');
       const readsBeforeCancel = configReads;
       page.once('dialog', dialog => dialog.dismiss());
@@ -130,16 +130,15 @@ async function exercise(browser, kind) {
       await reload.click(); await reread;
       await page.waitForFunction(() => !document.querySelector('[data-ppsub-apply]').disabled);
       assert.equal(await name.inputValue(), native.subs[0].name);
-      await page.getByRole('button', {name: '导入配置', exact: true}).click();
       const choosing = page.waitForEvent('filechooser');
-      await page.getByRole('button', {name: '导入文件', exact: true}).click();
+      await page.getByRole('button', {name:'导入 PPsub',exact:true}).click();
       const chooser = await choosing;
       const imported = structuredClone(native); imported.subs[0].name = 'Imported provider';
       await chooser.setFiles({name: 'fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported))});
-      await page.waitForFunction(() => document.querySelector('input[placeholder="例如: 某机场"]').value === 'Imported provider');
+      await page.waitForFunction(() => document.querySelector('.subs [data-field="name"]').value === 'Imported provider');
       assert.equal(saved, null);
       await name.fill('Edited native provider');
-      await name.locator('..').locator('input').last().fill('https://example.com/native-updated');
+      await page.locator('.subs [data-field="url"]').first().fill('https://example.com/native-updated');
       await page.getByRole('link', {name: '网关设置', exact: true}).click();
       await page.getByLabel('流量记录上限', {exact: true}).waitFor();
       await page.getByRole('link', {name: '订阅与策略', exact: true}).click();
@@ -176,9 +175,8 @@ async function exercise(browser, kind) {
     assert.equal(await page.getByRole('tab', {name: '订阅来源', exact: true}).count(), 0);
     assert.equal(await page.getByRole('tab', {name: '分组与规则', exact: true}).count(), 0);
     if(kind==='ppsub')assert.equal(await page.evaluate(url => [...document.querySelectorAll('input')].filter(input=>input.value===url&&input.checkVisibility()).length,saved.subs[0].url),1);
-    await page.getByRole('button', {name: kind==='clash_patch'?'导出编辑内容':'导出配置', exact: true}).click();
     const downloading = page.waitForEvent('download');
-    await page.getByRole('button', {name: '导出文件', exact: true}).click();
+    await page.getByRole('button', {name:'导出编辑内容',exact:true}).click();
     const downloaded = await downloading;
     const exported = JSON.parse(await fs.readFile(await downloaded.path(), 'utf8'));
     assert.equal(downloaded.suggestedFilename(), 'ppsub.json');
@@ -188,7 +186,7 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator('a[href="#/cloudflared"]').count(), 0);
     await page.screenshot({path: path.join(root, 'dist/ppsub-native-' + kind + '-desktop.png'), fullPage: true, animations: 'disabled'});
     await page.setViewportSize({width: 390, height: 844});
-    await page.waitForFunction(() => document.querySelector('aside').getBoundingClientRect().right <= 0);
+    await page.waitForFunction(() => document.querySelector('#shell-nav').getBoundingClientRect().right <= 0);
     assert.equal(await apply.isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: path.join(root, 'dist/ppsub-native-' + kind + '-mobile.png'), fullPage: true, animations: 'disabled'});

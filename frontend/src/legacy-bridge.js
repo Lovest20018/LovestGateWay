@@ -1,0 +1,12 @@
+// Public DOM/hash boundary only; the upstream bundle is never patched.
+(() => {
+  if(parent===window){location.replace('/ui/'+location.hash);return;}
+  const originalFetch=window.fetch;window.fetch=async function(...args){const response=await originalFetch.apply(this,args);if(response.status===401)parent.postMessage({type:'ppgw:expired'},location.origin);return response;};
+  new MutationObserver(()=>{const login=document.querySelector('input[autocomplete="current-password"]');if(login){login.closest('.wrap')?.setAttribute('hidden','');parent.postMessage({type:'ppgw:expired'},location.origin);}}).observe(document.documentElement,{childList:true,subtree:true});
+  const style=document.createElement('style');style.textContent='aside{position:fixed!important;left:auto!important;top:auto!important;right:12px!important;bottom:8px!important;width:auto!important;height:auto!important;z-index:70!important;padding:5px!important;border-radius:12px!important}aside>nav,aside>.brand,.appbar{display:none!important}aside>.tools{display:flex!important;flex-direction:row!important;margin:0!important;padding:0!important}.main-col{margin-left:0!important;width:100%!important}.app{display:block!important}main{padding-top:16px!important}';document.head.append(style);
+  const routes=new Set(['overview','proxies','rules','connections','traffic','distribution','logs','region','subscriptions','settings','ppsub']);
+  document.addEventListener('click',event=>{const link=event.target.closest('a[href]');if(!link||event.ctrlKey||event.metaKey||event.shiftKey)return;const url=new URL(link.href,location.href);if(url.origin!==location.origin||!routes.has(url.hash.slice(2)))return;event.preventDefault();event.stopImmediatePropagation();parent.postMessage({type:'ppgw:route',hash:url.hash},location.origin);},true);
+  window.addEventListener('message',event=>{if(event.origin!==location.origin||event.source!==parent||!event.data)return;const data=event.data;if(data.type==='ppgw:navigate'&&typeof data.hash==='string'&&routes.has(data.hash.slice(2)))location.hash=data.hash;
+    if(data.type==='ppgw:theme'&&['light','dark'].includes(data.theme)){document.documentElement.dataset.theme=data.theme;for(const key of ['--bg','--bg-elev','--text','--nav-bg','--nav-text','--brand','--brand-deep','--brand-text','--brand-soft','--brand-grad'])if(typeof data.tokens?.[key]==='string')document.documentElement.style.setProperty(key,data.tokens[key]);}
+  });
+})();

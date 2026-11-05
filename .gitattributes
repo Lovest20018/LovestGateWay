@@ -2,6 +2,7 @@
 /FILES/usr/bin/nft.sh text eol=lf
 /deploy/** text eol=lf
 /integration/** text eol=lf
+/frontend/** text eol=lf
 /scripts/** text eol=lf
 /tests/** text eol=lf
 /ReadMe.md text eol=lf

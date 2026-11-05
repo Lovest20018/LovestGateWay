@@ -16,13 +16,15 @@ jobs:
       - name: Build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends clang libclang-dev cmake perl g++ python3 python3-yaml python3-jsonschema nftables iproute2 systemd util-linux openvpn openssl
+          apt-get install -y --no-install-recommends clang libclang-dev cmake perl g++ python3 python3-yaml python3-jsonschema nodejs nftables iproute2 systemd util-linux openvpn openssl
+          node --version
           TOOLCHAIN=$(rustup default | cut -d' ' -f1)
           rustup component add rustfmt --toolchain "$TOOLCHAIN"
           echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
       - name: API and contract
         run: |
           python3 scripts/check-public-source.py
+          node --test frontend/tests/model.test.mjs
           python3 -m unittest discover -s tests -v
           python3 scripts/export-api-contract.py
           python3 scripts/check-api-contract.py
