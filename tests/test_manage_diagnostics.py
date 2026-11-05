@@ -32,6 +32,17 @@ class SyntheticSystem:
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_packaged_worker_sandbox_allows_atomic_restore_without_broad_mounts(self):
+        unit = (Path(__file__).resolve().parents[1] / 'deploy/debian/paopaogw-settings.service').read_text()
+        self.assertIn('ProtectSystem=strict', unit.splitlines())
+        writable = set(next(line for line in unit.splitlines() if line.startswith('ReadWritePaths=')).split('=', 1)[1].split())
+        # An atomic file replacement needs the parent directory writable in the
+        # service namespace, including the launcher and managed systemd units.
+        for parent in ('/etc/paopaogw', '/var/lib/paopaogw', '/var/backups/paopaogw',
+                       '/usr/local/lib/paopaogw', '/usr/local/bin', '/etc/systemd/system'):
+            self.assertIn(parent, writable)
+        self.assertFalse(writable & {'/', '/etc', '/usr', '/usr/local', '/var'})
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.layout = Layout(self.temp.name)
