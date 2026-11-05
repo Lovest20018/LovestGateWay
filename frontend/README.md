@@ -38,6 +38,7 @@ node scripts/verify-settings-fixture.cjs frontend/dist
 node scripts/verify-subscription-drafts.cjs frontend/dist
 node scripts/verify-subscription-flow.cjs frontend/dist
 node scripts/verify-source-editor.cjs frontend/dist
+node scripts/verify-complex-editor.cjs frontend/dist
 node scripts/verify-diagnostics-fixture.cjs frontend/dist
 ```
 
