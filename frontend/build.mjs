@@ -22,7 +22,7 @@ export async function build(output=join(here,'dist')) {
   const styles=[...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
   await emit('theme.css',styles);
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
-  for(const name of ['model.js','auth.js'])await emit(name,await textFile(join(here,'src',name)));
+  for(const name of ['model.js','auth.js','icons.js'])await emit(name,await textFile(join(here,'src',name)));
   await emit('legacy-bridge.js',(await textFile(join(here,'src/legacy-bridge.js'))).replaceAll('@@runtime-bundle@@',bundle));
   for(const name of ['editor.js','diagnostics.js','shell.js']) {
     let source=await textFile(join(here,'src',name));
