@@ -66,7 +66,7 @@ async function exercise(browser,kind){
       assert.equal(await groupName.inputValue(),'Latest import','an older file must not replace a newer import');
       await chooseDelayed('delayed-import-unmount.json','Late import must not reach next editor',true);
       page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('.source-editor').waitFor({state:'detached'});await release('delayed-import-unmount.json');
-      const storageCheck=await page.frameLocator('.legacy-frame').locator('body').evaluate((_,secret)=>{
+      const storageCheck=await page.locator('#runtime-panel').evaluate((_,secret)=>{
         const verified=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'changed-in-legacy',clashAPIConfigs:[{secret,label:'updated-legacy-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}],legacyOption:'new-value'}));
         const changed=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
@@ -105,13 +105,17 @@ async function exercise(browser,kind){
     for(const index of [0,1,2])await page.locator('.monitor fieldset').nth(index).locator('[data-field="enable"]').check();
     await fill(page.locator('.monitor fieldset').nth(0),'url','https://example.com/global');await fill(page.locator('.monitor fieldset').nth(0),'retries','3');await fill(page.locator('.monitor fieldset').nth(0),'expected_status','204');
     await fill(page.locator('.monitor fieldset').nth(1),'password','fixture-password-123456');await page.locator('.monitor fieldset').nth(1).locator('[data-field="cipher"]').selectOption('aes-128-gcm');await fill(page.locator('.monitor fieldset').nth(2),'hour','5');
+    await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});
+    await fill(page.locator('.groups .item').first(),'name','Edited after preview');await page.locator('#apply').click();
+    await page.getByText('编辑内容已变化，请重新预览后再确认应用。',{exact:true}).waitFor();assert.equal(operation,null,'a stale inline preview must never apply an older editor document');
+    await fill(page.locator('.groups .item').first(),'name','Edited Main');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});await page.locator('#apply').click();await page.getByText('Synthetic editor saved',{exact:true}).waitFor();await ready();
     assert.ok(validations>=2);assert.equal(posted['node-groups'][0].monitor_url,'https://example.com/health');assert.equal(posted['node-groups'][0].interval,900);assert.equal(posted.global_monitor.expected_status,'204');assert.equal(posted.restart_cron.hour,5);
     if(kind==='ppsub'){assert.deepEqual(posted.custom,native.custom);assert.deepEqual(posted.advanced_added,{preserve:true});assert.deepEqual(posted.subs[0].extension,native.subs[0].extension);assert.deepEqual(posted['node-groups'][0].hidden_feature,{nested:1});assert.equal(posted.subs[0].update_interval,'7h');assert.equal(posted.rules[0].unknown_rule,true);}
     else{assert.equal(posted.subs[0]._clash_id,'s:0');assert.equal(posted['node-groups'][0]._clash_id,'g:0');assert.equal(merged.secret,raw.secret);assert.deepEqual(merged.dns,raw.dns);assert.deepEqual(merged.proxies,raw.proxies);assert.equal(merged['proxy-groups'][0].hidden,true);assert.equal(merged['proxy-groups'][0].lazy,true);assert.deepEqual(merged['proxy-providers'].Airport.header,raw['proxy-providers'].Airport.header);assert.deepEqual(merged['rule-providers'].EditedRules.custom,{preserve:1});assert.equal(merged['proxy-groups'][0].type,'url-test');assert.deepEqual(merged.rules,['DOMAIN,edited.example,Edited Main','MATCH,Edited Main']);}
     await fill(page.locator('.groups .item').first(),'name','Draft survives reauthentication');expired=true;
     await page.waitForFunction(()=>document.querySelector('#shell-status')?.textContent.includes('重新登录'),{timeout:15000});expired=false;
-    await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-dialog').waitFor({state:'detached'});
+    await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});
     assert.equal(await page.locator('.groups .item').first().locator('[data-field="name"]').inputValue(),'Draft survives reauthentication');
     const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(saved.favorite,'preserve-me');assert.equal(saved.clashAPIConfigs[0].label,'existing-profile');assert.equal(saved.clashAPIConfigs[0].secret,secret);assert.equal(saved.clashAPIConfigs[1].label,'second-profile');assert.equal(saved.clashAPIConfigs[1].secret,'secondary-auth-fixture');
     await page.evaluate(()=>window.postMessage({type:'ppgw:route',hash:'#/overview'},location.origin));assert.equal(new URL(page.url()).hash,'#/subscriptions','messages from an untrusted source are ignored');

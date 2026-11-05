@@ -316,11 +316,13 @@
           ...(state.editKind==='clash_patch'?{snapshot_id:state.snapshotId}:{}),
           operation_id:'editor_'+Date.now()+'_'+Math.random().toString(36).slice(2)};
         state.loading=true;syncEditing();updateApply();show('正在预览统一保存的变更…');
+        const previewFingerprint=fingerprint();
         const preview=await request('apply',{...body,dry_run:true});
         state.loading=false;syncEditing();updateApply();
         if(preview.action==='none'&&!Object.keys(preview.changes||{}).length&&!preview.editor_changed){show('配置没有变化，无需应用。');return;}
         window.ppgwGateway.previewEditor(preview,async()=>{
           if(state.stopped||state.active)return;
+          if(previewFingerprint!==fingerprint()||JSON.stringify(body.settings_patch)!==JSON.stringify(window.ppgwGateway?.editorPatch(state.settingsRevision)||{}))throw Error('编辑内容已变化，请重新预览后再确认应用。');
           try {
             state.active=true;syncEditing();updateApply();view.hidden=true;view.style.display='none';
             show('正在统一保存并验证配置，网关可能短暂重启…');

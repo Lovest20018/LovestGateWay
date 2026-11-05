@@ -14,8 +14,8 @@
   <div><strong id="dirty-count">没有未保存的修改</strong><span id="save-hint">先预览生效方式，再确认应用。</span></div>
   <div class="button-row"><button class="btn" id="discard">放弃修改</button><button class="btn btn-brand" id="preview">预览变更</button></div>
 </footer>
-<dialog id="preview-dialog" aria-labelledby="preview-title">
+<section hidden tabindex="-1" id="preview-dialog" class="application-preview card glass" aria-labelledby="preview-title">
   <div class="dialog-body"><h2 id="preview-title">预览应用结果</h2><div id="preview-content"></div>
     <div class="button-row dialog-actions"><button class="btn" id="cancel-preview">返回修改</button><button class="btn btn-brand" id="apply">确认应用</button></div>
   </div>
-</dialog>
+</section>

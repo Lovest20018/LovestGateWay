@@ -15,7 +15,7 @@ export async function build(output=join(here,'dist')) {
     const ext=label.slice(label.lastIndexOf('.')), name=label.slice(0,-ext.length)+'.'+createHash('sha256').update(raw).digest('hex').slice(0,12)+ext;
     await writeFile(join(output,name),raw); assets[label]=name; return name;
   }
-  // The old dashboard remains an opaque, unchanged compatibility application.
+  // Keep the upstream runtime bundle intact and mount it in the shared document.
   const bundle=html.match(/import\("\/ui\/(bundle\.[^"]+\.js)"\)/)?.[1];
   if(!bundle) throw Error('Upstream public entry point missing');
   for(const name of [bundle,'TwemojiCountryFlags.woff2','lovestgateway.svg','paopaogateway.svg']) await copyFile(join(original,name),join(output,name));
@@ -23,6 +23,7 @@ export async function build(output=join(here,'dist')) {
   await emit('theme.css',styles);
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
   for(const name of ['model.js','auth.js'])await emit(name,await textFile(join(here,'src',name)));
+  await emit('legacy-bridge.js',(await textFile(join(here,'src/legacy-bridge.js'))).replaceAll('@@runtime-bundle@@',bundle));
   for(const name of ['editor.js','diagnostics.js','shell.js']) {
     let source=await textFile(join(here,'src',name));
     for(const [label,hashed] of Object.entries(assets)) source=source.replaceAll('./'+label,'./'+hashed);
@@ -30,8 +31,7 @@ export async function build(output=join(here,'dist')) {
   }
   await emit('shell.css',await textFile(join(here,'src/shell.css')));
   await emit('diagnostics.css',await textFile(join(here,'src/diagnostics.css')));
-  await emit('legacy-bridge.js',await textFile(join(here,'src/legacy-bridge.js')));
-  await writeFile(join(output,'legacy.html'),html.replace('</head>',`<script defer src="/ui/${assets['legacy-bridge.js']}"></script></head>`));
+  await writeFile(join(output,'legacy.html'),'<!doctype html><meta charset="utf-8"><script>location.replace("/ui/"+location.hash)</script>');
   let index=await textFile(join(here,'src/index.html'));
   for(const [label,hashed] of Object.entries(assets)) index=index.replaceAll('@@'+label+'@@',hashed);
   index=index.replace('@@gateway_view@@',await textFile(join(root,'integration/gateway_view.html')));

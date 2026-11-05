@@ -117,6 +117,27 @@ async function exercise(browser, kind) {
     }
     await page.locator('.groups').getByRole('button', {name:'删除',exact:true}).last().waitFor();
     await page.waitForFunction(() => !document.querySelector('[data-ppsub-apply]').disabled);
+    // A source-editor wrapper must never become an implicit second grid column.
+    const layoutCheck=async()=>{
+      const bounds=await page.evaluate(()=>{
+        const box=selector=>{const b=document.querySelector(selector).getBoundingClientRect();return{x:b.x,y:b.y,width:b.width,bottom:b.bottom};};
+        return{title:box('#page-title'),toolbar:box('.source-editor>.phead'),globals:box('.source-editor .monitor'),groups:box('.source-editor .groups'),main:box('#shell-content'),overflow:document.documentElement.scrollWidth>innerWidth};
+      });
+      assert.ok(bounds.title.y<bounds.toolbar.y,'page heading must precede the editor toolbar');
+      assert.ok(bounds.globals.bottom<=bounds.groups.y,'global options and node groups must follow vertically');
+      assert.ok(bounds.globals.width>=bounds.main.width-80,'editor must use the full page width');
+      assert.equal(bounds.overflow,false,'page must not overflow horizontally');
+      assert.equal(await page.locator('iframe').count(),0);
+      assert.equal(await page.locator('dialog').count(),0);
+      return bounds;
+    };
+    await layoutCheck();
+    await page.evaluate(()=>localStorage.setItem('ppgw-theme','light'));
+    await page.reload();await page.evaluate(()=>{window.fixtureDocument='unchanged';});
+    await page.waitForFunction(()=>!document.querySelector('[data-ppsub-apply]')?.disabled&&document.querySelector('.source-editor .groups'));
+    await page.setViewportSize({width:1863,height:878});await layoutCheck();
+    await page.screenshot({path:path.join(root,'dist/subscription-unified-'+kind+'-desktop.png'),animations:'disabled'});
+    await page.setViewportSize({width:1440,height:960});
     if (kind === 'ppsub') {
       const name = page.locator('.subs [data-field="name"]').first();
       await name.fill('Temporary draft');
@@ -189,6 +210,7 @@ async function exercise(browser, kind) {
     await page.waitForFunction(() => document.querySelector('#shell-nav').getBoundingClientRect().right <= 0);
     assert.equal(await apply.isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await layoutCheck();
     await page.screenshot({path: path.join(root, 'dist/ppsub-native-' + kind + '-mobile.png'), fullPage: true, animations: 'disabled'});
     await page.setViewportSize({width: 1440, height: 960});
     await page.getByRole('link', {name: '概览', exact: true}).click();

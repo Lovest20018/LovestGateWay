@@ -34,7 +34,7 @@
         prepared = {submit};
         $('preview-content').replaceChildren(...previewDescription(data, 'config'), el('p', {class:'subtext', text:
           data.save_target === 'local_policy' ? '全局选项、提供商、节点组、规则与更新计划将统一保存。本地覆盖策略不会改写源 YAML。' : 'PPsub 配置与更新计划将统一保存。加载失败时整批恢复。'}));
-        $('preview-dialog').showModal();
+        openPreview();
       },
       editorApplied: async () => { dirty.clear(); sourceDraft = null; await refreshRuntime(); await load(); },
       attachOptions: host => {
@@ -533,10 +533,11 @@
             else { if (!draft.ppsub && !model.source.native_ppsub) throw Error('请先选择 PPsub JSON 文件。'); target.suburl='ppsub@http://127.0.0.1/ppsub.json'; }
             const body={base_revision:model.revision,patch:{ini:target},reset_source:draft.reset,
               ...(draft.kind==='ppsub'&&draft.ppsub?{source_ppsub:draft.ppsub}:{})};
+            const snapshot=previewSnapshot();
             const data=await api('preview',body);
-            prepared={kind:'config',body,source:true};
+            prepared={kind:'config',body,source:true,snapshot};
             $('preview-content').replaceChildren(...previewDescription(data,'config'),el('p',{class:'subtext',text:'确认后切换主配置来源。成功后会重新读取新来源的编辑内容。'}));
-            $('preview-dialog').showModal();
+            openPreview();
           } catch(error){notice(error.message,'error');}
         }})]));
       details.append(form); section.append(details);
@@ -700,10 +701,11 @@
         if (window.ppgwPpsub?.hasChanges()) throw Error('请先保存或重新读取编辑器中的修改，再应用全局选项或网关设置。');
         const kind = 'config';
         const body = {...patchBody(), ...(forceRestart ? {restart: true} : {})};
+        const snapshot=previewSnapshot();
         const data = await api('preview', body);
         if (data.action === 'none' && !Object.keys(data.changes || {}).length && !data.changed) { notice('配置没有变化，无需应用。'); return; }
-        prepared = {kind, body, address: newAddress(data.effects?.web_listen)};
-        $('preview-content').replaceChildren(...previewDescription(data, kind)); $('preview-dialog').showModal();
+        prepared = {kind, body, snapshot, address: newAddress(data.effects?.web_listen)};
+        $('preview-content').replaceChildren(...previewDescription(data, kind)); openPreview();
       } catch (error) { notice(error.message, 'error'); }
       finally { updateDirty(); }
     }
@@ -711,7 +713,7 @@
       if (dirty.size || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) { notice('请先完成当前订阅、规则或全局选项修改。', 'error'); return; }
       prepared = {kind: 'policy_reset', body: {base_revision: model.revision}};
       $('preview-content').replaceChildren(el('div', {class: 'notice', text: '将备份并移除本地策略，重启后使用订阅中的原始分组与规则。现有连接可能中断。'}));
-      $('preview-dialog').showModal();
+      openPreview();
     }
     async function startJob(kind, payload, address) {
       if (running || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) throw Error('请先保存或重新读取编辑器中的修改，再应用全局选项或网关设置。');
@@ -889,11 +891,17 @@
       }
       finally { if (!stopped) $('reload').disabled = running; }
     }
+    function previewSnapshot(){return JSON.stringify({dirty:[...dirty],source:sourceDraft,passwordConfirmation});}
+    function openPreview(){
+      prepared.snapshot??=previewSnapshot();
+      const panel=$('preview-dialog');panel.hidden=false;panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true});
+    }
     $('preview').onclick = () => preview();
-    $('cancel-preview').onclick = () => { prepared = null; $('preview-dialog').close(); };
+    $('cancel-preview').onclick = () => { prepared = null; $('preview-dialog').hidden = true; };
     $('apply').onclick = async () => {
       if (!prepared || running) return;
-      const action = prepared; prepared = null; $('preview-dialog').close();
+      const action = prepared; prepared = null; $('preview-dialog').hidden = true;
+      if(action.snapshot!==previewSnapshot()){notice('编辑内容已变化，请重新预览后再确认应用。','error');return;}
       try { if (action.submit) await action.submit(); else await startJob(action.kind, action.body, action.address); }
       catch (error) { notice(error.message, 'error'); }
     };
@@ -907,7 +915,7 @@
       lifetime.abort();
       for (const id of timers) clearTimeout(id);
       timers.clear();
-      $('preview-dialog').close();
+      $('preview-dialog').hidden = true;
       if (current === bridge) current = null;
       document.title = 'LovestGateWay';
     }
