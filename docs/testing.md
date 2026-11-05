@@ -64,6 +64,10 @@ node scripts/verify-observer-api-fixture.cjs dist/test-ui
 
 `scripts/verify-observer-api-linux.py` 只接受带标记的一次性 systemd 容器，覆盖 API 默认关闭、管理员启用、Token 轮换、停用后释放端口、关闭采集和启用失败回退。其他使用 API 的隔离网络脚本需要先在测试配置中明确开启 API。
 
+`scripts/verify-native-network.py --run --fixture-only --report /evidence/network.json` 可在安装了正式发行包的一次性网关中验证 FakeIP DNS、IPv4/IPv6 透明 HTTP、普通 UDP、UDP/443 回显和透明入口连接记录。需要 root、`/run/management-validation-only` 标记以及启用 UDP、IPv6 和连接采集的合成配置。该模式允许本地 YAML，跳过公网 HTTPS，并在报告中标记 `synthetic_only`；不会把隔离结果当作现用代理出口或真实客户端业务验收。缺少 `--run` 或标记时拒绝执行。UDP/443 回显不能证明 QUIC 协议兼容；公网 IPv6 需另行具备出口并测试。
+
+脚本在网关所在网络命名空间创建临时客户端、目标和转发规则，结束后检查配置、运行模式、节点选择、外部防火墙和路由恢复。应使用独立网络的可丢弃网关，保留同版本二进制摘要、结果、恢复核对和容器清理证据；不要挂载真实运行配置或代理凭据。报告中的 `complete` 只表示检查执行结束，业务验收应另列通过和失败项。
+
 测试输入应使用虚构名称、文档示例地址和合成凭据。公开构建仅从源码生成通用安装包，不包含运行配置、订阅缓存或部署验收记录。
 
 ## 发布前检查
