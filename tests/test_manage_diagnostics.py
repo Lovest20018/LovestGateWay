@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch, PropertyMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_backup import BackupStore
-from manage_common import Layout, ManagementError, digest, write_json
+from manage_common import Layout, ManagementError, digest, write_json, operation_lock, operation_lock_descriptor
 from manage_config import JOURNAL
 from manage_diagnostics import Diagnostics
 
@@ -46,6 +46,7 @@ class DiagnosticsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.layout = Layout(self.temp.name)
+        with operation_lock(self.layout): pass  # installed layouts already have their coordination file
         self.system = SyntheticSystem()
         self.now = 1000
         self.diagnostics = Diagnostics(self.layout, self.system, clock=lambda: self.now)
@@ -184,6 +185,38 @@ class DiagnosticsTests(unittest.TestCase):
             change()
             with self.assertRaisesRegex(ManagementError, 'STALE_RECOVERY_PREVIEW'):
                 self.diagnostics.execute_restore(payload)
+        self.assertEqual(self.system.calls, [])
+
+    def test_preview_rejects_file_or_service_changes_while_sampling_its_impact(self):
+        original = self.diagnostics._scope
+        for action in ('restore', 'recover'):
+            if action == 'recover': self.journal()
+            for change in (lambda: self.program.write_text('changed during ' + action),
+                           lambda: self.system.states['paopaogw'].update(enabled=not self.system.states['paopaogw']['enabled'])):
+                def concurrent_scope(index, full):
+                    self.assertGreaterEqual(operation_lock_descriptor(self.layout), 0)
+                    value = original(index, full)
+                    change()
+                    return value
+                with self.subTest(action=action), patch.object(self.diagnostics, '_scope', concurrent_scope):
+                    with self.assertRaisesRegex(ManagementError, 'STALE_RECOVERY_PREVIEW'):
+                        if action == 'restore': self.preview()
+                        else: self.diagnostics.preview_recover({})
+        self.assertEqual(self.system.calls, [])
+
+    def test_preview_rejects_external_file_aba_even_when_final_bytes_match(self):
+        historical = self.program.read_bytes()
+        self.program.write_bytes(b'current program differs from backup')
+        current = self.program.read_bytes()
+        original = self.diagnostics._scope
+        def transient_target(index, full):
+            self.program.write_bytes(historical)
+            value = original(index, full)  # would incorrectly display no program change
+            self.program.write_bytes(current)
+            return value
+        with patch.object(self.diagnostics, '_scope', transient_target):
+            with self.assertRaisesRegex(ManagementError, 'STALE_RECOVERY_PREVIEW'): self.preview()
+        self.assertEqual(self.program.read_bytes(), current)
         self.assertEqual(self.system.calls, [])
 
     def test_token_expires_and_tampering_cannot_call_transaction(self):
