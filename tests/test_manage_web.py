@@ -134,6 +134,14 @@ class WebSettingsTests(unittest.TestCase):
         with call('/api/status',token='a'*64) as response:
             self.assertEqual(response.status,200)
             self.assertNotIn('settings',json.load(response))
+        with self.assertRaises(HTTPError) as denied: call('/api/recheck', {})
+        self.assertEqual(denied.exception.code, 401); denied.exception.close()
+        with self.assertRaises(HTTPError) as denied: call('/api/recheck', {}, 'a'*64, 'https://foreign.test')
+        self.assertEqual(denied.exception.code, 403); denied.exception.close()
+        with call('/api/recheck', {}, 'a'*64) as response:
+            self.assertEqual(json.load(response)['result'], 'staged')
+        with self.assertRaises(HTTPError) as denied: call('/api/recheck', {'restart':True}, 'a'*64)
+        self.assertEqual(denied.exception.code, 400); denied.exception.close()
         with self.assertRaises(HTTPError) as denied: call('/api/preview', self.request(), 'a' * 64, 'https://example.org')
         self.assertEqual(denied.exception.code, 403)
         denied.exception.close()

@@ -14,6 +14,7 @@ fn target(method: &str, path: &str) -> Option<String> {
         ("POST", "/sniffbox/settings/policy/preview") => Some("/api/policy/preview"),
         ("POST", "/sniffbox/settings/apply") => Some("/api/apply"),
         ("POST", "/sniffbox/settings/observer-token") => Some("/api/observer-token"),
+        ("POST", "/sniffbox/settings/recheck") => Some("/api/recheck"),
         ("POST", "/sniffbox/settings/backups/list") => Some("/api/backups/list"),
         ("POST", "/sniffbox/settings/restore/preview") => Some("/api/restore/preview"),
         ("POST", "/sniffbox/settings/recover/preview") => Some("/api/recover/preview"),
@@ -57,6 +58,9 @@ mod tests {
         assert!(target("POST", "/sniffbox/settings/config").is_none());
         assert_eq!(target("POST", "/sniffbox/settings/observer-token").as_deref(), Some("/api/observer-token"));
         assert!(target("GET", "/sniffbox/settings/observer-token").is_none());
+        assert_eq!(target("POST", "/sniffbox/settings/recheck").as_deref(), Some("/api/recheck"));
+        assert!(target("GET", "/sniffbox/settings/recheck").is_none());
+        assert!(target("POST", "/sniffbox/settings/recheck?x=1").is_none());
         assert!(target("POST", "/sniffbox/settings/observer-token?reveal=true").is_none());
         for suffix in ["diagnostics", "backups"] {
             assert_eq!(target("GET", &format!("/sniffbox/settings/{suffix}")).as_deref(),

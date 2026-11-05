@@ -178,6 +178,8 @@
 /* Shared operation summary and per-provider update evidence. */
 .ppgw-management {margin:12px 0 16px;padding:10px 13px;border:1px solid var(--edge);border-radius:var(--r-ctl);background:var(--row-hover);color:var(--text-2);font-size:12px;line-height:1.7;overflow-wrap:anywhere}
 .ppgw-management p {margin:0}
+.management-status-row {display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.management-status-row .btn {padding:4px 10px;font-size:12px;white-space:nowrap}
 .page-navigation {margin:18px 0 0}
 .ppgw-workspace[data-page="subscriptions"] > .ppgw-gateway {gap:0}
 .ppgw-workspace[data-page="subscriptions"] {gap:0}

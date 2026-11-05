@@ -179,6 +179,15 @@
       SYSTEM_OPERATION_FAILED: '系统或 Mihomo 校验未通过，请检查字段和节点/规则引用。',
       INVALID_UDP_BUDGET: 'UDP 保留额度必须小于会话上限。',
       POLICY_NOT_LOADED: '未能确认策略已加载。',
+      CORE_NOT_RUNNING: '未能确认核心正在运行，请检查服务状态。',
+      RUNNING_CONFIG_MISMATCH: '保存的网关配置与运行配置不一致。',
+      SERVICE_ENV_MISMATCH: '服务启动环境与保存设置不一致。',
+      SERVICE_STATE_MISMATCH: '管理服务的运行状态与设置不一致。',
+      SOURCE_NOT_CONFIRMED: '当前使用的配置资源尚未通过核对。',
+      POLICY_NOT_CONFIRMED: '本地覆盖策略与已加载版本不一致。',
+      STATE_CHANGED_DURING_CHECK: '核对期间运行状态或配置发生变化，请重新核对。',
+      STATE_SAMPLE_UNAVAILABLE: '暂时无法读取完整核对信息，请稍后重试。',
+      API_READINESS_TIMEOUT: '观测 API 尚未通过连接与身份核对。',
       OPERATION_FAILED: '操作未完成，请检查运行状态或使用管理脚本诊断。',
     };
     function message(code) { return errors[code] || (code?.startsWith('INVALID_') ? '字段格式或范围不正确，请检查后重试。' : '操作未完成，请检查配置后重试。'); }
@@ -570,15 +579,15 @@
     root.querySelector('#content').before(navigationHost, statusHost);
     const phaseNames = {queued:'等待执行',validating:'校验配置',fetching:'获取订阅',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置',complete:'已结束',interrupted:'结果待核实'};
     const statusNames = {succeeded:'成功',complete:'成功',applied:'已应用',unchanged:'内容未变',failed:'失败',interrupted:'结果待核实',running:'进行中',applying:'进行中',queued:'等待执行'};
-    let statusFingerprint = '';
+    let statusFingerprint = '', checking = false;
     function renderManagement() {
       const data = model?.management;
       const runtime = model?.runtime?.data || model?.runtime || {};
       const coreLoaded=runtime.configuration_state==='loaded'&&runtime.last_load_result==='success';
-      const fingerprint=JSON.stringify([data,model?.running_mode,model?.source.local_policy,coreLoaded]);
+      const fingerprint=JSON.stringify([data,model?.running_mode,model?.source.local_policy,coreLoaded,checking]);
       if(fingerprint===statusFingerprint&&statusHost.childElementCount)return;
       statusFingerprint=fingerprint;
-      const names = {loaded:'当前保存版本已通过管理验收',saved_pending:'当前保存版本尚无匹配的整体验收记录',retained:'候选校验未通过，沿用上次成功配置',recovery_required:'需要恢复，请检查管理事务',unknown:'整体设置生效情况尚待核对'};
+      const names = {loaded:'已核对当前运行配置与管理服务',saved_pending:'保存版本与运行状态待核对',retained:'候选校验未通过，沿用上次成功配置',recovery_required:'需要恢复，请检查管理事务',unknown:'运行配置与管理服务尚待核对'};
       const rows = data?.recent || [];
       const policyText = data?.policy_state==='loaded'?' · 本地覆盖策略已加载':model?.source.local_policy?' · 已保存本地覆盖策略，加载结果待确认':'';
       const coreText=coreLoaded?' · 核心配置已加载':'';
@@ -591,7 +600,15 @@
         const errorText=row.error==='MANAGEMENT_BUSY'?'该次操作因其他管理任务占用未执行':row.error?message(row.error):'';
         records.append(el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:kind}),el('span',{class:'operation-state',text:statusNames[row.status] || '待核对'})]),el('p',{class:'subtext',text:`${when} · ${phaseNames[row.phase || row.stage] || '已记录'}${outcome?' · '+outcome:''}${errorText?' · '+errorText:''}${row.recovery==='check_required'?' · 请核实运行与恢复状态':''}${row.backup?' · 备份 '+row.backup:''}`})]));
       }
-      statusHost.replaceChildren(heading);
+      const check = data?.verification;
+      const checkNames={core_ini:'网关配置',service_environment:'启动环境',mihomo_source_policy:'Mihomo 来源与策略',management_services:'管理服务',observer_api:'观测 API'};
+      const detail=check?.checked_at ? `最近核对：${new Date(check.checked_at*1000).toLocaleString()} · ${!check.current?'运行状态已变化，等待重新核对':check.result==='verified'?'通过':message(check.error)}${check.checks?.length?' · '+check.checks.map(key=>checkNames[key]||key).join('、'):''}` : '自动核对运行配置与管理服务；核对不应用修改或重启服务。';
+      statusHost.replaceChildren(el('div',{class:'management-status-row'},[heading,el('button',{class:'button',type:'button','data-recheck':'',disabled:checking,text:checking?'正在核对…':'重新核对',onclick:async()=>{
+        checking=true;renderManagement();
+        try { await api('recheck',{}); const fresh=await api('status'); if(!stopped&&model){model.management=fresh.management;model.runtime=fresh.runtime;model.running_mode=fresh.running_mode;model.recovery_required=fresh.recovery_required;} }
+        catch(error){if(!stopped)notice(error.message,'error');}
+        finally {checking=false;if(!stopped)renderManagement();}
+      }})]),el('p',{class:'subtext',text:detail}));
       recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'展示最近 '+rows.length+' 条已记录的配置、订阅与核心维护操作。'})]),rows.length?records:el('p',{class:'empty-state',text:'暂无操作记录。'}));
     }
     async function pollManagement() {
