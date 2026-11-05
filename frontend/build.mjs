@@ -30,6 +30,7 @@ export async function build(output=join(here,'dist')) {
     await emit(name,source);
   }
   await emit('shell.css',await textFile(join(here,'src/shell.css')));
+  await emit('editor.css',await textFile(join(here,'src/editor.css')));
   await emit('diagnostics.css',await textFile(join(here,'src/diagnostics.css')));
   await writeFile(join(output,'legacy.html'),'<!doctype html><meta charset="utf-8"><script>location.replace("/ui/"+location.hash)</script>');
   let index=await textFile(join(here,'src/index.html'));

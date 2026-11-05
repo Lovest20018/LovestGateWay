@@ -115,7 +115,10 @@
     editor.header.after(notice,exportNote);
     const optionsHost = document.createElement('div');
     optionsHost.className = 'ppgw-global-settings';
-    editor.header.parentElement.querySelector('.monitor')?.append(optionsHost);
+    const optionsSection=document.createElement('details');optionsSection.className='editor-schedule';
+    const optionsTitle=document.createElement('summary');optionsTitle.textContent='订阅更新计划';
+    optionsSection.append(optionsTitle,optionsHost);
+    editor.header.parentElement.querySelector('.monitor')?.append(optionsSection);
     const detachOptions = window.ppgwGateway?.attachOptions(optionsHost);
     state.setSettingsBusy = busy => { state.settingsBusy = busy; syncEditing(); updateApply(); };
     function show(message, failed = false, loadedNotice = false) {
@@ -201,7 +204,7 @@
       if(exportButton){exportButton.dataset.nativeLabel ||= exportButton.textContent;const label=full?'导出编辑内容':exportButton.dataset.nativeLabel;if(exportButton.textContent!==label)exportButton.textContent=label;}
       const importButton=menus[1]?.querySelector('button');
       if(importButton){menus[1].hidden=full;importButton.disabled=full||state.loading||state.active||state.settingsBusy;importButton.title=full?'更换 PPsub 来源请使用上方“切换配置来源”。':'';}
-      const providerTitle=root.querySelector('.subs > h3');
+      const providerTitle=root.querySelector('.subs .editor-section-heading > h3, .subs > h3');
       if(providerTitle){providerTitle.dataset.nativeLabel ||= providerTitle.textContent;const label=full?'配置内节点提供商':providerTitle.dataset.nativeLabel;if(providerTitle.textContent!==label)providerTitle.textContent=label;}
       root.querySelectorAll('.rules .rd').forEach(label=>{ const radio=label.querySelector('input'); label.hidden=full&&(radio?.value==='url'||/URL\s*(下载|Download)/i.test(label.textContent)); });
       root.querySelectorAll('.subs .item').forEach(item=>{

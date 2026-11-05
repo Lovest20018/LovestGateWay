@@ -72,7 +72,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.equal(await page.locator('.source-location').textContent(),'custom.yaml');
     const providerName=page.locator('.subs .item .row input').first();
     assert.equal(await providerName.getAttribute('readonly'),'');
-    assert.equal(await page.locator('.subs .editor-section-heading > button').isVisible(),false);
+    assert.equal(await page.locator('.subs .editor-section-footer > button').isVisible(),false);
     assert.equal(await page.locator('.subs .editor-item-tools button').first().isVisible(),false);
     const providerUrl=page.locator('.subs .item .row input').nth(1);
     assert.equal(await providerUrl.inputValue(),'https://example.com/nested-provider');
@@ -93,7 +93,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.waitForFunction(()=>document.querySelector('.source-kind')?.textContent==='远程完整配置');await ready();
     assert.equal(await page.locator('.source-location').textContent(),'https://example.com/new-main');
     assert.equal(await providerUrl.inputValue(),'https://example.com/nested-provider');
-    await health.check();const interval=page.getByLabel('订阅更新间隔',{exact:true});await interval.fill('7h');await interval.press('Tab');
+    await health.check();if(!await page.locator('.editor-schedule').evaluate(node=>node.open))await page.locator('.editor-schedule > summary').click();const interval=page.getByLabel('订阅更新间隔',{exact:true});await interval.fill('7h');await interval.press('Tab');
     await providerUrl.fill('https://example.com/nested-updated');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});
     assert.equal(savedEditor,null);await page.locator('#apply').click();await page.getByText('Combined fixture saved',{exact:true}).waitFor();await ready();
@@ -110,11 +110,12 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.getByText('PPsub 文件已选中，预览并确认后才会切换来源。',{exact:true}).waitFor();
     await page.getByRole('button',{name:'预览来源切换',exact:true}).click();await page.locator('#apply').click();
     await page.waitForFunction(()=>document.querySelector('.source-kind')?.textContent==='原生 PPsub');await ready();
-    assert.equal(await page.locator('.subs .editor-section-heading > button').isVisible(),true);
+    assert.equal(await page.locator('.subs .editor-section-footer > button').isVisible(),true);
     assert.equal(await page.locator('.subs .item .row input').first().getAttribute('readonly'),null);
     assert.equal(await page.getByRole('button',{name:'导入 PPsub',exact:true}).isVisible(),true);
     assert.equal(await page.getByRole('button',{name:'导出编辑内容',exact:true}).isVisible(),true);
     assert.equal(sourceSwitched,3);
+    if(!await page.locator('.editor-schedule').evaluate(node=>node.open))await page.locator('.editor-schedule > summary').click();
     const manual=page.getByLabel('全局默认仅手动更新',{exact:true});
     await manual.check();
     assert.equal(await page.getByLabel('订阅更新间隔',{exact:true}).count(),0);

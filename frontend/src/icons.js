@@ -1,5 +1,8 @@
 // Established dashboard icon paths, shared by the maintained navigation.
 const paths={
+  "monitor": "<rect x=\"2\" y=\"3\" width=\"20\" height=\"14\" rx=\"2\"/><path d=\"M8 21h8M12 17v4\"/>",
+  "sun": "<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>",
+  "moon": "<path d=\"M20.9 13.1A8.5 8.5 0 1 1 10.9 3.1a7 7 0 0 0 10 10z\"/>",
   "gauge": "<path d=\"M12 14.5 15.6 11\"/><path d=\"M20.3 18a9 9 0 1 0-16.6 0\"/>",
   "globe": "<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M3 12h18M12 3a15.3 15.3 0 0 1 0 18M12 3a15.3 15.3 0 0 0 0 18\"/>",
   "filter": "<path d=\"M4 6h16M7 12h10M10 18h4\"/>",
