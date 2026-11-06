@@ -114,7 +114,17 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     await proxies.getByRole('button',{name:'切换规则模式',exact:true}).click();await proxies.locator('.proxies-status').getByText('切换模式完成。',{exact:true}).waitFor();await exactCard(main,alpha).waitFor();
     testFailures=true;await exactCard(main,alpha).getByRole('button',{name:'测速',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'测速失败'}).waitFor();testFailures=false;
     await proxies.getByRole('button',{name:'全部测速',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:/全部测速未完成.*测速失败/}).waitFor();assert.ok(maxTests<=8);assert.ok(maxTests>1);
-    denyMutation=true;const before401=writes().length;await exactCard(main,alpha).getByRole('button',{name:'选择 '+alpha,exact:true}).click();await page.getByRole('button',{name:'重新登录',exact:true}).waitFor();assert.equal(writes().length,before401+1);
+    holdTests=true;heldTests=[];await proxies.getByRole('button',{name:'全部测速',exact:true}).click();
+    for(let i=0;i<100&&heldTests.length<8;i++)await page.waitForTimeout(20);assert.equal(heldTests.length,8);
+    const nextDuringTest=data.proxies[main].now===alpha?beta:alpha;
+    await exactCard(main,nextDuringTest).getByRole('button',{name:'选择 '+nextDuringTest,exact:true}).click();
+    await proxies.locator('.proxies-status').filter({hasText:'切换节点完成'}).waitFor();assert.equal(data.proxies[main].now,nextDuringTest);
+    const stoppedAt=requests.filter(row=>row.target.endsWith('/delay')||row.target.endsWith('/healthcheck')).length;
+    await proxies.getByRole('button',{name:'停止测速',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'已停止'}).waitFor();
+    holdTests=false;for(const release of heldTests)release();heldTests=[];await page.waitForTimeout(200);
+    assert.equal(requests.filter(row=>row.target.endsWith('/delay')||row.target.endsWith('/healthcheck')).length,stoppedAt,'cancelled tests cannot enqueue more work');
+
+    denyMutation=true;const before401=writes().length,authTarget=data.proxies[main].now===alpha?beta:alpha;await exactCard(main,authTarget).getByRole('button',{name:'选择 '+authTarget,exact:true}).click();await page.getByRole('button',{name:'重新登录',exact:true}).waitFor();assert.equal(writes().length,before401+1);
     const password='ProxyFixtureChanged8';expectedSecret=createHash('sha256').update(password).digest('hex');denyMutation=false;await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.locator('#reauth-panel').getByLabel('管理密码',{exact:true}).fill(password);await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});await page.waitForTimeout(5400);assert.equal(writes().length,before401+1,'reauthentication must not replay a mutation');assert.equal(await page.evaluate(()=>window.documentIdentity),'proxies-source');
     assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+expectedSecret));
     readStatus=503;await proxies.getByRole('button',{name:'刷新',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'HTTP 503'}).waitFor();readStatus=200;await proxies.getByRole('button',{name:'刷新',exact:true}).click();await proxies.locator('.proxies-status').waitFor({state:'hidden'});
