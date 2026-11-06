@@ -1,0 +1,83 @@
+name: Review upstream updates
+on:
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: upstream-review
+  cancel-in-progress: false
+jobs:
+  inspect:
+    if: github.repository == 'Lovest20018/LovestGateWay'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch upstream objects only
+        run: git fetch --no-tags https://github.com/kkkgo/PaoPaoGateWay.git main:refs/remotes/upstream/main
+      - name: Read latest stable release
+        id: release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const {data} = await github.rest.repos.getLatestRelease({owner:'kkkgo',repo:'PaoPaoGateWay'});
+              if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(data.tag_name)) throw new Error('Unexpected upstream release tag');
+              core.setOutput('tag', data.tag_name);
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.setOutput('tag', '');
+            }
+      - name: Generate review report
+        env:
+          UPSTREAM_RELEASE: ${{ steps.release.outputs.tag }}
+        run: |
+          python3 scripts/check-upstream.py --release-tag "$UPSTREAM_RELEASE" --output dist/upstream-report.md --json-output dist/upstream-status.json
+          cat dist/upstream-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: upstream-review
+          path: |
+            dist/upstream-report.md
+            dist/upstream-status.json
+      - name: Create or refresh a report-only draft pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const status = JSON.parse(fs.readFileSync('dist/upstream-status.json','utf8'));
+            if (!status.pending) { core.info('Reviewed baseline is current.'); return; }
+            const {owner,repo} = context.repo;
+            const branch = 'codex/upstream-review';
+            const marker = '<!-- lovestgateway-upstream-review -->';
+            const pulls = await github.paginate(github.rest.pulls.list,{owner,repo,state:'open',head:`${owner}:${branch}`,base:'main'});
+            if (pulls.length && !pulls[0].body?.includes(marker)) throw new Error('Reserved review branch belongs to an unrelated pull request');
+            const content = Buffer.from(marker+'\n'+fs.readFileSync('dist/upstream-report.md','utf8')).toString('base64');
+            const {data:base} = await github.rest.git.getRef({owner,repo,ref:'heads/main'});
+            let branchExists=true;
+            try { await github.rest.git.getRef({owner,repo,ref:`heads/${branch}`}); }
+            catch (error) {
+              if (error.status !== 404) throw error;
+              branchExists=false;
+              await github.rest.git.createRef({owner,repo,ref:`refs/heads/${branch}`,sha:base.object.sha});
+            }
+            let existing;
+            try { existing = (await github.rest.repos.getContent({owner,repo,path:'docs/upstream-pending.md',ref:branch})).data; }
+            catch (error) { if (error.status !== 404) throw error; }
+            if(branchExists && (!existing || existing.type!=='file' || !Buffer.from(existing.content,'base64').toString('utf8').startsWith(marker)))
+              throw new Error('Reserved branch does not contain an automation-owned report');
+            if (!existing || existing.content.replace(/\s/g,'') !== content) {
+              await github.rest.repos.createOrUpdateFileContents({owner,repo,branch,path:'docs/upstream-pending.md',
+                message:'docs: record pending upstream changes',content,sha:existing?.sha});
+            }
+            const body = `${marker}\n上游发生变化。本 PR 仅更新差异报告，不移植产品代码。\n\n请按 docs/upstream-maintenance.md 评审、测试并更新台账；没有自动合并或生产部署。\n\n上游提交：${status.upstream_head}`;
+            if (pulls.length) await github.rest.pulls.update({owner,repo,pull_number:pulls[0].number,body});
+            else await github.rest.pulls.create({owner,repo,head:branch,base:'main',title:'Review pending upstream updates',body,draft:true});

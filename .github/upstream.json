@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "repository": "kkkgo/PaoPaoGateWay",
+  "branch": "main",
+  "merged_base": "4a5757e93a46669a54c9e5864d7b4a8d5484da76",
+  "reviewed_head": "f45e3d9f523c3a09c2093cc95e31b5f42c8458dc",
+  "reviewed_release": "20261030-f45e3d9",
+  "initial_release_commit": "661481054bc0c9fe1107ba0200288d788a75b4ab",
+  "decisions": [
+    {
+      "commit": "f45e3d9f523c3a09c2093cc95e31b5f42c8458dc",
+      "status": "partially_ported",
+      "ported": [
+        "sniffbox/crates/sb-ppgw/src/ruleset.rs",
+        "sniffbox/crates/sb-ppgw/src/ppsub/rules.rs",
+        "sniffbox/crates/sb-ppgw/src/ppsub/state.rs",
+        "sniffbox/crates/sb-ppgw/src/ppsub/retry.rs",
+        "sniffbox/crates/sb-ppgw/src/lib.rs"
+      ],
+      "not_adopted": [
+        "FILES/etc/config/clash/clash-dashboard/ui/",
+        "ppsub_offline.html"
+      ],
+      "deferred": ["sniffbox/Cargo.lock"],
+      "reason": "规则自动识别后端已移植；面板由本项目源码维护，锁文件更新留待独立依赖评审。"
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+name: Publish verified Debian release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without v (must have docs/releases/VERSION.md)'
+        type: string
+        required: true
+      commit:
+        description: 'Full 40-character commit already on main'
+        type: string
+        required: true
+      publish:
+        description: 'Publish after all checks (false leaves a draft)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: official-release
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'Lovest20018/LovestGateWay' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate selected commit and release notes
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          python3 - <<'PY'
+          import os,re,subprocess
+          from pathlib import Path
+          version,commit=os.environ['VERSION'],os.environ['COMMIT']
+          assert re.fullmatch(r'\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?',version)
+          assert re.fullmatch(r'[0-9a-f]{40}',commit)
+          subprocess.run(['git','merge-base','--is-ancestor',commit,'HEAD'],check=True)
+          assert Path('docs/releases',version+'.md').is_file()
+          PY
+  build:
+    needs: validate
+    uses: ./.github/workflows/debian.yml
+    with:
+      source_ref: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: lovestgateway-debian-amd64
+          path: dist/release
+      - name: Verify exact source, package and checksums
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+        run: python3 scripts/release-assets.py --directory dist/release --version "$VERSION" --commit "$COMMIT"
+      - name: Publish attachments through a draft
+        uses: actions/github-script@v7
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit }}
+          PUBLISH: ${{ inputs.publish }}
+        with:
+          script: |
+            const fs=require('fs'),crypto=require('crypto');
+            const {owner,repo}=context.repo,tag='v'+process.env.VERSION,commit=process.env.COMMIT;
+            const manifest=JSON.parse(fs.readFileSync('dist/release/release-manifest.json','utf8'));
+            try { await github.rest.repos.getReleaseByTag({owner,repo,tag}); throw new Error('Version already exists; never replace release assets'); }
+            catch(error) { if(error.status!==404) throw error; }
+            try {
+              const {data}=await github.rest.git.getRef({owner,repo,ref:'tags/'+tag});
+              if(data.object.type!=='commit'||data.object.sha!==commit)throw new Error('Tag already points elsewhere');
+            } catch(error) {
+              if(error.status!==404)throw error;
+              await github.rest.git.createRef({owner,repo,ref:'refs/tags/'+tag,sha:commit});
+            }
+            const body=fs.readFileSync(`docs/releases/${process.env.VERSION}.md`,'utf8')+
+              `\n\n构建提交：${commit}\n已审查上游：${manifest.upstream.reviewed_head}\n`;
+            const {data:release}=await github.rest.repos.createRelease({owner,repo,tag_name:tag,target_commitish:commit,name:'LovestGateWay '+process.env.VERSION,body,draft:true,prerelease:false});
+            const names=[...Object.keys(manifest.assets),'release-manifest.json'];
+            for(const name of names){
+              const data=fs.readFileSync('dist/release/'+name);
+              const {data:asset}=await github.rest.repos.uploadReleaseAsset({owner,repo,release_id:release.id,name,data});
+              const digest='sha256:'+crypto.createHash('sha256').update(data).digest('hex');
+              if(asset.size!==data.length||asset.digest!==digest)throw new Error('Uploaded asset mismatch; release remains draft');
+            }
+            if(process.env.PUBLISH==='true')await github.rest.repos.updateRelease({owner,repo,release_id:release.id,draft:false,make_latest:'true'});
+            core.summary.addLink('Release',release.html_url).addRaw('\n').write();
