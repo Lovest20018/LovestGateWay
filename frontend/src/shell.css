@@ -51,3 +51,8 @@ html,body,#app{min-height:100%;margin:0}
 .operation-heading strong{font-weight:550}
 .operation-state{font-size:11px;color:var(--text-2);background:var(--row-hover);border:1px solid var(--edge);border-radius:20px;padding:2px 8px;white-space:nowrap}
 @media(max-width:639.5px){.page-tabs button{padding:7px 10px;font-size:12px}}
+
+#shell-loading{padding:12px 24px;color:var(--text-2)}
+#shell-backdrop{position:fixed;inset:0;z-index:85;border:0;background:#0008;cursor:pointer}
+body.shell-nav-open{overflow:hidden}
+@media(max-width:760px){#shell-nav{background:var(--panel-solid)}}

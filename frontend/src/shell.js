@@ -35,6 +35,30 @@ document.addEventListener('visibilitychange',()=>{
   if(authenticated&&!runtimePaused&&!document.hidden){if(route!=='overview')runtime();scheduleRuntime();}
 });
 function updateNav(){document.querySelectorAll('[data-route]').forEach(a=>{const key=a.dataset.route;a.hidden=['proxies','rules'].includes(key)&&!['yaml','suburl'].includes(info?.mode);a.classList.toggle('active',route===key);if(route===key)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});}
+const mobileNavigation=matchMedia('(max-width:760px)');
+function setNavigation(open,restoreFocus=true){
+  const nav=document.getElementById('shell-nav'),menu=document.getElementById('shell-menu');
+  if(!nav||!menu)return;
+  const wasOpen=nav.classList.contains('open');open=Boolean(open&&mobileNavigation.matches);
+  nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));
+  nav.inert=mobileNavigation.matches&&!open;
+  document.getElementById('shell-backdrop').hidden=!open;
+  document.querySelector('.shell-main').inert=open;
+  document.body.classList.toggle('shell-nav-open',open);
+  if(open)nav.querySelector('a')?.focus();else if(wasOpen&&restoreFocus)menu.focus();
+}
+mobileNavigation.addEventListener('change',()=>setNavigation(false,false));
+window.addEventListener('keydown',event=>{
+  const nav=document.getElementById('shell-nav');
+  if(!mobileNavigation.matches||!nav?.classList.contains('open'))return;
+  if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();setNavigation(false);}
+  if(event.key==='Tab'){
+    const items=[...nav.querySelectorAll('a[href],button,input,select')].filter(node=>!node.disabled&&!node.hidden&&node.getClientRects().length);
+    const first=items[0],last=items.at(-1);
+    if(event.shiftKey&&(document.activeElement===first||!nav.contains(document.activeElement))){event.preventDefault();last?.focus();}
+    else if(!event.shiftKey&&(document.activeElement===last||!nav.contains(document.activeElement))){event.preventDefault();first?.focus();}
+  }
+},true);
 function currentHash(){const key=location.hash.slice(2).split('?')[0];return key==='ppsub'?'subscriptions':routes.some(r=>r[0]===key)?key:'overview';}
 function allowed(hash,type='goto'){const next=hash?new URL(hash,location.href):undefined;return (!gateway||gateway.allowNavigation(next,type))&&(!diagnostics||diagnostics.allowNavigation(next,type));}
 function navigate(hash,replace=false){
@@ -45,7 +69,7 @@ function navigate(hash,replace=false){
 }
 async function show(guarded=false){if(!authenticated)return;const next=currentHash(),migrated=['settings','subscriptions'].includes(next);if(!guarded&&route&&next!==route&&!allowed('#/'+next)){history.replaceState(null,'','#/'+route);return;}
   if(/^#\/ppsub(?:\?|$)/.test(location.hash))history.replaceState({...history.state,ppgwIndex:navigationIndex},'',location.hash.replace('#/ppsub','#/subscriptions'));
-  route=next;document.getElementById('shell-nav').classList.remove('open');document.getElementById('shell-menu').setAttribute('aria-expanded','false');
+  route=next;setNavigation(false,false);
   if(monitor&&next!==monitorRoute){monitor.dispose();monitor=null;monitorHost.remove();monitorHost=null;monitorRoute='';}
   if(diagnostics&&next!=='diagnostics'){diagnostics.dispose();diagnostics=null;diagnosticHost.remove();diagnosticHost=null;}
   if(overview&&next!=='overview'){overview.dispose();overview=null;overviewHost.remove();overviewHost=null;}
@@ -70,7 +94,7 @@ async function show(guarded=false){if(!authenticated)return;const next=currentHa
   document.title=(routes.find(r=>r[0]===next)?.[1]||'概览')+' · LovestGateWay';updateNav();
 }
 function shell(){if(pendingRecoveryJob())history.replaceState({...history.state,ppgwIndex:navigationIndex},'','#/diagnostics');app.replaceChildren();const nav=el('nav',{id:'shell-nav','aria-label':'主导航'}),brand=el('a',{href:'#/overview',class:'shell-brand',onclick:e=>{e.preventDefault();navigate('#/overview');}});brand.append(el('img',{src:'/ui/lovestgateway.svg',width:'34',height:'34',alt:''}),el('span',{class:'shell-wordmark'},[document.createTextNode('Lovest'),el('b',{text:'GateWay'})]));nav.append(brand);for(const[key,label]of routes){const link=el('a',{href:'#/'+key,'data-route':key,text:label,onclick:e=>{if(e.ctrlKey||e.metaKey||e.shiftKey)return;e.preventDefault();navigate('#/'+key);}});link.prepend(icon(routeIcons[key]));nav.append(link);}nav.append(themeControl(),button('退出登录',()=>{if(!allowed('#/logout'))return;authenticated=false;storeSecret('');location.reload();}));nav.lastElementChild.prepend(icon('logout'));
-  const menu=button('',()=>{const open=nav.classList.toggle('open');menu.setAttribute('aria-expanded',String(open));if(open)nav.querySelector('a')?.focus();});menu.append(icon('menu'));menu.id='shell-menu';menu.setAttribute('aria-label','打开导航');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-controls','shell-nav');const main=el('main',{id:'shell-content'});app.append(nav,el('div',{class:'shell-main'},[el('header',{class:'shell-bar'},[menu,el('img',{src:'/ui/lovestgateway.svg',width:'26',height:'26',alt:''}),el('strong',{text:'LovestGateWay'})]),el('p',{id:'shell-status',role:'status',hidden:''}),el('p',{id:'shell-loading',role:'status',hidden:''}),main]));show();scheduleRuntime();
+  const menu=button('',()=>setNavigation(!nav.classList.contains('open')));menu.append(icon('menu'));menu.id='shell-menu';menu.setAttribute('aria-label','打开导航');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-controls','shell-nav');const main=el('main',{id:'shell-content'});const backdrop=button('',()=>setNavigation(false));backdrop.id='shell-backdrop';backdrop.hidden=true;backdrop.setAttribute('aria-label','关闭导航');app.append(backdrop,nav,el('div',{class:'shell-main'},[el('header',{class:'shell-bar'},[menu,el('img',{src:'/ui/lovestgateway.svg',width:'26',height:'26',alt:''}),el('strong',{text:'LovestGateWay'})]),el('p',{id:'shell-status',role:'status',hidden:''}),el('p',{id:'shell-loading',role:'status',hidden:''}),main]));setNavigation(false,false);show();scheduleRuntime();
 }
 function login(reauth=false){if(reauth&&document.getElementById('reauth-panel'))return;let panel;const password=el('input',{type:'password',autocomplete:'current-password',required:'',placeholder:'管理密码','aria-label':'管理密码'}),status=el('p',{role:'status'}),submit=el('button',{class:'btn btn-brand',type:'submit',text:'登录'}),form=el('form',{class:'shell-login glass'},[el('img',{src:'/ui/lovestgateway.svg',width:'54',height:'54',alt:''}),el('h1',{text:'LovestGateWay'}),el('label',{},[el('span',{text:'管理密码'}),password]),submit,status]);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;status.textContent='正在验证…';const secret=sha256(password.value);try{const response=await fetch('/sniffbox/info',{headers:{Authorization:'Bearer '+secret},signal:AbortSignal.timeout(15000)});if(!response.ok)throw Error(response.status===401?'管理密码不正确。':'暂时无法连接网关。');info=await response.json();storeSecret(secret);authenticated=true;if(reauth){panel.remove();document.getElementById('shell-status').hidden=true;await runtime();scheduleRuntime();diagnostics?.refresh();overview?.refresh();proxies?.refresh();rules?.refresh();monitor?.refresh();}else shell();password.value='';}catch(error){status.textContent=error.name==='TimeoutError'?'连接超时，请重试。':error.message;}finally{submit.disabled=false;}};if(reauth){panel=el('section',{id:'reauth-panel','aria-label':'重新登录',class:'shell-reauth'},[form,button('返回编辑',()=>{panel.remove();expired();})]);const region=document.getElementById('shell-status');region.hidden=false;region.replaceChildren(panel);}else app.replaceChildren(form);password.focus();}
 window.addEventListener('hashchange',()=>{if(!recoveringHistory&&currentHash()!==route)show();});
@@ -92,5 +116,3 @@ if(localStorage.getItem('ppgw-theme')==='custom')localStorage.setItem('ppgw-them
 localStorage.removeItem('ppgw-theme-base');localStorage.removeItem('ppgw-custom-colors');
 systemTheme.addEventListener('change',applyTheme);
 applyTheme();if(storedSecret()&&await runtime()){authenticated=true;shell();}else login();
-
-window.addEventListener('keydown',event=>{if(event.key==='Escape'){document.getElementById('shell-nav')?.classList.remove('open');document.getElementById('shell-menu')?.setAttribute('aria-expanded','false');document.getElementById('shell-menu')?.focus();}});
