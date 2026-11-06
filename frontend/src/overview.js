@@ -1,3 +1,4 @@
+let overviewCache=null;
 import {formatBytes} from './format.js';
 export {formatBytes} from './format.js';
 import {storedSecret} from './auth.js';
@@ -43,7 +44,7 @@ function chart(label,series,format){
   const themeObserver=new MutationObserver(redraw);themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
   canvas.addEventListener('pointermove',event=>{if(!values.length)return;const width=canvas.getBoundingClientRect().width,index=Math.min(values.length-1,Math.max(0,Math.round(event.offsetX/width*39))),sample=values[index];tip.textContent=series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');tip.hidden=false;});
   canvas.addEventListener('pointerleave',()=>{tip.hidden=true;});
-  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;canvas.setAttribute('aria-label',label+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
+  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;canvas.setAttribute('aria-label',label+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
 }
 
 export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInfo=()=>{}}={}){
@@ -70,6 +71,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   page.querySelector('.overview-interfaces-heading').prepend(icon('radio'));
   let cloudflaredSeen=false;
   let data={},history=[],poolHistory=[],previous=null,disposed=false,paused=false,timer=null,controller=null,sequence=0,clockAt=performance.now(),lastFull=0;
+  let cacheChecked=false;const authIdentity=storedSecret();
   const button=page.querySelector('[data-refresh]'),status=page.querySelector('[role=status]');
   const currentBoot=()=>text(data.integration?.data?.boot_id??data.integration?.boot_id);
   function merge(value){
@@ -88,9 +90,15 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
     put('traffic-down',formatBytes(traffic.downloadTotal));put('traffic-up',formatBytes(traffic.uploadTotal));put('traffic-total',formatBytes(number(traffic.downloadTotal)!==null&&number(traffic.uploadTotal)!==null?traffic.downloadTotal+traffic.uploadTotal:null));
     put('rate-down',formatBytes(previous?.downRate,true));put('rate-up',formatBytes(previous?.upRate,true));put('rate-total',formatBytes(previous?.downRate!=null&&previous?.upRate!=null?previous.downRate+previous.upRate:null,true));
     put('protocols',count(connections.tcp)+' / '+count(connections.udp));put('active','活跃连接 '+count(connections.active));put('mapped',count(data.fakeip?.mapped));put('mapped-active','活跃 FakeIP '+count(connections.fakeip)+' · RealIP '+count(connections.realip));put('clients',count(connections.clients));
-    const interfaces=page.querySelector('[data-interfaces]');interfaces.replaceChildren(...list(data.interfaces).map(item=>{const row=make('tr');const speed=item.link===false?'未连接':number(item.speed)!==null?item.speed+' Mbps'+(item.duplex?' · '+item.duplex:''):'—';
-      for(const value of [text(item.name),[...list(item.ipv4),...list(item.ipv6)].map(text).join('\n')||'—',text(item.gateway),text(item.mac),[item.model||item.driver||'',speed].filter(Boolean).join('\n')])row.append(make('td',value));return row;}));
-    if(!interfaces.children.length){const cell=make('td','暂无数据');cell.colSpan=5;interfaces.append(make('tr'));interfaces.firstChild.append(cell);}
+    const interfaces=page.querySelector('[data-interfaces]');
+    const allInterfaces=list(data.interfaces),virtual=allInterfaces.filter(item=>!item.gateway&&/^(docker\d*|br-|veth|virbr|lo$)/.test(item.name||'')),shown=allInterfaces.filter(item=>!virtual.includes(item));
+    const buildRows=items=>items.map(item=>{const row=make('tr');const speed=item.link===false?'未连接':number(item.speed)!==null?item.speed+' Mbps'+(item.duplex?' · '+item.duplex:''):'—';
+      [text(item.name),[...list(item.ipv4),...list(item.ipv6)].map(text).join('\n')||'—',text(item.gateway),text(item.mac),[item.model||item.driver||'',speed].filter(Boolean).join('\n')].forEach((value,index)=>row.append(make('td',value,index===3?'overview-mac':undefined)));return row;});
+    interfaces.replaceChildren(...buildRows(shown));
+    let virtualBox=page.querySelector('.overview-virtual');
+    if(!virtualBox){virtualBox=make('details',undefined,'overview-virtual');virtualBox.append(make('summary'));const wrap=make('div',undefined,'overview-table-wrap'),table=make('table');table.append(make('tbody'));wrap.append(table);virtualBox.append(wrap);interfaces.closest('.overview-table-wrap').after(virtualBox);}
+    virtualBox.hidden=!virtual.length;virtualBox.querySelector('summary').textContent='虚拟接口（'+virtual.length+'）';virtualBox.querySelector('tbody').replaceChildren(...buildRows(virtual));
+    if(!interfaces.children.length){const cell=make('td',virtual.length?'其他接口已收起':'暂无数据');cell.colSpan=5;interfaces.append(make('tr'));interfaces.firstChild.append(cell);}
     page.querySelector('[data-section=cpu]').hidden=!data.cpu;page.querySelector('[data-section=memory]').hidden=!data.memory;
     put('cpu-model',text(c.model));put('cores',number(c.cores)!==null?c.cores+' 核':'');put('cpu-usage',percent(c.usage));put('frequency',number(c.freq)!==null?c.freq+' MHz':'');fields.frequency.title=[['最低',c.freq_min],['最高',c.freq_max]].filter(([,v])=>number(v)!==null).map(([label,v])=>label+' '+v+' MHz').join(' · ');
     put('temperature',number(c.temp)!==null?c.temp.toFixed(1)+' °C':'');fields.temperature.title=text(c.temp_sensor);
@@ -116,6 +124,8 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   function accept(value,sample=true){
     if(number(value.cpu?.cloudflared)!==null||number(value.memory?.cloudflared_rss)!==null)cloudflaredSeen=true;
     const oldBoot=currentBoot();merge(value);const boot=currentBoot();if(oldBoot!==boot){history=[];poolHistory=[];previous=null;}
+    const identity=[boot,data.version,data.mode,data.clash_version,data.integration?.core?.start_time].join('|');
+    if(!cacheChecked){cacheChecked=true;const cached=overviewCache;overviewCache=null;if(cached&&boot!=='—'&&cached.auth===authIdentity&&cached.identity===identity&&Date.now()-cached.at<60000&&Date.now()>=cached.at){history=cached.history;poolHistory=cached.poolHistory;previous=cached.previous;cloudflaredSeen||=cached.cloudflaredSeen;}}
     if(number(value.timestamp)!==null)clockAt=performance.now();
     if(sample){
       const next=trafficSample(previous,value.traffic,performance.now(),boot);if(next){if(previous&&(next.down<previous.down||next.up<previous.up)){history=[];poolHistory=[];}previous=next;}else previous=null;
@@ -136,12 +146,12 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
         if(boot&&currentBoot()!=='—'&&boot!==currentBoot()){const fresh=await request('/sniffbox/info',active.signal);if(disposed||current!==sequence)return;accept(fresh,false);lastFull=performance.now();onInfo(fresh);}
       }
       accept(value);status.hidden=true;
-    }catch(error){if(disposed||current!==sequence)return;status.hidden=false;status.textContent=error.name==='AbortError'?'状态读取超时，稍后自动重试。':error.message;if(error.unauthorized){paused=true;onUnauthorized();}}
+    }catch(error){if(disposed||current!==sequence)return;status.hidden=false;status.textContent=error.name==='AbortError'?'状态读取超时，稍后自动重试。':error.message;if(error.unauthorized){overviewCache=null;history=[];poolHistory=[];previous=null;paused=true;onUnauthorized();}}
     finally{clearTimeout(timeout);if(!disposed&&current===sequence){button.disabled=false;if(!paused)timer=setTimeout(()=>refresh(performance.now()-lastFull>30000),1000);}}
   }
   button.addEventListener('click',()=>refresh());
   const visibility=()=>{if(document.hidden){clearTimeout(timer);controller?.abort();sequence++;button.disabled=false;}else if(!disposed&&!paused)refresh();};document.addEventListener('visibilitychange',visibility);
   if(initialInfo)accept(initialInfo,false);else render();
   if(!document.hidden)refresh();const clockTimer=setInterval(clock,1000);
-  return {refresh,dispose(){disposed=true;sequence++;clearTimeout(timer);clearInterval(clockTimer);controller?.abort();document.removeEventListener('visibilitychange',visibility);trafficChart.dispose();cpuChart.dispose();memoryChart.dispose();host.replaceChildren();}};
+  return {refresh,dispose(){if(!paused&&authIdentity===storedSecret())overviewCache={auth:authIdentity,identity:[currentBoot(),data.version,data.mode,data.clash_version,data.integration?.core?.start_time].join('|'),at:Date.now(),history:history.slice(-40),poolHistory:poolHistory.slice(-40),previous,cloudflaredSeen};else overviewCache=null;disposed=true;sequence++;clearTimeout(timer);clearInterval(clockTimer);controller?.abort();document.removeEventListener('visibilitychange',visibility);trafficChart.dispose();cpuChart.dispose();memoryChart.dispose();host.replaceChildren();}};
 }
