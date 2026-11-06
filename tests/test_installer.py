@@ -24,7 +24,8 @@ class InstallerTests(unittest.TestCase):
             import hashlib
             with verify_package(archive_path, hashlib.sha256(archive_path.read_bytes()).hexdigest()) as verified:
                 for name in ('lib/manage_web.py', 'lib/manage_policy.py', 'lib/manage_subscription.py', 'lib/manage_subscription_schedule.py', 'lib/clash_selection.py', 'units/paopaogw-settings.service',
-                             'ui/gateway.html', 'ui/ui-build.json', 'docs/debian-web-settings.md'):
+                             'ui/gateway.html', 'ui/ui-build.json', 'docs/debian-web-settings.md',
+                             'lib/mihomo_reload.py', 'docs/mihomo-reload-assessment.md'):
                     self.assertIn(name, verified.manifest)
             with tarfile.open(work / 'lovestgateway-test-debian-amd64.tar.gz') as archive:
                 for name in ('lib/bin/sniffbox', 'lib/network.py', 'lib/ppg.sh', 'uninstall.sh', 'install.py'):
