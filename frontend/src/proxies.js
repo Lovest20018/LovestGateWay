@@ -1,7 +1,7 @@
 import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
 import {formatBytes} from './overview.js';
-import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage} from './proxy-model.js';
+import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode} from './proxy-model.js';
 
 const make=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
 const button=(label,callback)=>{const node=make('button',label,'btn');node.type='button';node.addEventListener('click',callback);return node;};
@@ -28,15 +28,16 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const settings=make('section',undefined,'glass proxy-preferences');settings.id='proxy-preferences';settings.hidden=true;settings.setAttribute('aria-label','代理页面设置');
   const input=make('input');input.type='url';input.placeholder='留空使用网关默认 test_node_url';input.value=prefs.testUrl;input.addEventListener('input',()=>{prefs.testUrl=input.value;save();updateUrls();});settings.append(label('测速 URL',input));
   const globalSort=make('select');for(const [value,text]of sorts.filter(([key])=>key!=='scoreAsc')){const option=make('option',text);option.value=value;globalSort.append(option);}globalSort.value=prefs.sort;globalSort.addEventListener('change',()=>{prefs.sort=globalSort.value;save();render();});settings.append(label('组内排序',globalSort));
-  for(const [key,text]of [['optimize','优化节点名标签显示'],['hideUnavail','隐藏不可用代理'],['autoClose','切换后关闭旧连接'],['showUdp','显示 UDP 标记']]){const check=make('input');check.type='checkbox';check.checked=prefs[key];check.dataset.preference=key;check.addEventListener('change',()=>{prefs[key]=check.checked;save();render();});settings.append(label(text,check));}
+  for(const [key,text]of [['optimize','优化节点名标签显示'],['hideUnavail','隐藏不可用代理'],['hideInfoNodes','隐藏疑似订阅说明节点（仅影响展示）'],['autoClose','切换后关闭旧连接'],['showUdp','显示 UDP 标记']]){const check=make('input');check.type='checkbox';check.checked=prefs[key];check.dataset.preference=key;check.addEventListener('change',()=>{prefs[key]=check.checked;save();render();});settings.append(label(text,check));}
   const curve=make('input');curve.type='range';curve.min='0';curve.max='100';curve.value=String(prefs.curve);curve.addEventListener('input',()=>{prefs.curve=Number(curve.value);save();render();});settings.append(label('延迟曲线背景（100 为关闭）',curve));
   const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>perform('全部测速',async()=>runTests(testPlan(data,prefs)))),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
   testAll.dataset.action='test-all';updateAll.dataset.action='update-all';toolbar.append(testAll,updateAll);
+  const information=make('p',undefined,'proxies-notice');information.hidden=true;
   const groupHost=make('div',undefined,'proxy-groups'),providerHost=make('section',undefined,'proxy-providers'),usageHost=make('section',undefined,'proxy-usages');
   const empty=make('p','暂无可用的节点组。','glass proxies-empty');empty.hidden=true;
   const dialog=make('dialog',undefined,'proxy-dialog');dialog.setAttribute('aria-label','节点详情');
   const dialogHead=make('header'),dialogTitle=make('h2','节点详情'),close=button('关闭',()=>dialog.close()),dialogBody=make('div',undefined,'proxy-detail-body');dialogHead.append(dialogTitle,close);dialog.append(dialogHead,dialogBody);dialog.addEventListener('close',()=>{detailsVersion++;detailName='';});
-  page.append(heading,status,modeNotice,settings,toolbar,groupHost,empty,providerHost,usageHost,dialog);host.replaceChildren(page);
+  page.append(heading,status,modeNotice,settings,toolbar,information,groupHost,empty,providerHost,usageHost,dialog);host.replaceChildren(page);
   function message(text){if(disposed)return;status.textContent=text;status.hidden=!text;}
   function authorized(){paused=true;if(!disposed)onUnauthorized();}
   async function request(url,{method='GET',body,signal,tag,allowNotModified=false}={}){
@@ -205,6 +206,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   }
   function render(){
     if(disposed)return;
+    const infoNames=Object.keys(data.proxies).filter(name=>!isGroup(data.proxies[name])&&informationNode(name));information.hidden=!infoNames.length;information.textContent=infoNames.length?'疑似订阅说明节点 '+infoNames.length+' 个：'+infoNames.join('、')+'。按名称识别，仅供参考；可在页面设置中隐藏，不修改配置或测速范围。':'';
     const ordered=groups(data);summary.textContent=ordered.length+' 个节点组';modeButton.textContent=data.mode==='global'?'切换规则模式':'切换全局模式';modeButton.prepend(icon('globe'));modeNotice.hidden=data.mode!=='global';
     const keep=new Set(ordered);for(const [name,view]of views)if(!keep.has(name)){for(const card of view.cards.values())card.clear();view.section.remove();views.delete(name);}
     for(const [index,name]of ordered.entries()){let view=views.get(name);if(!view){view=createGroup(name);views.set(name,view);}if(groupHost.children[index]!==view.section)groupHost.insertBefore(view.section,groupHost.children[index]||null);if(Object.hasOwn(prefs.gcollapse,name))view.section.open=!prefs.gcollapse[name];renderGroup(view);}

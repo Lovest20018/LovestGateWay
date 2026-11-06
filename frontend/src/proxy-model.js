@@ -4,6 +4,7 @@ const strings=value=>Array.isArray(value)?value.filter(item=>typeof item==='stri
 export const isGroup=value=>Array.isArray(value?.all);
 export const automatic=value=>['URLTest','Fallback','LoadBalance'].includes(value?.type)||value?.smart===true;
 export const lockable=value=>['URLTest','Fallback'].includes(value?.type)||value?.smart===true;
+export const informationNode=name=>/^(?:剩余流量|到期时间|套餐到期|流量重置|重置剩余|官网地址|备用网址|订阅更新|traffic remaining|expires?[:：\s])/i.test(name.trim());
 export const rejected=name=>['REJECT','REJECT-DROP'].includes(name);
 export const segment=value=>{if(value==='.'||value==='..')throw Error('该名称不能用于代理 API 路径，请先调整配置名称。');return encodeURIComponent(value).replace(/[!'()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());};
 export const defaultTestUrl='http://cp.cloudflare.com/generate_204';
@@ -25,7 +26,7 @@ export function snapshot(value){
 }
 export function preferences(value){
   const raw=record(value),sort=sorts.some(([key])=>key===raw.sort)?raw.sort:'natural';
-  return {...raw,sort,hideUnavail:raw.hideUnavail===true,autoClose:raw.autoClose===true,optimize:raw.optimize!==false,showUdp:raw.showUdp===true,
+  return {...raw,sort,hideUnavail:raw.hideUnavail===true,hideInfoNodes:raw.hideInfoNodes===true,autoClose:raw.autoClose===true,optimize:raw.optimize!==false,showUdp:raw.showUdp===true,
     curve:typeof raw.curve==='number'&&Number.isFinite(raw.curve)?Math.max(0,Math.min(100,raw.curve)):100,
     testUrl:typeof raw.testUrl==='string'?raw.testUrl:'',gsort:Object.assign(Object.create(null),record(raw.gsort)),gcollapse:Object.assign(Object.create(null),record(raw.gcollapse))};
 }
@@ -64,7 +65,7 @@ export function nodeLabel(name,optimize=true){
 export function members(data,name,filter={},prefs=preferences({})){
   let values=[...(data.proxies[name]?.all||[])];
   if(data.mode==='global'&&name==='GLOBAL')values=values.filter(node=>!isGroup(data.proxies[node]));
-  values=values.filter(node=>(!prefs.hideUnavail||isGroup(data.proxies[node])||state(data,node,name)!=='offline')&&(!filter.status||state(data,node,name)===filter.status)&&(!filter.region||nodeLabel(node).code===filter.region)&&(!filter.query||node.toLocaleLowerCase().includes(filter.query.toLocaleLowerCase())));
+  values=values.filter(node=>(!prefs.hideInfoNodes||!informationNode(node))&&(!prefs.hideUnavail||isGroup(data.proxies[node])||state(data,node,name)!=='offline')&&(!filter.status||state(data,node,name)===filter.status)&&(!filter.region||nodeLabel(node).code===filter.region)&&(!filter.query||node.toLocaleLowerCase().includes(filter.query.toLocaleLowerCase())));
   const order=filter.sort||prefs.gsort[name]||prefs.sort,latency=node=>delay(data,node,name)>0?delay(data,node,name):Infinity;
   if(order==='latAsc'||order==='latDesc')values.sort((a,b)=>{const x=latency(a),y=latency(b);return x===y?0:x===Infinity?1:y===Infinity?-1:order==='latAsc'?x-y:y-x;});
   else if(order==='scoreAsc')values.sort((a,b)=>(data.proxies[name]?.scores?.[a]?.score??Infinity)-(data.proxies[name]?.scores?.[b]?.score??Infinity));
