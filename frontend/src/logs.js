@@ -15,9 +15,9 @@ export function mountLogs(host,{onUnauthorized=()=>{}}={}) {
     const section=el('section',undefined,'glass monitor-log-pane'),head=el('div',undefined,'monitor-head'),body=el('div',undefined,'monitor-log-body'),count=el('p',undefined,'monitor-hint');body.tabIndex=0;body.setAttribute('aria-label',title+'内容');
     const state={name,buffer,section,body,count,query:'',limit:400,follow:true};
     const search=input('搜索'+title,{onInput:value=>{state.query=value;render();}}),pause=button('暂停',()=>{buffer.pause(!buffer.paused);render();}),clear=button('清空'+title,()=>{buffer.clear();render();}),exportButton=button('导出'+title,()=>download(filtered(state).map(row=>name==='core'?'['+date(row.ts)+'] ['+sourceName(row.source)+'] ['+row.level+'] '+row.text:row.text).join('\n'),name+'-'+new Date().toISOString().replace(/[:]/g,'-')+'.txt'));
-    head.append(el('h2',title),search,pause,clear,exportButton);state.pause=pause;
-    if(name==='core')head.append(select('最低日志级别',[['trace','Trace'],['debug','Debug'],['info','Info'],['warn','Warning'],['error','Error']],value=>{level=value;localStorage.setItem('ppgw-log-level',value);render();},level));
-    head.append(select(title+'显示条数',[['400','最近 400 行'],['2000','全部保留行']],value=>{state.limit=Number(value);render();},'400'));
+    const paneTitle=el('h2',title),toolbar=el('div',undefined,'monitor-log-toolbar'),actions=el('div',undefined,'monitor-log-actions');head.append(paneTitle,toolbar);toolbar.append(search,actions);actions.append(pause,clear,exportButton);state.pause=pause;state.title=paneTitle;
+    if(name==='core')actions.append(select('最低日志级别',[['trace','Trace'],['debug','Debug'],['info','Info'],['warn','Warning'],['error','Error']],value=>{level=value;localStorage.setItem('ppgw-log-level',value);render();},level));
+    actions.append(select(title+'显示条数',[['400','最近 400 行'],['2000','全部保留行']],value=>{state.limit=Number(value);render();},'400'));
     body.addEventListener('scroll',()=>{state.follow=body.scrollHeight-body.scrollTop-body.clientHeight<30;});body.addEventListener('dblclick',()=>{buffer.pause(!buffer.paused);render();});
     section.append(head,count,body);panes.append(section);views.push(state);
   }
@@ -25,7 +25,7 @@ export function mountLogs(host,{onUnauthorized=()=>{}}={}) {
   function schedule(){if(scheduled===null)scheduled=setTimeout(()=>{scheduled=null;render();},200);}
   function render(){
     if(client.disposed)return;panes.classList.toggle('vertical',vertical);layout.hidden=mode!=='both';layout.textContent=vertical?'横向分屏':'纵向分屏';
-    for(const state of views){state.section.hidden=mode!=='both'&&mode!==state.name;state.pause.textContent=state.buffer.paused?'恢复':'暂停';state.pause.setAttribute('aria-pressed',String(state.buffer.paused));if(state.section.hidden)continue;
+    for(const state of views){state.title.hidden=mode!=='both';state.section.hidden=mode!=='both'&&mode!==state.name;state.pause.textContent=state.buffer.paused?'恢复':'暂停';state.pause.setAttribute('aria-pressed',String(state.buffer.paused));if(state.section.hidden)continue;
       const rows=filtered(state),visible=rows.slice(-state.limit),scroll=state.body.scrollTop;
       state.count.textContent=(state.name==='screen'&&!screenAvailable?'终端输出暂不可用。 · ':'')+'匹配 '+rows.length+' / 保留 '+state.buffer.rows.length+' 行（上限 2000）'+(rows.length>visible.length?' · 当前显示最近 '+visible.length+' 行':'')+(state.buffer.paused?' · 已暂停，待显示 '+state.buffer.pending+' 行':'');
       state.body.replaceChildren(...visible.map(row=>{const line=el('div',undefined,'monitor-log-line');line.dataset.level=row.level;if(state.name==='core')line.append(el('span','['+date(row.ts)+'] ['+sourceName(row.source)+'] ['+row.level+'] ','monitor-log-prefix'));
