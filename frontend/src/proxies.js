@@ -165,7 +165,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   async function testGroup(group){
     if(testing||busy||paused||disposed)return;
     try{
-      const target=data.proxies[group],filter=filterFor(group),url=testUrl(data,group,prefs,filter.url),names=members(data,group,filter,prefs).filter(name=>!rejected(name));
+      const target=data.proxies[group],filter=filterFor(group),url=testUrl(data,group,prefs,filter.url),names=members(data,group,filter,{...prefs,hideInfoNodes:false}).filter(name=>!rejected(name));
       if(!names.length){message('当前筛选下没有可测速节点。');return;}
       if(automatic(target)&&target.fixed){
         let unlocked=false;
