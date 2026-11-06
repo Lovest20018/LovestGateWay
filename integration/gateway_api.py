@@ -113,8 +113,9 @@ def core_base_url(env_file=Path('/etc/paopaogw/service.env')):
         endpoint(listen)
         parsed = urlsplit('http://' + listen)
         host = parsed.hostname
-        if host == '0.0.0.0': host = '127.0.0.1'
-        if host == '::': host = '::1'
+        # The core binds a companion loopback listener for specific LAN IPs.
+        if not ipaddress.ip_address(host).is_loopback:
+            host = '::1' if ':' in host else '127.0.0.1'
         return 'http://' + ('[' + host + ']' if ':' in host else host) + ':' + str(parsed.port)
     except (OSError, ValueError): raise ManagementError('INVALID_CORE_LISTENER') from None
 

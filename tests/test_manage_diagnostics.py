@@ -71,6 +71,27 @@ class DiagnosticsTests(unittest.TestCase):
         value.update(changes); write_json(self.layout, JOURNAL, value)
         return value
 
+    def test_subscription_recovery_preview_and_execution_restore_only_core_and_provider_snapshot(self):
+        self.system.states['paopaogw'] = {'active': True, 'enabled': True}
+        provider = 'var/lib/paopaogw/subscriptions/' + 'a' * 64 + '.json'
+        self.layout.path(provider).parent.mkdir(parents=True)
+        self.layout.path(provider).write_bytes(b'old provider')
+        backup = BackupStore(self.layout).create([provider], {'kind': 'subscription'})
+        self.layout.path(provider).write_bytes(b'candidate provider')
+        self.journal(kind='subscription', restart=True, backup=backup,
+                     restore_services={'paopaogw': self.system.states['paopaogw']},
+                     expected={provider: [digest(b'old provider'), digest(b'candidate provider')]})
+        self.system.command = lambda *args: self.system.calls.append(args)
+        preview = self.diagnostics.preview_recover({})
+        self.assertEqual(preview['action'], 'recover')
+        self.assertEqual(preview['backup'], backup)
+        self.assertEqual(set(preview['target_services']), {'paopaogw'})
+        result = self.diagnostics.execute_recover({'preview_token': preview['preview_token']})
+        self.assertEqual(result['status'], 'rolled_back')
+        self.assertEqual(self.layout.path(provider).read_bytes(), b'old provider')
+        self.assertIn(('systemctl', 'restart', 'paopaogw'), self.system.calls)
+        self.assertFalse(any(isinstance(call, tuple) and call[-1] != 'paopaogw' for call in self.system.calls))
+
     def test_report_backup_listing_and_previews_are_read_only_and_redacted(self):
         write_json(self.layout, 'var/lib/paopaogw/admin/operations/settings-fixture.json',
                    {'source': 'settings', 'kind': 'secret-object-name', 'status': 'failed', 'phase': 'complete',

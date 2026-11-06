@@ -21,7 +21,7 @@ from manage_runtime import SERVICES
 
 HEX = re.compile(r'^[0-9a-f]{64}$')
 BACKUP_ID = re.compile(r'^[0-9]{14}-[0-9a-f]{12}$')
-KINDS = {'manual', 'config', 'deploy', 'restore-rescue', 'asset', 'policy', 'policy-reset'}
+KINDS = {'manual', 'config', 'deploy', 'restore-rescue', 'asset', 'policy', 'policy-reset', 'subscription'}
 OP_KINDS = {'config', 'policy', 'policy_reset', 'asset', 'backup', 'restore', 'recover',
             'check', 'update', 'rollback', 'install-local', 'scheduled', 'apply'}
 STATUSES = {'queued', 'running', 'applying', 'succeeded', 'failed', 'interrupted',
@@ -285,7 +285,7 @@ class Diagnostics:
         else:
             if not journal or journal['phase'] in {'complete', 'rolled_back'}:
                 raise ManagementError('NOTHING_TO_RECOVER')
-            if journal.get('kind', 'config') not in {'config', 'policy', 'policy_reset', 'deploy', 'restore', 'backup'}:
+            if journal.get('kind', 'config') not in {'config', 'policy', 'policy_reset', 'deploy', 'restore', 'backup', 'subscription'}:
                 raise ManagementError('INVALID_TRANSACTION_JOURNAL')
             identifier = journal.get('backup')
             if not identifier and journal.get('kind', 'config') not in {'deploy', 'restore', 'backup'}:

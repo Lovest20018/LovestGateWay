@@ -70,6 +70,20 @@ const MAX_NATIVE_BODY: usize = 32 * 1024;
 
 const MAX_DRAIN_BODY: u64 = 1024 * 1024;
 
+fn internal_address(mut address: SocketAddr) -> Option<SocketAddr> {
+    if address.ip().is_unspecified() || address.ip().is_loopback() { return None; }
+    address.set_ip(if address.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() }
+        else { std::net::Ipv6Addr::LOCALHOST.into() });
+    Some(address)
+}
+
+async fn bind_internal(address: SocketAddr) -> io::Result<Option<TcpListener>> {
+    match internal_address(address) {
+        Some(address) => Ok(Some(TcpListener::bind(address).await?)),
+        None => Ok(None),
+    }
+}
+
 pub async fn serve(cfg: Arc<ServerConfig>, shutdown: watch::Receiver<bool>) -> io::Result<()> {
     let listener = TcpListener::bind(cfg.listen).await?;
     run(listener, cfg, shutdown).await
@@ -80,6 +94,9 @@ pub async fn run(
     cfg: Arc<ServerConfig>,
     mut shutdown: watch::Receiver<bool>,
 ) -> io::Result<()> {
+    // Bind before starting any tasks: a missing private channel is a startup
+    // failure, never an apparently healthy UI with broken management calls.
+    let internal = bind_internal(listener.local_addr()?).await?;
     tracing::info!(
         listen = %cfg.listen,
         clash_sock = %cfg.clash_sock.display(),
@@ -107,7 +124,15 @@ pub async fn run(
             _ = shutdown.changed() => {
                 if *shutdown.borrow() { break; }
             }
-            accepted = listener.accept() => {
+            accepted = async {
+                match &internal {
+                    Some(private) => tokio::select! {
+                        accepted = listener.accept() => accepted,
+                        accepted = private.accept() => accepted,
+                    },
+                    None => listener.accept().await,
+                }
+            } => {
                 let (stream, peer) = match accepted {
                     Ok(x) => x,
                     Err(e) => { tracing::warn!(%e, "web accept failed"); continue; }
@@ -153,7 +178,7 @@ async fn handle_conn(
             Err(_) => return Ok(()),
         };
         let body_prefix = carry.split_off(head_len);
-        let req = match http::parse_request(&carry) {
+        let mut req = match http::parse_request(&carry) {
             Ok(r) => r,
             Err(_) => {
                 let _ = respond::send(
@@ -207,6 +232,15 @@ async fn handle_conn(
             continue;
         }
 
+        if lease.is_some() && router::active_get(req.path_only()) && req.method != "POST" {
+            respond::send(&mut stream, 405, "Method Not Allowed", &[("Allow", "POST")], b"", ka).await?;
+            carry = consume_body(&mut stream, req.framing()?, body_prefix).await?;
+            if !ka { return Ok(()); }
+            continue;
+        }
+        if router::active_get(req.path_only()) && req.method == "POST" {
+            req.method = "GET".to_string();
+        }
         match route {
             router::Route::ProxyClash => {
 
@@ -502,6 +536,107 @@ mod session_http_tests {
     fn request(method: &str, path: &str, extra: &str, body: &str) -> String {
         format!("{method} {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\nContent-Length: {}\r\n{extra}\r\n{body}", body.len())
     }
+    struct MutationCounter(std::sync::atomic::AtomicUsize);
+    impl crate::traffic::TrafficSource for MutationCounter {
+        fn snapshot_json(&self) -> Arc<String> { Arc::new("[]".to_string()) }
+        fn totals(&self) -> (u64, u64) { (0, 0) }
+        fn clear(&self) { self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+    }
+    impl crate::nodes::NodesSource for MutationCounter {
+        fn nodes_json(&self) -> String { "[]".to_string() }
+        fn clear(&self) { self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+    }
+    #[tokio::test]
+    async fn http_cookie_mutations_require_post_and_same_origin_even_without_fetch_metadata() {
+        let mut cfg = config();
+        let count = Arc::new(MutationCounter(std::sync::atomic::AtomicUsize::new(0)));
+        let inner = Arc::get_mut(&mut cfg).unwrap();
+        inner.traffic = Some(count.clone()); inner.nodes = Some(count.clone());
+        let proof = cfg.token.load().to_string();
+        let raw = cfg.sessions.issue(&proof, None, std::time::Instant::now()).unwrap();
+        let cookie = format!("Cookie: ppgw_session={raw}\r\n");
+        for path in ["/sniffbox/traffic/clear", "/sniffbox/nodes/clear", "/sniffbox/reload"] {
+            for method in ["GET", "HEAD"] {
+                let response = exchange(cfg.clone(), request(method, path, &cookie, ""), true).await;
+                assert!(response.starts_with("HTTP/1.1 405"), "{method} {path}: {response}");
+            }
+            for origin in ["", "Origin: http://gateway.test:9000\r\n", "Origin: https://evil.test\r\n"] {
+                let response = exchange(cfg.clone(), request("POST", path, &format!("{cookie}{origin}"), ""), true).await;
+                assert!(response.starts_with("HTTP/1.1 401"));
+            }
+        }
+        assert_eq!(count.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(!cfg.reload_inflight.load(std::sync::atomic::Ordering::SeqCst));
+        for path in ["/sniffbox/traffic/clear", "/sniffbox/nodes/clear"] {
+            let response = exchange(cfg.clone(), request("POST", path,
+                &format!("{cookie}Origin: http://gateway.test\r\n"), ""), true).await;
+            assert!(response.starts_with("HTTP/1.1 200"));
+            let response = exchange(cfg.clone(), request("POST", path,
+                &format!("Authorization: Bearer {proof}\r\n"), ""), false).await;
+            assert!(response.starts_with("HTTP/1.1 200"));
+        }
+        assert_eq!(count.0.load(std::sync::atomic::Ordering::SeqCst), 4);
+        for path in ["/proxies/A/delay", "/group/A/delay", "/providers/proxies/A/healthcheck", "/providers/proxies/A/B/healthcheck"] {
+            let response = exchange(cfg.clone(), request("GET", path, &cookie, ""), true).await;
+            assert!(response.starts_with("HTTP/1.1 401"));
+            let response = exchange(cfg.clone(), request("GET", path, &format!("{cookie}Origin: http://gateway.test\r\n"), ""), true).await;
+            assert!(response.starts_with("HTTP/1.1 405"));
+            let response = exchange(cfg.clone(), request("POST", path, &format!("{cookie}Origin: http://gateway.test\r\n"), ""), true).await;
+            assert!(response.starts_with("HTTP/1.1 503"));
+            let response = exchange(cfg.clone(), request("GET", path, &format!("Authorization: Bearer {proof}\r\n"), ""), false).await;
+            assert!(response.starts_with("HTTP/1.1 503"));
+        }
+    }
+
+    #[tokio::test]
+    async fn companion_listener_binds_and_serves_local_bearer_then_releases_port() {
+        for public in ["192.0.2.10:0", "[fd00::10]:0"] {
+            let private = bind_internal(public.parse().unwrap()).await.unwrap().unwrap();
+            let address = private.local_addr().unwrap();
+            let cfg = config(); let proof = cfg.token.load().to_string();
+            let served = cfg.clone();
+            let task = tokio::spawn(async move {
+                let (stream, peer) = private.accept().await.unwrap();
+                assert!(peer.ip().is_loopback());
+                let (_tx, rx) = watch::channel(false);
+                handle_conn(stream, peer, served, rx).await.unwrap();
+            });
+            let mut client = TcpStream::connect(address).await.unwrap();
+            client.write_all(request("GET", "/configs", &format!("Authorization: Bearer {proof}\r\n"), "").as_bytes()).await.unwrap();
+            let mut response = Vec::new(); client.read_to_end(&mut response).await.unwrap();
+            assert!(response.starts_with(b"HTTP/1.1 503"));
+            task.await.unwrap(); drop(client);
+            let rebound = TcpListener::bind(address).await.unwrap();
+            let mut specified: SocketAddr = public.parse().unwrap(); specified.set_port(address.port());
+            assert!(bind_internal(specified).await.is_err(), "occupied private channel must fail startup");
+            drop(rebound);
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_server_shutdown_releases_the_listener() {
+        let cfg = config();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (tx, rx) = watch::channel(false);
+        let task = tokio::spawn(run(listener, cfg, rx));
+        tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap().unwrap();
+        let _rebound = TcpListener::bind(address).await.unwrap();
+    }
+
+    #[test]
+    fn private_listener_address_contract() {
+        for (public, private) in [
+            ("192.0.2.10:18080", Some("127.0.0.1:18080")),
+            ("[fd00::10]:18080", Some("[::1]:18080")),
+            ("0.0.0.0:18080", None), ("[::]:18080", None),
+            ("127.0.0.2:18080", None), ("[::1]:18080", None),
+        ] {
+            assert_eq!(internal_address(public.parse().unwrap()).map(|a| a.to_string()), private.map(str::to_owned));
+        }
+    }
+
     #[tokio::test]
     async fn remote_login_cookie_logout_and_permanent_bearer_boundary() {
         let cfg = config(); let proof = crate::auth::derive_secret("synthetic-password");

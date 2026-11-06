@@ -131,7 +131,7 @@ pub fn cookie_allowed(req: &ReqHead) -> bool {
     if req.headers.iter().filter(|(key, _)| key.eq_ignore_ascii_case("sec-fetch-site")).count() > 1 { return false; }
     if one(req, "sec-fetch-site").is_some_and(|value| value != "same-origin" && value != "none") { return false; }
     if req.headers.iter().any(|(key, _)| key.eq_ignore_ascii_case("origin")) && !same_origin(req) { return false; }
-    matches!(req.method.as_str(), "GET" | "HEAD") || same_origin(req)
+    (matches!(req.method.as_str(), "GET" | "HEAD") && !crate::router::active_get(req.path_only())) || same_origin(req)
 }
 pub fn cookie(req: &ReqHead) -> Option<&str> {
     let cookies = one(req, "cookie")?;
