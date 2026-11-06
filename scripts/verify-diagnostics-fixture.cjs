@@ -60,6 +60,7 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
     await page.goto(origin+'/ui/#/settings');await page.getByLabel('流量记录上限',{exact:true}).waitFor();await page.locator('#shell-nav [data-route="diagnostics"]').click();
     const rootView=page.locator('.diagnostic-page'),status=rootView.locator('> [role="status"]'),preview=page.locator('.diagnostic-preview');
     const diagnosticTabs=rootView.getByRole('tablist',{name:'诊断与恢复分栏',exact:true});
+    await diagnosticTabs.waitFor({state:'visible'});
     assert.deepEqual(await diagnosticTabs.getByRole('tab').allTextContents(),['运行诊断','备份与恢复','最近操作']);
     await rootView.getByRole('heading',{name:'当前状态',exact:true}).waitFor();
     await page.screenshot({path:path.join(root,'dist/diagnostics-unified-overview.png')});
@@ -117,4 +118,4 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
     await page.keyboard.press('Home');assert.equal(await diagnosticTabs.getByRole('tab',{name:'运行诊断',exact:true}).getAttribute('aria-selected'),'true');assert.deepEqual(errors,[]);
     const evidence={syntheticOnly:true,paginatedIntegrityChecks:true,invalidBackupDisabled:true,reportAllowlisted:true,explicitConfirmation:true,uncertainPostQueriesSameId:true,disconnectAndReloadResume:true,pendingNavigationLogoutBackUnloadGuard:true,stalePreviewRejected:true,submit401Unlocks:true,historicalCredentialReauthResumesSameId:true,acceptanceVerifiedInactiveStaged:true,workerRestartCommand:true,unknownTaskDoesNotAutoUnlock:true,unknownTaskRecoveryBlocksRelease:true,unknownTaskRechecksBeforeExplicitLocalRelease:true,unknownReviewResetForNewJob:true,newJobPollingSurvivesDelayedPriorCompletion:true,subscriptionSuccessStatusesAccurate:true,mobile320Themes:true,noXss:true,desktopNav,posts:posts.length,restorePreviews,diagnosticReads,pageErrors:errors};await fs.writeFile(path.join(root,'dist/diagnostics-browser-evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence));
   }finally{await context.close();await browser.close();}
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

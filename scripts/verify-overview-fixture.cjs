@@ -4,7 +4,7 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const {chromium}=require(process.env.PPGW_PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'..'),output=path.resolve(process.argv[2]||path.join(root,'frontend/dist'));
-const evidence=path.join(root,'dist/selection-overview-20261105'),origin='http://127.0.0.1:18891';
+const evidence=path.resolve(process.argv.find(arg=>arg.startsWith('--evidence='))?.slice(11)||path.join(root,'dist/selection-overview-20261105')),origin='http://127.0.0.1:18891';
 const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:true,mode:'suburl',kernel:'6.1.fixture',
   timestamp:1793880000,uptime:90061,integration:{data:{boot_id:'fixture-boot-1'}},
   memory:{total:8*1024**3,available:5*1024**3,sniffbox_rss:40*1024**2,sniffbox_uptime:600,clash_rss:80*1024**2,clash_uptime:599,cloudflared_rss:20*1024**2,cloudflared_uptime:500},
@@ -81,7 +81,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     await page.waitForFunction(()=>Number(document.querySelector('[data-chart=cpu] .overview-chart')?.dataset.samples)>0);const retainedSamples=Number(await overview.locator('[data-chart=cpu] .overview-chart').getAttribute('data-samples'));
     await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#proxies-page').getByRole('heading',{name:'代理',exact:true}).waitFor();
     await page.locator('#shell-nav [data-route=overview]').click();await page.locator('#overview-page').waitFor();assert.ok(Number(await overview.locator('[data-chart=cpu] .overview-chart').getAttribute('data-samples'))>=retainedSamples,'returning with the same session retains recent samples');
-    for(const width of [390,320]){
+    for(const width of [375,320]){
       await page.setViewportSize({width,height:900});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       await capture('overview-source-mobile-'+width+'.png');
@@ -90,7 +90,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route=connections]').click();
     await page.locator('#overview-page').waitFor({state:'detached'});hold=false;releaseHeld();await page.waitForTimeout(100);assert.equal(await page.locator('#overview-page').count(),0);assert.deepEqual(errors,[]);
     delete fixture.cpu.cloudflared;delete fixture.memory.cloudflared_rss;expectedSecret='fixture-token';await page.goto(origin+'/ui/?without-cloudflared#/overview');await page.locator('#overview-page [data-field=cpu-model]').getByText('Fixture CPU 4-core',{exact:true}).waitFor();assert.equal(await page.locator('#overview-page canvas[aria-label*=Cloudflared]').count(),0);assert.doesNotMatch(await page.locator('[data-cpu-legend]').textContent(),/Cloudflared/);
-    const report={syntheticOnly:true,sourceOverviewWithoutRuntimeBundle:true,readOnlyRequests:true,nestedStaticFieldsRetained:true,trafficSamples:true,counterAndBootReset:true,apiFailureRecovery:true,reauthWithoutReload:true,untrustedTextOnly:true,chartHover:true,theme:true,mobileWidths:[390,320],backForward:true,pollingDisposed:true,lateResponseIgnored:true,pageErrors:errors};
+    const report={syntheticOnly:true,sourceOverviewWithoutRuntimeBundle:true,readOnlyRequests:true,nestedStaticFieldsRetained:true,trafficSamples:true,counterAndBootReset:true,apiFailureRecovery:true,reauthWithoutReload:true,untrustedTextOnly:true,chartHover:true,theme:true,mobileWidths:[375,320],backForward:true,pollingDisposed:true,lateResponseIgnored:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'overview-browser-evidence.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));await context.close();
   }finally{await browser.close();}
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

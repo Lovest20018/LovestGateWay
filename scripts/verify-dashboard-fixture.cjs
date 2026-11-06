@@ -78,6 +78,7 @@ async function exercise(browser, kind) {
           if(kind==='clash_patch'){
             assert.equal(payload.snapshot_id,'fixture-snapshot');
             assert.deepEqual(saved.subs,[]);
+            assert.equal(saved['node-groups'].find(group=>group.failover).retries,4);
           }else{
             assert.equal(saved.subs[0].name,'Edited native provider');
             assert.equal(saved.subs[0].url,'https://example.com/native-updated');
@@ -170,7 +171,7 @@ async function exercise(browser, kind) {
     assert.ok(compact.height<=340,'a new desktop group must remain compact: '+JSON.stringify(compact));assert.equal(compact.groupTextareas,0);
     await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-desktop.png')});
     const appearance=page.getByRole('group',{name:'外观',exact:true});await appearance.getByRole('button',{name:'暗色',exact:true}).click();await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-dark.png')});await appearance.screenshot({path:path.join(root,'dist/appearance-segments-dark.png')});await appearance.getByRole('button',{name:'亮色',exact:true}).click();await appearance.screenshot({path:path.join(root,'dist/appearance-segments-light.png')});
-    await page.setViewportSize({width:390,height:844});
+    await page.setViewportSize({width:375,height:844});
     await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('.source-editor *')].map(n=>({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right})).filter(n=>n.right>innerWidth+1&&n.width>0).slice(0,20))));
     compact.mobileHeight=await added.evaluate(item=>item.getBoundingClientRect().height);assert.ok(compact.mobileHeight<=560,'a mobile group must fit within a screen');
@@ -220,6 +221,11 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator('.monitor').getByLabel('订阅更新间隔', {exact: true}).count(), 1);
     assert.equal(await page.getByLabel('使用本地 YAML', {exact:true}).count(),0);
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.getByRole('heading',{name:'当前配置来源',exact:true}).waitFor();await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
+    if(kind==='clash_patch'){
+      assert.equal(await apply.isDisabled(),true,'an unchanged editor cannot save');
+      const retries=page.locator('.groups [data-field=retries]').first();
+      await retries.fill('4');await retries.press('Tab');
+    }
     assert.equal(await apply.isDisabled(), false);
     await apply.click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});
@@ -235,7 +241,14 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator('#setting-ini-suburl').count(), 0);
     assert.equal(await page.getByRole('tab', {name: '订阅来源', exact: true}).count(), 0);
     assert.equal(await page.getByRole('tab', {name: '分组与规则', exact: true}).count(), 0);
-    if(kind==='ppsub')assert.equal(await page.evaluate(url => [...document.querySelectorAll('input')].filter(input=>input.value===url&&input.checkVisibility()).length,saved.subs[0].url),1);
+    if(kind==='ppsub'){
+      const url=page.locator('.subs [data-field=url]').first(),provider=page.locator('.subs .item').first();
+      assert.equal(await url.inputValue(),'','saved URL returns to the masked state');
+      await provider.getByRole('button',{name:'显示地址',exact:true}).click();
+      assert.equal(await url.inputValue(),saved.subs[0].url);
+      await provider.getByRole('button',{name:'隐藏地址',exact:true}).click();
+      assert.equal(await url.inputValue(),'');
+    }
     const downloading = page.waitForEvent('download');
     await page.getByRole('button', {name:'导出编辑内容',exact:true}).click();
     const downloaded = await downloading;
@@ -246,7 +259,7 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator('input[autocomplete="current-password"]').count(), 0);
     assert.equal(await page.locator('a[href="#/cloudflared"]').count(), 0);
     await page.screenshot({path: path.join(root, 'dist/ppsub-native-' + kind + '-desktop.png'), fullPage: true, animations: 'disabled'});
-    await page.setViewportSize({width: 390, height: 844});
+    await page.setViewportSize({width: 375, height: 844});
     await page.waitForFunction(() => document.querySelector('#shell-nav').getBoundingClientRect().right <= 0);
     assert.equal(await apply.isVisible(), true);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -270,4 +283,4 @@ async function exercise(browser, kind) {
       await exercise(browser, 'clash_patch'), await exercise(browser, 'ppsub'),
     ]}));
   } finally { await browser.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

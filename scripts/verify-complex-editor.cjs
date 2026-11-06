@@ -154,4 +154,4 @@ async function exercise(browser, kind, width) {
       await fs.writeFile(path.join(evidenceDir,'browser-evidence.json'),JSON.stringify({syntheticOnly:true,results},null,2)+'\n');
     }
   } finally {await browser.close();}
-})().then(()=>process.stdout.write('',()=>process.exit(0)),error=>{console.error(error);process.stderr.write('',()=>process.exit(1));});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});
