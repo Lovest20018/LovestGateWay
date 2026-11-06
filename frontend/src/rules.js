@@ -1,3 +1,4 @@
+import {modeControl} from './mode-control.js';
 import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
 import {snapshot,isGroup,segment,nodeLabel,delay} from './proxy-model.js';
@@ -17,8 +18,8 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const page=make('section',undefined,'rules-page');page.id='rules-page';
   const header=make('header',undefined,'rules-head'),title=make('h1','规则'),count=make('span','正在读取…','rules-count'),search=make('input');search.type='search';search.placeholder='搜索规则、目标或匹配内容';search.setAttribute('aria-label','搜索规则');
   search.addEventListener('input',()=>{query=search.value;pageNumber=1;renderRows();renderProviders();});
-  const geoVersion=make('small',undefined,'rules-geo-version'),geoButton=button('手动更新 GEO 数据',()=>{if(!busy&&!paused){confirmText.textContent='数据库每 24 小时会自动尝试更新。手动下载并重新加载 GEO 数据会引起连接中断，确认立即更新吗？';confirmDialog.showModal();}}),modeButton=button('切换全局模式',()=>perform('切换模式',async()=>{const next=mode==='global'?'rule':'global';await request('/configs',{method:'PATCH',body:{mode:next}});mode=next;})),refreshButton=button('刷新',()=>refresh());
-  geoButton.dataset.action='geo';modeButton.dataset.action='mode';refreshButton.prepend(icon('history'));modeButton.prepend(icon('globe'));header.append(title,count,search,geoVersion,geoButton,modeButton,refreshButton);
+  const geoVersion=make('small',undefined,'rules-geo-version'),geoButton=button('手动更新 GEO 数据',()=>{if(!busy&&!paused){confirmText.textContent='数据库每 24 小时会自动尝试更新。手动下载并重新加载 GEO 数据会引起连接中断，确认立即更新吗？';confirmDialog.showModal();}}),modes=modeControl(next=>perform('切换模式',async()=>{await request('/configs',{method:'PATCH',body:{mode:next}});mode=next;})),modeButton=modes.root,refreshButton=button('刷新',()=>refresh());
+  geoButton.dataset.action='geo';refreshButton.prepend(icon('history'));header.append(title,count,search,geoVersion,geoButton,modeButton,refreshButton);
   const status=make('p',undefined,'rules-status');status.setAttribute('role','status');status.hidden=true;const notice=make('p','当前为 GLOBAL 全局模式，规则未生效。','rules-notice');notice.hidden=true;
   const testSection=make('section',undefined,'glass rule-test'),testTitle=make('h2','规则测试'),testForm=make('form'),testInput=make('input');testInput.type='text';testInput.autocomplete='off';testInput.spellcheck=false;testInput.placeholder='输入网址，例如 https://example.com';testInput.setAttribute('aria-label','规则测试网址');
   const testButton=make('button','测试','btn');testButton.type='submit';testButton.dataset.action='test';const clearInput=button('清空',()=>{testInput.value='';testInput.focus();});testForm.append(testInput,clearInput,testButton);
@@ -35,8 +36,8 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function message(text,readError=false){if(disposed)return;status.textContent=text;status.hidden=!text;status.dataset.readError=String(readError);}
   function actionState(){
     for(const control of page.querySelectorAll('[data-action]'))control.disabled=busy||reading||paused||!loaded||control.dataset.unavailable==='true';
-    modeButton.disabled||=!['global','rule','direct'].includes(mode);updateAll.disabled||=!providers.length;refreshButton.disabled=busy||reading;
-    for(const view of rowViews.values())view.toggle.disabled=busy||paused||reading||!rulesCurrent||!mode||mode==='global'||!view.row.canToggle;
+    modes.update(mode,busy||reading||paused||!loaded||!['global','rule','direct'].includes(mode));updateAll.disabled||=!providers.length;refreshButton.disabled=busy||reading;
+    for(const view of rowViews.values())view.toggle.disabled=busy||paused||reading||!rulesCurrent||mode!=='rule'||!view.row.canToggle;
   }
   async function request(url,{method='GET',body,signal,timeout=15000}={}){
     if(disposed)throw new DOMException('页面已离开。','AbortError');
@@ -74,7 +75,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function createRow(row){
     const tr=make('tr');const cells=Array.from({length:10},()=>make('td'));tr.append(...cells);const toggle=make('input');toggle.type='checkbox';toggle.setAttribute('aria-label','启用规则 '+row.index);cells[0].append(toggle);
     const target=button('',()=>{if(isGroup(proxies[view.row.proxy]))openGroup(view.row.proxy);});target.className='rule-target';const chain=make('span',undefined,'rule-chain');cells[1].append(target,chain);
-    const view={tr,cells,toggle,target,chain,row};toggle.addEventListener('change',()=>{const current=view.row,disabled=!toggle.checked;toggle.checked=current.extra.disabled!==true;if(!current.canToggle||busy||paused||reading||!rulesCurrent||!mode||mode==='global')return;perform(disabled?'临时停用规则':'临时启用规则',async()=>{await request('/rules/disable',{method:'PATCH',body:{[String(current.index)]:disabled}});if(disposed)return;current.extra.disabled=disabled;return '下次配置重载后恢复。';});});return view;
+    const view={tr,cells,toggle,target,chain,row};toggle.addEventListener('change',()=>{const current=view.row,disabled=!toggle.checked;toggle.checked=current.extra.disabled!==true;if(!current.canToggle||busy||paused||reading||!rulesCurrent||!mode||mode!=='rule')return;perform(disabled?'临时停用规则':'临时启用规则',async()=>{await request('/rules/disable',{method:'PATCH',body:{[String(current.index)]:disabled}});if(disposed)return;current.extra.disabled=disabled;return '下次配置重载后恢复。';});});return view;
   }
   function renderRows(){
     const selection=rulePage(rows,{query,located,page:pageNumber,pageSize}),matched=matchLog(testResult?.logs,rows)?.row;pageNumber=selection.page;const keep=new Set();
@@ -85,7 +86,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
       if(tbody.children[position]!==view.tr)tbody.insertBefore(view.tr,tbody.children[position]||null);
     }
     for(const [key,view]of rowViews)if(!keep.has(key)){view.tr.remove();rowViews.delete(key);}let empty=tbody.querySelector('.rules-empty');if(!selection.rows.length){if(!empty){empty=make('tr',undefined,'rules-empty');const cell=make('td');cell.colSpan=10;empty.append(cell);tbody.append(empty);}empty.firstChild.replaceChildren(document.createTextNode(!loaded?'正在读取规则…':!rows.length?'当前配置没有规则。':'没有匹配的规则。'));if(loaded&&!rows.length){const link=make('a','前往订阅与策略');link.href='#/subscriptions';empty.firstChild.append(' ',link);}}else empty?.remove();
-    pageCount.textContent=selection.page+' / '+selection.pages+' · '+selection.total+' 条';previous.disabled=selection.page<=1;next.disabled=selection.page>=selection.pages;tip.hidden=rows.length<=3;tableCard.classList.toggle('global',mode==='global');actionState();
+    pageCount.textContent=selection.page+' / '+selection.pages+' · '+selection.total+' 条';previous.disabled=selection.page<=1;next.disabled=selection.page>=selection.pages;tip.hidden=rows.length<=3;tableCard.classList.toggle('global',mode!=='rule');actionState();
   }
   function renderProviders(){
     providerSection.hidden=!providers.length;providerHeading.textContent='规则订阅（'+providers.length+'）';const term=query.trim().toLocaleLowerCase(),visible=providers.filter(provider=>!term||provider.name.toLocaleLowerCase().includes(term)),keep=new Set();
@@ -112,7 +113,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
     else testOutput.append(make('p','未取得可识别的匹配日志，不能据此确定命中规则。'));
     const details=make('details'),heading=make('summary','相关日志（'+logs.length+'）'),log=make('pre');log.textContent=logs.slice(0,2000).map(item=>(typeof item?.type==='string'?'['+item.type+'] ':'')+(typeof item?.payload==='string'?item.payload:'')).join('\n')||testResult.logsError||'暂无日志。';details.append(heading,log);testOutput.append(details);
   }
-  function render(){if(disposed)return;count.textContent=rows.length+' 条规则';notice.hidden=mode!=='global';modeButton.textContent=mode==='global'?'切换规则模式':'切换全局模式';modeButton.prepend(icon('globe'));renderGeo();renderRows();renderProviders();if(drawer.open)renderDrawer();actionState();}
+  function render(){if(disposed)return;count.textContent=rows.length+' 条规则';notice.hidden=mode==='rule'||!mode;notice.textContent=mode==='direct'?'当前为直连模式，规则未生效。':'当前为 GLOBAL 全局模式，规则未生效。';renderGeo();renderRows();renderProviders();if(drawer.open)renderDrawer();actionState();}
   const visibility=()=>{if(document.hidden){clearTimeout(timer);sequence++;readController?.abort();reading=false;}else if(!disposed&&!paused)refresh(false);},focus=()=>{if(!disposed&&!paused&&!busy)refresh(false);};document.addEventListener('visibilitychange',visibility);window.addEventListener('focus',focus);
   if(!supported){message('当前出站模式不使用 Mihomo 规则，请在网关设置中选择配置来源。');count.textContent='当前模式无规则';testSection.hidden=tableCard.hidden=true;geoButton.hidden=modeButton.hidden=refreshButton.hidden=true;}else if(!document.hidden)refresh();
   return {refresh,dispose(){disposed=true;sequence++;clearTimeout(timer);for(const controller of controllers)controller.abort();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',focus);for(const dialog of [confirmDialog,drawer])if(dialog.open)dialog.close();host.replaceChildren();}};

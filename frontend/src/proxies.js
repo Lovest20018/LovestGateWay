@@ -1,3 +1,4 @@
+import {modeControl} from './mode-control.js';
 import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
 import {formatBytes} from './format.js';
@@ -18,8 +19,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const controllers=new Set(),views=new Map(),providerViews=new Map();
   const page=make('section',undefined,'proxies-page');page.id='proxies-page';
   const heading=make('header',undefined,'proxies-head'),title=make('h1','代理'),summary=make('span','正在读取…','proxies-summary');
-  const modeButton=button('切换全局模式',()=>perform('切换模式',async()=>{const mode=data.mode==='global'?'rule':'global';await request('/configs',{method:'PATCH',body:{mode}});data.mode=mode;if(mode==='global')prefs.gcollapse.GLOBAL=false;save();}));
-  modeButton.title='临时切换全局或规则模式；配置重新加载后恢复配置中的模式。';modeButton.dataset.action='mode';modeButton.prepend(icon('globe'));
+  const modes=modeControl(next=>perform('切换模式',async()=>{await request('/configs',{method:'PATCH',body:{mode:next}});data.mode=next;if(next==='global')prefs.gcollapse.GLOBAL=false;save();})),modeButton=modes.root;
   const refreshButton=button('刷新',()=>refresh()),settingsButton=button('页面设置',()=>{settings.hidden=!settings.hidden;settingsButton.setAttribute('aria-expanded',String(!settings.hidden));});
   refreshButton.prepend(icon('history'));settingsButton.prepend(icon('settings'));settingsButton.setAttribute('aria-expanded','false');settingsButton.setAttribute('aria-controls','proxy-preferences');
   heading.append(title,summary,modeButton,refreshButton,settingsButton);
@@ -68,7 +68,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   }
   function actionState(){
     for(const control of page.querySelectorAll('[data-action]'))control.disabled=busy||!loaded||paused||control.dataset.unavailable==='true'||testing&&/test/.test(control.dataset.action);
-    modeButton.disabled||=!['global','rule','direct'].includes(data.mode);
+    modes.update(data.mode,busy||!loaded||paused||!['global','rule','direct'].includes(data.mode));
     updateAll.disabled||=!externalProviders().length;refreshButton.disabled=busy||reading;
     testAll.textContent=testing?'停止测速':'全部测速';
     testAll.disabled=testing?false:testAll.disabled||!groups(data,false).length&&!Object.keys(data.providers).length;
@@ -242,7 +242,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function render(){
     if(disposed)return;
     const infoNames=Object.keys(data.proxies).filter(name=>!isGroup(data.proxies[name])&&informationNode(name));information.hidden=!infoNames.length;information.textContent=infoNames.length?'疑似订阅说明节点 '+infoNames.length+' 个：'+infoNames.join('、')+'。按名称识别，仅供参考；可在页面设置中隐藏，不修改配置或测速范围。':'';
-    const ordered=groups(data);summary.textContent=ordered.length+' 个节点组';modeButton.textContent=data.mode==='global'?'切换规则模式':'切换全局模式';modeButton.prepend(icon('globe'));modeNotice.hidden=data.mode!=='global';
+    const ordered=groups(data);summary.textContent=ordered.length+' 个节点组';modeNotice.hidden=data.mode!=='global';
     const keep=new Set(ordered);for(const [name,view]of views)if(!keep.has(name)){for(const card of view.cards.values())card.clear();view.section.remove();views.delete(name);}
     for(const [index,name]of ordered.entries()){let view=views.get(name);if(!view){view=createGroup(name);views.set(name,view);}if(groupHost.children[index]!==view.section)groupHost.insertBefore(view.section,groupHost.children[index]||null);if(Object.hasOwn(prefs.gcollapse,name))view.section.open=!prefs.gcollapse[name];renderGroup(view);}
     updateUrls();empty.hidden=!loaded||ordered.length>0;
