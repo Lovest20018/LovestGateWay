@@ -78,8 +78,9 @@ jobs:
             const fs=require('fs'),crypto=require('crypto');
             const {owner,repo}=context.repo,tag='v'+process.env.VERSION,commit=process.env.COMMIT;
             const manifest=JSON.parse(fs.readFileSync('dist/release/release-manifest.json','utf8'));
-            try { await github.rest.repos.getReleaseByTag({owner,repo,tag}); throw new Error('Version already exists; never replace release assets'); }
-            catch(error) { if(error.status!==404) throw error; }
+            // The by-tag endpoint omits drafts; include them to prevent duplicate drafts on retry.
+            const existing=await github.paginate(github.rest.repos.listReleases,{owner,repo,per_page:100});
+            if(existing.some(release=>release.tag_name===tag))throw new Error('Version already exists; never replace release assets');
             try {
               const {data}=await github.rest.git.getRef({owner,repo,ref:'tags/'+tag});
               if(data.object.type!=='commit'||data.object.sha!==commit)throw new Error('Tag already points elsewhere');
