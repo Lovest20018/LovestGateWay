@@ -124,7 +124,7 @@ async function exercise(browser, kind) {
     const groupName=page.locator('.groups > .item [data-field=name]').first(),savedName=await groupName.inputValue();
     await groupName.fill(savedName+' tab draft');await groupName.press('Tab');
     await pageTabs.getByRole('tab',{name:'配置来源',exact:true}).click();
-    assert.equal(await page.locator('#source-type').isVisible(),true);
+    assert.equal(await page.locator('#source-type').isVisible(),false);await page.getByRole('button',{name:'切换配置来源',exact:true}).click();assert.equal(await page.locator('#source-type').isVisible(),true);
     assert.equal(await page.locator('.source-switch summary').count(),0);
     assert.equal(await page.locator('.ppgw-subscription-editor').isVisible(),false);
     await pageTabs.getByRole('tab',{name:'最近操作',exact:true}).click();
