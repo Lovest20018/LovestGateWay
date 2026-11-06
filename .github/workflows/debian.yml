@@ -35,11 +35,14 @@ jobs:
       - name: Build dependencies
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends clang libclang-dev cmake perl g++ python3 python3-yaml python3-jsonschema nodejs nftables iproute2 systemd util-linux openvpn openssl
-          node --version
+          apt-get install -y --no-install-recommends clang libclang-dev cmake perl g++ python3 python3-yaml python3-jsonschema nftables iproute2 systemd util-linux openvpn openssl
           TOOLCHAIN=$(rustup default | cut -d' ' -f1)
           rustup component add rustfmt --toolchain "$TOOLCHAIN"
           echo "RUSTUP_TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
       - name: API and contract
         run: |
           python3 scripts/check-public-source.py
