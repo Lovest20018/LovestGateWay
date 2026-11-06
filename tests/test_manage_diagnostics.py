@@ -91,6 +91,23 @@ class DiagnosticsTests(unittest.TestCase):
                      'https://', 'private-service', 'diagnostic-private-key', 'ppgw.ini', 'sha256', str(self.layout.root)):
             self.assertNotIn(text, raw)
 
+    def test_historical_failures_do_not_become_current_causes(self):
+        write_json(self.layout, 'var/lib/paopaogw/admin/operations/settings-history.json',
+                   {'source': 'settings', 'kind': 'config', 'status': 'failed',
+                    'updated_at': 1, 'error': 'MANAGEMENT_BUSY'})
+        report = self.diagnostics.report()
+        self.assertNotIn('MANAGEMENT_BUSY', report['causes'])
+        self.assertEqual(report['recent'][0]['error'], 'MANAGEMENT_BUSY')
+
+    def test_active_and_unresolved_recovery_errors_remain_current(self):
+        for row in ({'status': 'running'}, {'status': 'queued'}, {'status': 'applying'},
+                    {'status': 'failed', 'recovery_required': True}):
+            with self.subTest(row=row), patch.object(self.diagnostics, '_recent',
+                    return_value=[dict(row, error='MANAGEMENT_BUSY')]):
+                self.assertIn('MANAGEMENT_BUSY', self.diagnostics.report()['causes'])
+        self.journal(phase='restoring')
+        self.assertIn('RECOVERY_REQUIRED', self.diagnostics.report()['causes'])
+
     def test_scope_counts_full_deletion_program_changes_and_preserved_worker(self):
         self.ini.write_text('new persistent settings')
         self.program.write_text('new program')

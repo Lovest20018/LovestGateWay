@@ -66,6 +66,8 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
     await diagnosticTabs.getByRole('tab',{name:'最近操作',exact:true}).click();
     await rootView.getByText('策略变更 · 已应用',{exact:true}).waitFor();await rootView.getByText('配置变更 · 未变化',{exact:true}).waitFor();
     assert.equal(await rootView.locator('#diagnostic-recent details').count(),0);
+    report.recent.push({source:'settings',kind:'config',status:'failed',phase:'complete',updated_at:1,recovery_required:false,error:'MANAGEMENT_BUSY'});
+    await rootView.getByRole('button',{name:'刷新诊断',exact:true}).click();await rootView.getByText(/该次操作因其他管理任务占用未执行/).waitFor();
     await page.screenshot({path:path.join(root,'dist/diagnostics-unified-recent.png')});
     await diagnosticTabs.getByRole('tab',{name:'备份与恢复',exact:true}).click();
     await rootView.getByText('全部备份文件校验通过',{exact:true}).first().waitFor();
