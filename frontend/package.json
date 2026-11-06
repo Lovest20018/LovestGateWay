@@ -2,6 +2,6 @@
   "name": "lovestgateway-dashboard",
   "private": true,
   "type": "module",
-  "scripts": { "build": "node build.mjs", "test": "node --test tests/model.test.mjs tests/diagnostics.test.mjs tests/overview.test.mjs tests/proxies.test.mjs tests/rules.test.mjs tests/monitors.test.mjs tests/monitor-client.test.mjs" },
+  "scripts": { "build": "node build.mjs", "test": "node --test tests/css-prune.test.mjs tests/model.test.mjs tests/diagnostics.test.mjs tests/overview.test.mjs tests/proxies.test.mjs tests/rules.test.mjs tests/monitors.test.mjs tests/monitor-client.test.mjs" },
   "engines": { "node": ">=18" }
 }
