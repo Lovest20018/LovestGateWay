@@ -3,6 +3,14 @@
 use std::io;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
+const SECURITY_HEADERS: &str = concat!(
+    "X-Content-Type-Options: nosniff\r\n",
+    "Referrer-Policy: no-referrer\r\n",
+    "X-Frame-Options: DENY\r\n",
+    "Content-Security-Policy: frame-ancestors 'none'; object-src 'none'; base-uri 'self'\r\n",
+);
+
+
 pub async fn send<W: AsyncWrite + Unpin>(
     w: &mut W,
     status: u16,
@@ -24,6 +32,7 @@ pub async fn send<W: AsyncWrite + Unpin>(
         head.push_str(v);
         head.push_str("\r\n");
     }
+    head.push_str(SECURITY_HEADERS);
     head.push_str("\r\n");
     w.write_all(head.as_bytes()).await?;
     w.write_all(body).await?;
@@ -36,7 +45,7 @@ pub async fn not_modified<W: AsyncWrite + Unpin>(
     keep_alive: bool,
 ) -> io::Result<()> {
     let head = format!(
-        "HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nCache-Control: no-cache\r\n{}\r\n",
+        "HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nCache-Control: no-cache\r\n{}{SECURITY_HEADERS}\r\n",
         if keep_alive {
             "Connection: keep-alive\r\n"
         } else {
@@ -119,6 +128,22 @@ pub async fn file<W: AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn static_assets_and_entry_keep_security_headers_and_framing() {
+        for mime in ["text/html; charset=utf-8", "application/javascript", "text/css"] {
+            let mut out = Vec::new();
+            file(&mut out, mime, "no-cache", b"fixture", true).await.unwrap();
+            let wire = String::from_utf8(out).unwrap();
+            assert!(wire.contains(SECURITY_HEADERS));
+            assert!(wire.contains(&format!("Content-Type: {mime}\r\n")));
+            assert!(wire.contains("Content-Length: 7\r\n"));
+            assert!(wire.ends_with("\r\n\r\nfixture"));
+        }
+        let mut out = Vec::new();
+        not_modified(&mut out, "fixture", true).await.unwrap();
+        assert!(String::from_utf8(out).unwrap().contains(SECURITY_HEADERS));
+    }
 
     #[tokio::test]
     async fn redirect_frame() {
