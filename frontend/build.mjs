@@ -17,10 +17,8 @@ export async function build(output=join(here,'dist')) {
     const ext=label.slice(label.lastIndexOf('.')), name=label.slice(0,-ext.length)+'.'+createHash('sha256').update(raw).digest('hex').slice(0,12)+ext;
     await writeFile(join(output,name),raw); assets[label]=name; return name;
   }
-  // Keep the upstream runtime bundle intact and mount it in the shared document.
-  const bundle=html.match(/import\("\/ui\/(bundle\.[^"]+\.js)"\)/)?.[1];
-  if(!bundle) throw Error('Upstream public entry point missing');
-  for(const name of [bundle,'TwemojiCountryFlags.woff2','lovestgateway.svg','paopaogateway.svg']) await copyFile(join(original,name),join(output,name));
+  // All active routes are maintained source modules. Keep only shared upstream assets.
+  for(const name of ['TwemojiCountryFlags.woff2','lovestgateway.svg','paopaogateway.svg']) await copyFile(join(original,name),join(output,name));
   const styles=[...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
   await emit('theme.css',pruneScopedStyles(styles));
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
@@ -43,7 +41,7 @@ export async function build(output=join(here,'dist')) {
   await writeFile(join(output,'index.html'),index);
   await copyFile(join(root,'integration/gateway.html'),join(output,'gateway.html'));
   const precompressed={};
-  for(const name of ['index.html','gateway.html','legacy.html',bundle,...Object.values(assets).filter(name=>/\.(js|css)$/.test(name))]){
+  for(const name of ['index.html','gateway.html','legacy.html',...Object.values(assets).filter(name=>/\.(js|css)$/.test(name))]){
     const compressed=name+'.gz';await writeFile(join(output,compressed),gzipSync(await readFile(join(output,name)),{level:9}));precompressed[name]=compressed;
   }
   await writeFile(join(output,'manifest.json'),JSON.stringify({schema:1,entry:'index.html',assets,precompressed},null,2)+'\n');
