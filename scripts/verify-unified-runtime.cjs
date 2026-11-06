@@ -63,7 +63,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
       } catch { return route.fulfill({status: 404, body: ''}); }
     });
     await page.goto(origin+'/ui/#/overview');
-    const runtime=page.locator('#runtime-panel');await page.locator('#overview-page').waitFor();
+    await page.locator('#overview-page').waitFor();
     await page.evaluate(()=>{window.documentIdentity='same-document';});
     const pages=[];
     assert.equal(await page.locator('#shell-nav [data-route]>.shell-icon').count(),11);
@@ -71,14 +71,13 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     for(const key of ['proxies','rules','connections','traffic','distribution','logs','region']){
       await page.locator('#shell-nav [data-route="'+key+'"]').click();
       await page.waitForURL('**/#/'+key);
-      const source=['proxies','rules'].includes(key),current=source?page.locator('#'+key+'-page'):runtime;
+      const source=true,current=page.locator('#'+key+'-page');
       await current.locator('h1').first().waitFor();
       await page.waitForTimeout(80);
       pages.push({key,heading:await current.locator('h1').first().innerText(),source});
-      if(!source)assert.equal(await runtime.locator('aside').first().isVisible(),false);
       assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document');
     }
-    assert.equal(new Set(pages.map(row=>row.heading)).size,7,'each navigation must render its own source or compatibility component');
+    assert.equal(new Set(pages.map(row=>row.heading)).size,7,'each navigation must render its own source component');
     assert.equal(await page.locator('iframe').count(),0);
     await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('#overview-page').waitFor();
     await page.screenshot({path:path.join(root,'dist/unified-overview-desktop.png')});
@@ -101,21 +100,21 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="proxies"]').click();
     await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
-    // Changing the accepted secret forces the mounted upstream form to reauth.
+    // Changing the accepted secret forces the mounted source page to reauth.
     const password='ChangedFixturePassword8',newSecret=require('node:crypto').createHash('sha256').update(password).digest('hex');
     expectedSecret=newSecret;
     await page.locator('#shell-nav [data-route="traffic"]').click();
-    await runtime.locator('input[autocomplete="current-password"]').waitFor({state:'attached'});
+    await page.locator('#shell-status').getByRole('button',{name:'重新登录',exact:true}).waitFor();
     await page.getByRole('button',{name:'重新登录',exact:true}).click();
     await page.locator('#reauth-panel').getByLabel('管理密码',{exact:true}).fill(password);
     await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();
     await page.locator('#reauth-panel').waitFor({state:'detached'});
-    await runtime.locator('main').waitFor();
+    await page.locator('#traffic-page').waitFor();
     await page.locator('#shell-nav [data-route="proxies"]').click();
     await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
-    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+newSecret),'the source proxy page must use the new secret after runtime reauth');
+    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+newSecret),'the source proxy page must use the new secret after source reauth');
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','reauthentication must not reload the document');
-    await page.goBack();await page.waitForURL('**/#/traffic');await runtime.locator('main h1').filter({hasText:'流量'}).waitFor();
+    await page.goBack();await page.waitForURL('**/#/traffic');await page.locator('#traffic-page h1').waitFor();
     await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','browser Back and Forward must not reload the document');
     await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
@@ -132,7 +131,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     assert.deepEqual(await page.evaluate(()=>[document.documentElement.dataset.theme,localStorage.getItem('ppgw-theme-base'),localStorage.getItem('ppgw-custom-colors'),document.documentElement.style.getPropertyValue('--brand')]),['light',null,null,'']);
     assert.equal(await page.locator('input[type=color]').count(),0);
     assert.equal(await page.locator('dialog').count(),0);assert.deepEqual(errors,[]);
-    const evidence={syntheticOnly:true,pages,sameDocument:true,noIframe:true,noFloatingTools:true,appearancePreservesDraft:true,threeAppearanceOptions:true,systemThemeChangesLive:true,explicitThemeOverridesSystem:true,choiceSurvivesReload:true,retiredCustomThemeMigrated:true,backForwardAndDraftGuard:true,runtimeChangedPasswordReauth:true,mobile390:true,pageErrors:errors};
+    const evidence={syntheticOnly:true,pages,sameDocument:true,noIframe:true,noFloatingTools:true,appearancePreservesDraft:true,threeAppearanceOptions:true,systemThemeChangesLive:true,explicitThemeOverridesSystem:true,choiceSurvivesReload:true,retiredCustomThemeMigrated:true,backForwardAndDraftGuard:true,sourceChangedPasswordReauth:true,mobile390:true,pageErrors:errors};
     await fs.writeFile(path.join(root,'dist/unified-runtime-browser-evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence));
     await context.close();
   } finally { await browser.close(); }
