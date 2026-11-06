@@ -199,3 +199,5 @@
 .ppgw-gateway .application-preview .dialog-body {padding:0}
 .ppgw-gateway .application-preview h2 {margin-bottom:18px}
 .ppgw-gateway .application-preview .dialog-actions {display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+
+.url-privacy-tools,.url-privacy-summary{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.url-privacy-summary code{overflow-wrap:anywhere;flex-basis:100%}.url-privacy-tools .btn,.url-privacy-summary .btn{font-size:11px;padding:4px 8px}.url-privacy-summary [role=status]{font-size:11px}

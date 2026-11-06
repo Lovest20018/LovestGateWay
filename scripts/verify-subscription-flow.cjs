@@ -77,7 +77,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.equal(await page.locator('.subs .editor-section-footer > button').isVisible(),false);
     assert.equal(await page.locator('.subs .editor-item-tools button').first().isVisible(),false);
     const providerUrl=page.locator('.subs .item .row input').nth(1);
-    assert.equal(await providerUrl.inputValue(),'https://example.com/nested-provider');
+    assert.equal(await providerUrl.inputValue(),'');await page.locator('.subs .item').first().getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await providerUrl.inputValue(),'https://example.com/nested-provider');
     const health=page.locator('.monitor [data-field="enable"]').first();await health.check();
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();
     await page.locator('#source-type').selectOption('remote');await page.locator('#source-url').fill('https://example.com/new-main');
@@ -93,11 +93,11 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.getByText('旧本地 PPsub / 策略将清除，并包含在此次备份中。',{exact:true}).waitFor();
     assert.equal(sourceSwitched,0);await page.locator('#apply').click();
     await page.waitForFunction(()=>document.querySelector('.source-kind')?.textContent==='远程完整配置');await ready();
-    assert.equal(await page.locator('.source-location').textContent(),'https://example.com/new-main');
+    assert.equal(await page.locator('.source-location').textContent(),'https://example.com/•••');assert.equal(await page.locator('#source-url').inputValue(),'');await page.getByRole('button',{name:'预览来源切换',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});await page.locator('#cancel-preview').click();
     await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
-    assert.equal(await providerUrl.inputValue(),'https://example.com/nested-provider');
+    assert.equal(await providerUrl.inputValue(),'');await page.locator('.subs .item').first().getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await providerUrl.inputValue(),'https://example.com/nested-provider');
     await health.check();if(!await page.locator('.editor-schedule').evaluate(node=>node.open))await page.locator('.editor-schedule > summary').click();const interval=page.getByLabel('订阅更新间隔',{exact:true});await interval.fill('7h');await interval.press('Tab');
-    await providerUrl.fill('https://example.com/nested-updated');
+    await page.locator('.subs .item').first().getByRole('button',{name:'修改地址',exact:true}).click();await providerUrl.fill('https://example.com/nested-updated');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});
     assert.equal(savedEditor,null);await page.locator('#apply').click();await page.getByText('Combined fixture saved',{exact:true}).waitFor();await ready();
     assert.equal(savedEditor.settings_patch.ini.subtime,'7h');assert.equal(JSON.parse(savedEditor.value).global_monitor.enable,true);

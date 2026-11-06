@@ -198,7 +198,7 @@ async function exercise(browser, kind) {
       await page.waitForFunction(() => document.querySelector('.subs [data-field="name"]').value === 'Imported provider');
       assert.equal(saved, null);
       await name.fill('Edited native provider');
-      await page.locator('.subs [data-field="url"]').first().fill('https://example.com/native-updated');
+      await page.locator('.subs .item').first().getByRole('button',{name:'修改地址',exact:true}).click();await page.locator('.subs [data-field="url"]').first().fill('https://example.com/native-updated');
       await page.getByRole('link', {name: '网关设置', exact: true}).click();
       await page.getByLabel('流量记录上限', {exact: true}).waitFor();
       await page.getByRole('link', {name: '订阅与策略', exact: true}).click();

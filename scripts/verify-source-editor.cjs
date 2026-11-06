@@ -49,6 +49,7 @@ async function exercise(browser,kind){
     assert.equal(await page.evaluate(()=>isSecureContext),false,'must exercise HTTP LAN password hashing');
     await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();
     const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);await ready();
+    {const privateProvider=page.locator('.subs .item').first(),privateUrl=privateProvider.locator('[data-field=url]');assert.equal(await privateUrl.inputValue(),'');assert.equal((await privateProvider.innerText()).includes(config.subs[0].url),false);await privateProvider.getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await privateUrl.inputValue(),config.subs[0].url);await privateProvider.getByRole('button',{name:'隐藏地址',exact:true}).click();assert.equal(await privateUrl.inputValue(),'');}
     if(kind==='ppsub'){
       await page.evaluate(()=>{const original=File.prototype.text;window.delayedImports={};File.prototype.text=function(){if(this.name.startsWith('delayed-import-')){const name=this.name;return new Promise(resolve=>{window.delayedImports[name]=()=>original.call(this).then(resolve);});}return original.apply(this,arguments);};});
       const chooseDelayed=async(name,label,confirm=false)=>{if(confirm)page.once('dialog',dialog=>dialog.accept());const value=structuredClone(native);value['node-groups'][0].name=label;await page.locator('.source-editor input[type=file]').setInputFiles({name,mimeType:'application/json',buffer:Buffer.from(JSON.stringify(value))});await page.waitForFunction(name=>typeof window.delayedImports[name]==='function',name);};
@@ -66,20 +67,21 @@ async function exercise(browser,kind){
       assert.equal(await groupName.inputValue(),'Latest import','an older file must not replace a newer import');
       await chooseDelayed('delayed-import-unmount.json','Late import must not reach next editor',true);
       page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('.source-editor').waitFor({state:'detached'});await release('delayed-import-unmount.json');
-      // Mount one compatibility page to exercise its storage bridge explicitly.
-      await page.locator('#shell-nav [data-route="connections"]').click();await page.locator('#runtime-panel main').waitFor();
-      const storageCheck=await page.locator('#runtime-panel').evaluate((_,secret)=>{
+      // Visit the maintained connection page and verify shared storage preferences.
+      await page.locator('#shell-nav [data-route="connections"]').click();await page.locator('#connections-page').waitFor();
+      const storageCheck=await page.locator('#connections-page').evaluate(async(_,secret)=>{
+        const manifest=await (await fetch('/ui/manifest.json')).json();const {storeSecret}=await import('/ui/'+manifest.assets['auth.js']);
         const verified=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'changed-in-legacy',clashAPIConfigs:[{secret,label:'updated-legacy-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}],legacyOption:'new-value'}));
         const changed=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
-        localStorage.setItem('ppgw-theme','dark');localStorage.removeItem('PaoPaoGateWay');const loggedOut=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        localStorage.setItem('ppgw-theme','dark');storeSecret('');const loggedOut=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret,label:'explicit-single-profile'}],favorite:'explicit-settings-update'}));const explicit=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'preserve-me',clashAPIConfigs:[{secret,label:'existing-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}]}));
         return{verified,changed,loggedOut,explicit,theme:localStorage.getItem('ppgw-theme')};
       },secret);
       assert.equal(storageCheck.verified.clashAPIConfigs.length,2);assert.equal(storageCheck.verified.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.verified.clashAPIConfigs[1].secret,'secondary-auth-fixture');
       assert.equal(storageCheck.changed.favorite,'changed-in-legacy');assert.equal(storageCheck.changed.clashAPIConfigs[0].label,'updated-legacy-profile');
-      assert.equal(storageCheck.loggedOut.favorite,'changed-in-legacy');assert.equal(storageCheck.loggedOut.legacyOption,'new-value');assert.equal(storageCheck.loggedOut.clashAPIConfigs[0].secret,'');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].secret,'');assert.equal(storageCheck.theme,'dark');
+      assert.equal(storageCheck.loggedOut.favorite,'changed-in-legacy');assert.equal(storageCheck.loggedOut.legacyOption,'new-value');assert.equal(storageCheck.loggedOut.clashAPIConfigs[0].secret,'');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].secret,'secondary-auth-fixture');assert.equal(storageCheck.theme,'dark');
       assert.equal(storageCheck.explicit.favorite,'explicit-settings-update');assert.equal(storageCheck.explicit.clashAPIConfigs.length,1,'explicit profile removal remains possible');assert.equal(storageCheck.explicit.clashAPIConfigs[0].label,'explicit-single-profile');
       await page.locator('#shell-nav [data-route="subscriptions"]').click();await ready();assert.equal(await groupName.inputValue(),'Main','disposed import must not write into a newly mounted editor');
       const advanced=page.locator('.editor-body > .editor-advanced');await advanced.locator('summary').click();await page.waitForFunction(()=>document.querySelector('.editor-body > .editor-advanced textarea')?.value);
@@ -87,7 +89,7 @@ async function exercise(browser,kind){
       await advanced.locator('textarea').fill(JSON.stringify(value));await advanced.getByRole('button',{name:'应用 JSON 修改',exact:true}).click();
       page.once('dialog',dialog=>dialog.dismiss());await page.locator('#shell-nav [data-route="overview"]').click();assert.equal(new URL(page.url()).hash,'#/subscriptions','JSON edits participate in draft navigation protection');
     }
-    const fill=async(scope,key,value)=>scope.locator('[data-field="'+key+'"]').fill(value);
+    const fill=async(scope,key,value)=>{const control=scope.locator('[data-field="'+key+'"]');if(key==='url'&&await control.getAttribute('readonly')!==null&&await scope.getByRole('button',{name:'修改地址',exact:true}).count())await scope.getByRole('button',{name:'修改地址',exact:true}).click();await control.fill(value);};
     const provider=page.locator('.subs .item').first(),group=page.locator('.groups .item').first();
     await fill(provider,'url','https://example.com/edited-provider');
     if(kind==='ppsub'){await fill(provider,'name','Edited airport');await provider.locator('[data-field="isforced"]').check();await page.getByLabel('Edited airport 更新方式',{exact:true}).selectOption('auto');await page.getByLabel('Edited airport 自动更新间隔',{exact:true}).fill('7h');}
