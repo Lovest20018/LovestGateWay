@@ -37,3 +37,5 @@ test('missing usage numbers are never presented as a fully unused subscription',
   assert.deepEqual(usage({total:100,expire:0}),{total:100,up:null,down:null,used:null,left:null,expire:null});
   assert.equal(usage({total:100,upload:30,download:80}).left,0);assert.equal(usage({total:NaN,upload:0,download:0}).used,0);
 });
+
+test('information node filtering is explicit and never changes the snapshot',()=>{const data=snapshot({proxies:{Main:{type:'Selector',all:['剩余流量：10 GB','香港流量节点']},'剩余流量：10 GB':{type:'Shadowsocks'},'香港流量节点':{type:'Shadowsocks'}}});assert.deepEqual(members(data,'Main',{},preferences({})),['剩余流量：10 GB','香港流量节点']);assert.deepEqual(members(data,'Main',{},preferences({hideInfoNodes:true})),['香港流量节点']);assert.equal(data.proxies.Main.all.length,2);});
