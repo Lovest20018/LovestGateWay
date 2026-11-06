@@ -1,7 +1,7 @@
 import {monitorClient} from './monitor-client.js';
 import {bytes,date,csv,number,rateWindow} from './monitor-model.js';
 import {trafficSnapshot,filterTraffic,aggregateTraffic,sortTraffic,trafficValues,transport,sniff} from './traffic-model.js';
-import {el,button,input,select,field,page,table,pager,confirmation,download,metrics,sparkline} from './monitor-view.js';
+import {el,button,input,select,field,page,table,pager,confirmation,download,metrics,sparkline,streamState} from './monitor-view.js';
 
 export function mountTraffic(host,{initialInfo,onUnauthorized=()=>{}}={}) {
   const ui=page(host,'traffic-page','流量记录'),filters={},rates=rateWindow(),expanded=new Set(),dialog=confirmation(ui.root),supported=initialInfo?.features?.net_rec!==false;
@@ -47,7 +47,8 @@ export function mountTraffic(host,{initialInfo,onUnauthorized=()=>{}}={}) {
     if(view==='client')definition.push({label:'top_domains',value:row=>row.domains.map(([name,total])=>name+':'+total).join(' ')});
     if(view==='full'&&columns.sniff)definition.push({label:'head',value:row=>row.head});download(csv(items,definition),'traffic-'+stamp+'.csv','text/csv;charset=utf-8');
   }
-  const stream=client.stream('/sniffbox/traffic/sse',raw=>{rows=trafficSnapshot(JSON.parse(raw));loaded=true;ui.message('');render();},{enabled:supported,onState:state=>{ui.root.dataset.stream=state;},onError:error=>ui.message(error.message)});
+  const connectionState=el('p','正在连接…','monitor-stream-state');connectionState.setAttribute('role','status');ui.head.after(connectionState);
+  const stream=client.stream('/sniffbox/traffic/sse',raw=>{rows=trafficSnapshot(JSON.parse(raw));loaded=true;ui.message('');render();},{enabled:supported,onState:state=>{ui.root.dataset.stream=state;connectionState.textContent=streamState(state);},onError:error=>ui.message(error.message)});
   client.poll('/sniffbox/traffic/total',value=>{if(typeof value?.downloadTotal!=='number'||typeof value?.uploadTotal!=='number')throw Error('累计流量响应无效。');totals={downloadTotal:number(value.downloadTotal),uploadTotal:number(value.uploadTotal)};currentRate=rates.sample(totals.downloadTotal,totals.uploadTotal);render();},{interval:3000,enabled:supported,onError:error=>ui.message(error.message)});
   if(!supported){ui.message('流量记录未启用，请在网关设置中开启流量采集。');card.hidden=stats.hidden=graphs.hidden=columnPanel.hidden=true;}
   render();

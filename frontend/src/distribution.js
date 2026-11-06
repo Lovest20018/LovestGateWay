@@ -2,7 +2,7 @@ import {monitorClient} from './monitor-client.js';
 import {bytes,date,duration,rateWindow,sortRows} from './monitor-model.js';
 import {trafficSnapshot,distributions,nodeSnapshot} from './traffic-model.js';
 import {nodeLabel} from './proxy-model.js';
-import {el,button,input,select,page,table,pager,confirmation,metrics,sparkline} from './monitor-view.js';
+import {el,button,input,select,page,table,pager,confirmation,metrics,sparkline,streamState} from './monitor-view.js';
 
 export function mountDistribution(host,{initialInfo,onUnauthorized=()=>{}}={}) {
   const ui=page(host,'distribution-page','流量分布'),supported=initialInfo?.features?.net_rec!==false,viaClash=['yaml','suburl'].includes(initialInfo?.mode),dialog=confirmation(ui.root),rates=rateWindow();
@@ -34,7 +34,8 @@ export function mountDistribution(host,{initialInfo,onUnauthorized=()=>{}}={}) {
   }
   async function clearNodes(){if(busy||client.unauthorized||client.disposed)return;busy=true;client.suspend();render();try{const value=await client.request('/sniffbox/nodes/clear',{method:'POST'});if(client.disposed)return;if(value?.cleared!==true)throw Error('清空结果未确认，请刷新核对。');nodes=[];loaded=false;rates.reset();currentRate={total:null};ui.message('节点统计已清空。');}catch(error){if(!client.disposed)ui.message('清空未完成：'+error.message);}finally{busy=false;if(!client.disposed){render();client.resume();}}}
   const nodeReader=client.poll('/sniffbox/nodes',value=>{const next=nodeSnapshot(value);nodes=next.nodes;since=next.since;loaded=true;currentRate=rates.sample(nodes.reduce((sum,row)=>sum+row.down,0),nodes.reduce((sum,row)=>sum+row.up,0),Date.now(),String(since));render();},{enabled:supported&&viaClash,interval:3000,onError:error=>ui.message(error.message)});
-  const stream=client.stream('/sniffbox/traffic/sse',raw=>{records=trafficSnapshot(JSON.parse(raw));render();},{enabled:supported,onState:state=>{ui.root.dataset.stream=state;},onError:error=>ui.message(error.message)});
+  const connectionState=el('p','正在连接…','monitor-stream-state');connectionState.setAttribute('role','status');ui.head.after(connectionState);
+  const stream=client.stream('/sniffbox/traffic/sse',raw=>{records=trafficSnapshot(JSON.parse(raw));render();},{enabled:supported,onState:state=>{ui.root.dataset.stream=state;connectionState.textContent=streamState(state);},onError:error=>ui.message(error.message)});
   if(!supported)ui.message('流量记录未启用，请在网关设置中开启流量采集。');render();
   return {expire(){client.expire();},refresh(){client.refresh();},dispose(){client.dispose();dialog.dispose();host.replaceChildren();}};
 }

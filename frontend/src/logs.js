@@ -1,7 +1,7 @@
 import {monitorClient} from './monitor-client.js';
 import {date} from './monitor-model.js';
 import {levels,sourceName,stripAnsi,ansiSegments,logEvent,logBuffer} from './log-model.js';
-import {el,button,input,select,page,download} from './monitor-view.js';
+import {el,button,input,select,page,download,streamState} from './monitor-view.js';
 
 export function mountLogs(host,{onUnauthorized=()=>{}}={}) {
   const ui=page(host,'logs-page','实时日志'),core=logBuffer(),screen=logBuffer(),panes=el('div',undefined,'monitor-log-panes');
@@ -9,6 +9,7 @@ export function mountLogs(host,{onUnauthorized=()=>{}}={}) {
   const client=monitorClient({onUnauthorized,onPause:reason=>{if(reason!=='disposed')ui.message(reason==='unauthorized'?'登录已失效，日志内容已保留。':'页面已隐藏，实时日志已暂停。');},onResume:()=>ui.message('')});
   const source=select('日志视图',[['core','核心日志'],['screen','终端输出'],['both','同时显示']],value=>{mode=value;render();},mode),layout=button('纵向分屏',()=>{vertical=!vertical;render();}),refresh=button('重新连接',()=>client.refresh());
   ui.head.append(source,layout,refresh);ui.root.append(panes);
+  const connectionState=el('p','正在连接…','monitor-stream-state');connectionState.setAttribute('role','status');ui.head.after(connectionState);
   const views=[];
   for(const [name,title,buffer]of [['core','核心日志',core],['screen','终端输出',screen]]){
     const section=el('section',undefined,'glass monitor-log-pane'),head=el('div',undefined,'monitor-head'),body=el('div',undefined,'monitor-log-body'),count=el('p',undefined,'monitor-hint');body.tabIndex=0;body.setAttribute('aria-label',title+'内容');
@@ -29,10 +30,11 @@ export function mountLogs(host,{onUnauthorized=()=>{}}={}) {
       state.count.textContent=(state.name==='screen'&&!screenAvailable?'终端输出暂不可用。 · ':'')+'匹配 '+rows.length+' / 保留 '+state.buffer.rows.length+' 行（上限 2000）'+(rows.length>visible.length?' · 当前显示最近 '+visible.length+' 行':'')+(state.buffer.paused?' · 已暂停，待显示 '+state.buffer.pending+' 行':'');
       state.body.replaceChildren(...visible.map(row=>{const line=el('div',undefined,'monitor-log-line');line.dataset.level=row.level;if(state.name==='core')line.append(el('span','['+date(row.ts)+'] ['+sourceName(row.source)+'] ['+row.level+'] ','monitor-log-prefix'));
         for(const segment of ansiSegments(row.raw)){const span=el('span',segment.text);if(segment.fg)span.style.color=segment.fg;if(segment.bg)span.style.backgroundColor=segment.bg;if(segment.bold)span.style.fontWeight='700';if(segment.dim)span.style.opacity='.65';if(segment.italic)span.style.fontStyle='italic';if(segment.underline)span.style.textDecoration='underline';line.append(span);}return line;}));
+      if(!visible.length)state.body.append(el('p',state.query?'当前筛选下暂无日志。':state.name==='core'?'暂无日志（当前级别：'+(level==='info'?'Info':level)+'）':'暂无终端输出。','monitor-log-empty'));
       if(state.follow)state.body.scrollTop=state.body.scrollHeight;else state.body.scrollTop=scroll;
     }
   }
-  const coreStream=client.stream('/sniffbox/logs/sse',raw=>{const row=logEvent(raw);if(row){core.append([row]);schedule();}},{onError:error=>ui.message(error.message)});
+  const coreStream=client.stream('/sniffbox/logs/sse',raw=>{const row=logEvent(raw);if(row){core.append([row]);schedule();}},{onState:state=>{connectionState.textContent=streamState(state);},onError:error=>ui.message(error.message)});
   const appendScreen=raw=>{screen.append(raw.replace(/\r\n/g,'\n').split('\n').filter((line,index,array)=>line||index<array.length-1).map(line=>({raw:line,text:stripAnsi(line),level:'info'})));schedule();};
   const screenReader=client.observe(async signal=>{
     if(!screenLoaded){const value=await client.request('/sniffbox/screen',{signal,consume:async response=>({available:response.headers.get('X-Screen-Status')!=='unavailable',text:await response.text()})});if(signal.aborted)return;screenLoaded=true;screenAvailable=value.available;if(screenAvailable){screen.clear();appendScreen(value.text);}render();}
