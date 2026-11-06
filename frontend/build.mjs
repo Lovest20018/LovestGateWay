@@ -10,6 +10,8 @@ export async function build(output=join(here,'dist')) {
   await mkdir(output,{recursive:true});
   // Delete only prior manifest-owned basenames; never recursively remove a caller's path.
   try {const previous=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));for(const name of Object.values(previous.assets||{}))if(typeof name==='string'&&/^[a-z_-]+\.[a-f0-9]{12}\.(js|css)$/.test(name)){await unlink(join(output,name)).catch(()=>{});await unlink(join(output,name+'.gz')).catch(()=>{});}}catch{}
+  // Older manifests owned the retired bundle through precompressed, not assets.
+  try {const previous=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));for(const [name,compressed] of Object.entries(previous.precompressed||{}))if(/^bundle\.[A-Za-z0-9_-]+\.js$/.test(name)&&compressed===name+'.gz'){await unlink(join(output,name)).catch(()=>{});await unlink(join(output,compressed)).catch(()=>{});}}catch{}
   const original=join(root,'FILES/etc/config/clash/clash-dashboard/ui');
   const html=await textFile(join(original,'index.html'));
   const assets={};

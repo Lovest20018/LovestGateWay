@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the maintained dashboard source and opaque upstream compatibility pages."""
+"""Build the maintained dashboard source and redirects for legacy entries."""
 import argparse
 import os
 from pathlib import Path
