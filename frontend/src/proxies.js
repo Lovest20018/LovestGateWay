@@ -1,6 +1,6 @@
 import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
-import {formatBytes} from './overview.js';
+import {formatBytes} from './format.js';
 import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode} from './proxy-model.js';
 
 const make=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};

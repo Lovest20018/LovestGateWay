@@ -10,7 +10,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve('dist/ui-optimi
     page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
     await page.addInitScript(()=>localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]})));
     let hold=true;
-    await page.route(origin+'/**',async route=>{
+    await context.route(origin+'/**',async route=>{
       const request=route.request(),target=new URL(request.url()).pathname;
       const reply=data=>route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
       if(target.startsWith('/sniffbox/')||['/configs','/connections'].includes(target)){
@@ -49,6 +49,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve('dist/ui-optimi
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
       }
     }
+    const connectionOnly=await context.newPage(),before=modules.length;await connectionOnly.goto(origin+'/ui/#/connections');await connectionOnly.locator('#connections-page').waitFor();assert.equal(modules.slice(before).some(name=>name.startsWith('overview.')),false,'shared formatting cannot pull in the overview route');await connectionOnly.close();
     assert.deepEqual(errors,[]);
     const report={syntheticOnly:true,lazyInitialRoutes:true,obsoleteImportIgnored:true,backNavigation:true,mobileWidths:[375,320],themes:['light','dark'],backdrop:true,focusTrap:true,escapeRestoresFocus:true,closedEscapePreservesFocus:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));await context.close();

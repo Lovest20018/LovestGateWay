@@ -1,3 +1,5 @@
+import {formatBytes} from './format.js';
+export {formatBytes} from './format.js';
 import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
 
@@ -5,11 +7,7 @@ const number=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?va
 const list=value=>Array.isArray(value)?value:[];
 const text=value=>typeof value==='string'?value:'—';
 export const modeLabel=data=>data?.ppsub?'原生 PPsub':({free:'直连',socks5:'SOCKS5',ovpn:'OpenVPN',yaml:'本地 YAML',suburl:'订阅'})[data?.mode]||text(data?.mode);
-export function formatBytes(value,rate=false){
-  value=number(value);if(value===null)return '—';
-  const units=['B','KB','MB','GB','TB','PB'],i=Math.min(units.length-1,Math.floor(Math.log(Math.max(1,value))/Math.log(1024)));
-  return (value/1024**i).toFixed(1)+' '+units[i]+(rate?'/s':'');
-}
+
 export function trafficSample(previous,traffic,at,boot=''){
   const down=number(traffic?.downloadTotal),up=number(traffic?.uploadTotal);
   if(down===null||up===null)return null;
