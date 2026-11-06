@@ -56,3 +56,5 @@ html,body,#app{min-height:100%;margin:0}
 #shell-backdrop{position:fixed;inset:0;z-index:85;border:0;background:#0008;cursor:pointer}
 body.shell-nav-open{overflow:hidden}
 @media(max-width:760px){#shell-nav{background:var(--panel-solid)}}
+
+.mode-control{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--edge);border-radius:10px;background:var(--panel)}.mode-control .btn{border:0;background:transparent;box-shadow:none;padding:6px 10px}.mode-control .btn[aria-checked=true]{background:var(--brand-soft);color:var(--brand-text)}

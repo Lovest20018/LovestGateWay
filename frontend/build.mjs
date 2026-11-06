@@ -24,7 +24,7 @@ export async function build(output=join(here,'dist')) {
   const styles=[...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
   await emit('theme.css',pruneScopedStyles(styles));
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
-  for(const name of ['format.js','model.js','url-privacy.js','auth.js','icons.js','proxy-model.js','rule-model.js','monitor-model.js','connection-model.js','traffic-model.js','log-model.js','region-catalog.js','region-engine.js','monitor-client.js','monitor-view.js','editor.js','recovery-job.js','diagnostics.js','overview.js','proxies.js','rules.js','connections.js','traffic.js','distribution.js','logs.js','region.js','shell.js']) {
+  for(const name of ['format.js','model.js','url-privacy.js','auth.js','icons.js','proxy-model.js','rule-model.js','monitor-model.js','connection-model.js','traffic-model.js','log-model.js','region-catalog.js','region-engine.js','monitor-client.js','monitor-view.js','editor.js','recovery-job.js','mode-control.js','diagnostics.js','overview.js','proxies.js','rules.js','connections.js','traffic.js','distribution.js','logs.js','region.js','shell.js']) {
     let source=await textFile(join(here,'src',name));
     for(const [label,hashed] of Object.entries(assets)) source=source.replaceAll('./'+label,'./'+hashed);
     await emit(name,source);
