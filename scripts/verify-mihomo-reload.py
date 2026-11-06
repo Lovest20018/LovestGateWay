@@ -19,7 +19,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'integration'))
-from mihomo_reload import UnixController, plan, reload_verified
+from mihomo_reload import UnixController, plan, policy_candidate, reload_verified
 from manage_common import ManagementError
 
 
@@ -190,6 +190,35 @@ def main():
         assert not any(row['payload']=='uncertain.test' for row in api('GET', '/rules')['rules'])
         fresh=connect(); assert fresh; echoed(fresh, b'after-rollback'); fresh.close()
         passed('lost_acknowledgement_rolls_back_persistent_policy_and_restarts_accepted_runtime')
+        from clash_ppsub import apply_features, feature_options
+        keep.close(); keep = None
+        for label, options in [
+            ('monitor', {'global_monitor': {'enable': True}}),
+            ('cron', {'restart_cron': {'enable': True, 'hour': 4}}),
+            ('ss_listener', {'shadowsocks_in': {'enable': True, 'cipher': 'aes-128-gcm', 'password': 'fixture-listener-password'}}),
+            ('smart_static', {'node-groups': [{'name': 'MAIN', 'smart': True}]}),
+        ]:
+            stop()
+            logical = deepcopy(config)
+            if label == 'smart_static': logical['proxy-groups'][0]['proxies'].append('smartspeedtest@hide')
+            features = feature_options(options)
+            physical = apply_features(logical, features)
+            persist(physical); start(); managed_pid = process.pid
+            api('PUT', '/proxies/MAIN', {'name': 'Fixture'})
+            api('PUT', '/proxies/GLOBAL', {'name': 'MAIN'})
+            keep = connect(); assert keep; echoed(keep, b'managed-before')
+            edited = deepcopy(logical); edited['rules'].insert(0, 'DOMAIN,probe.test,REJECT')
+            decision, update = policy_candidate(logical, apply_features(edited, features), features, features, physical)
+            assert decision['eligible'] and update['before'] == physical
+            assert not policy_candidate(logical, update['after'], features, {}, physical)[0]['eligible']
+            evidence = reload_verified(update['before'], update['after'], controller, validate, persist)
+            assert evidence['method'] == 'mihomo_reload' and process.pid == managed_pid
+            echoed(keep, b'managed-after'); assert rejected()
+            assert api('GET', '/proxies')['proxies']['MAIN']['now'] == 'Fixture'
+            assert api('GET', '/proxies')['proxies']['GLOBAL']['now'] == 'MAIN'
+            assert json.loads(loaded.read_text()).get('x-ppgw-features') == physical.get('x-ppgw-features')
+            keep.close(); keep = None
+            passed('managed_'+label+'_static_rules_preserve_pid_tcp_selections_and_reject_matching_connection')
         report.update(complete=True, connection_identity_preserved_on_success=True,
                       uncertain_reload_requires_restart=True, providers_use_restart=True)
         save()
