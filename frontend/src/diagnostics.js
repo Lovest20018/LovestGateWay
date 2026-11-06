@@ -1,6 +1,7 @@
 import {storedSecret} from './auth.js';
 
-const storageKey='lovestgateway-recovery-job';
+import {storageKey,pendingRecoveryJob} from './recovery-job.js';
+export {pendingRecoveryJob} from './recovery-job.js';
 const services={'paopaogw':'转发核心','paopaogw-settings':'管理任务服务','paopaogw-subscription':'订阅任务服务','paopaogw-api':'观测 API','paopaogw-observe':'历史采集','paopaogw-maintenance':'核心维护','paopaogw-maintenance.timer':'维护计划'};
 const kinds={manual:'手动完整备份',config:'配置变更',deploy:'安装升级',restore:'恢复备份',recover:'中断事务恢复','restore-rescue':'恢复前救援备份',asset:'资源导入',policy:'策略变更','policy-reset':'策略重置',backup:'创建完整备份'};
 const sections={configuration:'配置与凭据',assets:'订阅与资源',program:'管理程序与页面',services:'服务定义',runtime_data:'运行数据'};
@@ -34,7 +35,6 @@ const time=value=>Number.isFinite(value)?new Date(value*1000).toLocaleString():'
 const el=(tag,attrs={},children=[])=>{const node=document.createElement(tag);for(const[key,value]of Object.entries(attrs)){if(key==='text')node.textContent=value;else if(key.startsWith('on'))node.addEventListener(key.slice(2),value);else node.setAttribute(key,value);}node.append(...children);return node;};
 const button=(text,onclick,extra={})=>el('button',{type:'button',class:'btn',text,onclick,...extra});
 
-export function pendingRecoveryJob(){try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||'null');if(saved&&/^[a-f0-9]{32}$/.test(saved.id)&&['backup','restore','recover'].includes(saved.kind))return{id:saved.id,kind:saved.kind};}catch{}return null;}
 
 const publicErrors=new Set([...Object.keys(errors),'OPERATION_FAILED','DEPLOY_FAILED_ROLLED_BACK','CONFIG_REVISION_CONFLICT','INVALID_RECOVERY_PREVIEW','INVALID_RECOVERY_REQUEST','REVISION_KEY_REQUIRED','SOURCE_CONFLICT','CORE_NOT_RUNNING','MIHOMO_REQUIRED','ASSET_REQUIRED','SUBSCRIPTION_REQUIRED','INTERFACE_REQUIRED','INTERFACE_IPV4_REQUIRED','NETWORK_RESOURCE_BUSY','LISTENER_UNAVAILABLE','SYSTEM_OPERATION_FAILED','STALE_POLICY_SNAPSHOT']);
 const oneOf=(value,allowed,fallback='unknown')=>allowed.includes(value)?value:fallback;

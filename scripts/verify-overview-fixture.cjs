@@ -48,6 +48,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
       try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
     await page.goto(origin+'/ui/#/overview');const overview=page.locator('#overview-page');await overview.getByText('Fixture CPU 4-core',{exact:true}).waitFor();
+    assert.equal(requests.filter(row=>/\/(editor|diagnostics|proxies|rules|connections|traffic|distribution|logs|region)\.[a-f0-9]+\.js$/.test(row.target)).length,0,'unvisited routes must not load on the overview');
     assert.equal(await overview.locator('[data-field=mode]').textContent(),'订阅');await page.evaluate(()=>window.documentIdentity='overview-source');
     assert.equal(requests.filter(row=>row.target.includes('bundle.')).length,0,'overview must not mount the compatibility runtime');
     assert.equal(await page.locator('#runtime-panel').count(),0);
