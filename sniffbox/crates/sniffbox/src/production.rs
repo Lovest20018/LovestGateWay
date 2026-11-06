@@ -240,9 +240,13 @@ impl PpgwIni {
     }
 
     fn acl(&self, key: &str) -> CidrAcl {
-        self.str(key)
-            .and_then(|s| CidrAcl::parse(s).ok())
-            .unwrap_or_default()
+        match CidrAcl::parse(self.str(key).unwrap_or("")) {
+            Ok(acl) => acl,
+            Err(_) => {
+                tracing::warn!(field = key, "invalid access range; restricting access to loopback");
+                CidrAcl::parse("127.0.0.0/8,::1/128").expect("valid loopback ranges")
+            }
+        }
     }
 
     fn userpass(&self, key: &str) -> Option<(String, String)> {
@@ -482,6 +486,25 @@ mod tests {
         assert!(cfg.route.block_quic);
         assert!(!cfg.route.block_unknown);
         assert!(cfg.route.log_sniffed);
+    }
+
+    #[test]
+    fn invalid_access_range_never_becomes_allow_all() {
+        let cfg = build(&ppgw("admin_cidr=not-a-network\nproxy_cidr=10.0.0.0/8,not-a-network\n"));
+        for acl in [&cfg.web.admin_cidr, &cfg.acl.proxy_cidr] {
+            assert!(!acl.is_empty());
+            assert!(acl.allows("127.0.0.1".parse().unwrap()));
+            assert!(acl.allows("::1".parse().unwrap()));
+            assert!(!acl.allows("203.0.113.10".parse().unwrap()));
+        }
+    }
+
+    #[test]
+    fn production_access_range_accepts_mixed_families() {
+        let cfg = build(&ppgw("proxy_cidr=192.0.2.0/24,2001:db8::/64\n"));
+        assert_eq!(cfg.acl.proxy_cidr.nets().len(), 2);
+        assert!(cfg.acl.proxy_cidr.allows("2001:db8::10".parse().unwrap()));
+        assert!(!cfg.acl.proxy_cidr.allows("203.0.113.10".parse().unwrap()));
     }
 
     #[test]

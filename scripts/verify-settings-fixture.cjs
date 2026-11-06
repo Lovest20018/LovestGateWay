@@ -140,6 +140,10 @@ async function main() {
     assert.match(await page.locator('.ppgw-management [role=status]').textContent(),/核心配置已加载.*保存版本与运行状态待核对/);
     assert.doesNotMatch(await page.locator('.ppgw-management [role=status]').textContent(),/尚未确认加载|已核对当前运行配置/);
     const readsBeforeCheck=configReads;
+    const aclInput=page.getByLabel('管理访问范围',{exact:true}),aclWarning=page.locator('[data-admin-acl-warning]'),savedAcl=await aclInput.inputValue();
+    await aclInput.fill('');assert.equal(await aclWarning.isVisible(),true);
+    await aclInput.fill('192.0.2.0/24');assert.equal(await aclWarning.isVisible(),false);
+    await aclInput.fill(savedAcl);
     const draftInput=page.getByLabel('流量记录上限',{exact:true}),savedInput=await draftInput.inputValue();
     await draftInput.fill('12345');
     await page.getByRole('button',{name:'重新核对',exact:true}).click();
