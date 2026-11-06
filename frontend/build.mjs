@@ -22,9 +22,7 @@ export async function build(output=join(here,'dist')) {
   const styles=[...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
   await emit('theme.css',styles);
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
-  for(const name of ['model.js','auth.js','icons.js','proxy-model.js','rule-model.js'])await emit(name,await textFile(join(here,'src',name)));
-  await emit('legacy-bridge.js',(await textFile(join(here,'src/legacy-bridge.js'))).replaceAll('@@runtime-bundle@@',bundle));
-  for(const name of ['editor.js','diagnostics.js','overview.js','proxies.js','rules.js','shell.js']) {
+  for(const name of ['model.js','auth.js','icons.js','proxy-model.js','rule-model.js','monitor-model.js','connection-model.js','traffic-model.js','log-model.js','region-catalog.js','region-engine.js','monitor-client.js','monitor-view.js','editor.js','diagnostics.js','overview.js','proxies.js','rules.js','connections.js','traffic.js','distribution.js','logs.js','region.js','shell.js']) {
     let source=await textFile(join(here,'src',name));
     for(const [label,hashed] of Object.entries(assets)) source=source.replaceAll('./'+label,'./'+hashed);
     await emit(name,source);
@@ -34,6 +32,7 @@ export async function build(output=join(here,'dist')) {
   await emit('diagnostics.css',await textFile(join(here,'src/diagnostics.css')));
   await emit('overview.css',await textFile(join(here,'src/overview.css')));
   await emit('proxies.css',await textFile(join(here,'src/proxies.css')));
+  await emit('monitor.css',await textFile(join(here,'src/monitor.css')));
   await emit('rules.css',await textFile(join(here,'src/rules.css')));
   await writeFile(join(output,'legacy.html'),'<!doctype html><meta charset="utf-8"><script>location.replace("/ui/"+location.hash)</script>');
   let index=await textFile(join(here,'src/index.html'));

@@ -1,6 +1,7 @@
 from pathlib import Path
 import hashlib
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -24,7 +25,16 @@ class DashboardTests(unittest.TestCase):
             bundle=next(upstream.glob('bundle.*.js'))
             self.assertEqual((output/bundle.name).read_bytes(),bundle.read_bytes())
             shell=(output/entry).read_text(encoding='utf-8')
-            self.assertIn('mountRuntime',shell)
+            self.assertNotIn('legacy-bridge',shell)
+            self.assertNotIn('legacy-bridge.js',manifest['assets'])
+            for view in ['Connections','Traffic','Distribution','Logs','Region']:
+                self.assertIn('mount'+view,shell)
+            for label,name in manifest['assets'].items():
+                if label.endswith('.js'):
+                    source=(output/name).read_text(encoding='utf-8')
+                    self.assertNotIn(bundle.name,source)
+                    for imported in re.findall(r"(?:from\s*|import\s*\()\s*['\"]\./([^'\"]+)",source):
+                        self.assertTrue((output/imported).is_file(),imported)
             self.assertNotIn("el('iframe'",shell)
             self.assertIn('window.ppgwGateway.mount',shell)
             self.assertIn('mountEditor',shell)
