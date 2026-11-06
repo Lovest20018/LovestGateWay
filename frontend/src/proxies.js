@@ -30,7 +30,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const globalSort=make('select');for(const [value,text]of sorts.filter(([key])=>key!=='scoreAsc')){const option=make('option',text);option.value=value;globalSort.append(option);}globalSort.value=prefs.sort;globalSort.addEventListener('change',()=>{prefs.sort=globalSort.value;save();render();});settings.append(label('组内排序',globalSort));
   for(const [key,text]of [['optimize','优化节点名标签显示'],['hideUnavail','隐藏不可用代理'],['autoClose','切换后关闭旧连接'],['showUdp','显示 UDP 标记']]){const check=make('input');check.type='checkbox';check.checked=prefs[key];check.dataset.preference=key;check.addEventListener('change',()=>{prefs[key]=check.checked;save();render();});settings.append(label(text,check));}
   const curve=make('input');curve.type='range';curve.min='0';curve.max='100';curve.value=String(prefs.curve);curve.addEventListener('input',()=>{prefs.curve=Number(curve.value);save();render();});settings.append(label('延迟曲线背景（100 为关闭）',curve));
-  const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>perform('全部测速',async()=>runTests(testPlan(data,prefs)))),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',async()=>{for(const name of externalProviders())await request('/providers/proxies/'+segment(name),{method:'PUT'});}));
+  const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>perform('全部测速',async()=>runTests(testPlan(data,prefs)))),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
   testAll.dataset.action='test-all';updateAll.dataset.action='update-all';toolbar.append(testAll,updateAll);
   const groupHost=make('div',undefined,'proxy-groups'),providerHost=make('section',undefined,'proxy-providers'),usageHost=make('section',undefined,'proxy-usages');
   const empty=make('p','暂无可用的节点组。','glass proxies-empty');empty.hidden=true;
@@ -47,7 +47,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
       const response=await fetch(url,{method,headers:{Authorization:'Bearer '+storedSecret(),...(body!==undefined?{'Content-Type':'application/json'}:{}),...(tag?{'If-None-Match':tag}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:controller.signal,cache:'no-store'});
       if(response.status===401){authorized();const error=Error('登录已失效，请重新登录后读取最新状态。');error.unauthorized=true;throw error;}
       if(allowNotModified&&response.status===304)return {unchanged:true};
-      if(!response.ok)throw Error('请求失败（HTTP '+response.status+'）。');
+      if(!response.ok){const error=Error('请求失败（HTTP '+response.status+'）。');error.status=response.status;throw error;}
       if(response.status===204)return null;
       const text=await response.text();return {value:text?JSON.parse(text):null,etag:response.headers.get('ETag')||''};
     }finally{clearTimeout(timeout);signal?.removeEventListener('abort',cancel);controllers.delete(controller);}
@@ -80,18 +80,33 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   async function perform(description,work){
     if(disposed||busy||paused||!loaded)return;
     busy=true;clearTimeout(timer);sequence++;readController?.abort();reading=false;actionState();message(description+'中…');
-    try{await work();if(disposed)return;message(description+'完成。');}
+    try{const result=await work();if(disposed)return;message(typeof result==='string'?result:description+'完成。');}
     catch(error){if(disposed)return;message(description+'未完成：'+(error.name==='AbortError'?'响应未确认，请刷新状态后再决定是否重试。':error.message));}
     finally{busy=false;if(!disposed){render();if(resumeRequested){resumeRequested=false;refresh();}else schedule(3200);}}
   }
   async function closeOld(group,node){
-    if(!prefs.autoClose)return;
-    const result=await request('/connections');const rows=Array.isArray(result.value?.connections)?result.value.connections:[];
-    for(const connection of rows){if(disposed||paused)return;if(typeof connection.id==='string'&&Array.isArray(connection.chains)&&connection.chains.includes(group)&&!connection.chains.includes(node))await request('/connections/'+segment(connection.id),{method:'DELETE'});}
+    if(!prefs.autoClose)return '';
+    let result;try{result=await request('/connections');}catch{return '旧连接未能读取，请重新核对。';}
+    if(!Array.isArray(result.value?.connections)&&result.value?.connections!==null)return '旧连接响应无效，请重新核对。';
+    const rows=(result.value.connections||[]).filter(connection=>typeof connection.id==='string'&&Array.isArray(connection.chains)&&connection.chains.includes(group)&&!connection.chains.includes(node));
+    let index=0,closed=0,stopped=false;
+    await Promise.all(Array.from({length:Math.min(8,rows.length)},async()=>{
+      while(index<rows.length&&!disposed&&!paused&&!stopped){const connection=rows[index++];try{await request('/connections/'+segment(connection.id),{method:'DELETE'});closed++;}catch(error){if(error.unauthorized||error.status===403)stopped=true;}}
+    }));
+    return '已关闭 '+closed+' 条旧连接，'+(rows.length-closed)+' 条未关闭。'+(paused||stopped?'后续关闭已停止，请核对访问权限。':'');
+  }
+  async function updateProviders(){
+    let succeeded=0,stopped=false;const failed=[];
+    for(const name of externalProviders()){
+      if(disposed||paused)break;
+      try{await request('/providers/proxies/'+segment(name),{method:'PUT'});succeeded++;}
+      catch(error){failed.push(name);if(error.unauthorized||error.status===403){stopped=true;break;}}
+    }
+    return '订阅更新'+(paused||stopped?'已停止':'完成')+'：成功 '+succeeded+' 个，失败 '+failed.length+' 个'+(failed.length?'（'+failed.join('、')+'）':'')+'。';
   }
   async function select(group,node){
     const target=data.proxies[group];if(target?.type!=='Selector'||target.smart||target.now===node)return;
-    await perform('切换节点',async()=>{await request('/proxies/'+segment(group),{method:'PUT',body:{name:node}});if(disposed)return;target.now=node;await closeOld(group,node);});
+    await perform('切换节点',async()=>{await request('/proxies/'+segment(group),{method:'PUT',body:{name:node}});if(disposed)return;target.now=node;const result=await closeOld(group,node);return '切换节点完成。'+result;});
   }
   async function fixed(group,node){
     const target=data.proxies[group];if(!lockable(target))return;
@@ -99,7 +114,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
       const unlock=target.fixed===node;
       if(target.smart)await request('/sniffbox/smart/fixed',{method:'POST',body:{group,node:unlock?null:node}});
       else await request('/proxies/'+segment(group),{method:unlock?'DELETE':'PUT',...(unlock?{}:{body:{name:node}})});
-      if(disposed)return;target.fixed=unlock?'':node;if(!unlock){target.now=node;await closeOld(group,node);}
+      if(disposed)return;target.fixed=unlock?'':node;if(!unlock){target.now=node;const result=await closeOld(group,node);return '锁定节点完成。'+result;}
     });
   }
   async function runTests(plans){
