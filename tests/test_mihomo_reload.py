@@ -51,6 +51,23 @@ class ReloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError,'STALE_POLICY_SNAPSHOT'):
             reload_verified(BASE,self.candidate(),controller,lambda doc:None,written.append)
         self.assertFalse(any(call[0]=='PUT' for call in controller.calls));self.assertEqual(written,[])
+    def test_automatic_group_manual_lock_is_restored_and_verified(self):
+        class LockedController(Controller):
+            def __init__(self):super().__init__();self.fixed='Fixture'
+            def request(self,method,path,body=None):
+                if path=='/proxies/Auto':
+                    self.calls.append((method,path,body));self.fixed=body['name'];return None,self.peer
+                value,peer=super().request(method,path,body)
+                if path.startswith('/configs?'):self.fixed=''
+                if path=='/proxies':
+                    value['proxies']['Auto']={'type':'URLTest','all':['Fixture','DIRECT'],'fixed':self.fixed}
+                return value,peer
+        before=deepcopy(BASE);before['proxy-groups'].append({'name':'Auto','type':'url-test','proxies':['Fixture','DIRECT']})
+        after=deepcopy(before);after['rules'].insert(0,'DOMAIN,blocked.example,REJECT')
+        controller=LockedController();controller.doc=deepcopy(before)
+        reload_verified(before,after,controller,lambda doc:None,lambda doc:None)
+        self.assertEqual(controller.fixed,'Fixture')
+        self.assertTrue(any(call[:2]==('PUT','/proxies/Auto') for call in controller.calls))
     def test_204_without_rules_loaded_and_process_replacement_never_persist_success(self):
         for kind in ['ignore','changed']:
             controller=Controller();setattr(controller,kind,True);written=[]

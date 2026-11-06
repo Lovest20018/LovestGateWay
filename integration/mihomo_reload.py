@@ -110,6 +110,9 @@ def reload_verified(before, after, controller, validate, persist):
             raise ManagementError('STALE_POLICY_SNAPSHOT')
     choices = {name: row.get('now') for name, row in previous.items()
                if isinstance(row, dict) and row.get('type') == 'Selector' and isinstance(row.get('now'), str)}
+    locks = {name: (row.get('type'), row['fixed']) for name, row in previous.items()
+             if isinstance(row, dict) and row.get('type') in {'URLTest', 'Fallback', 'LoadBalance'}
+             and isinstance(row.get('fixed'), str) and row['fixed']}
     candidate = deepcopy(after); candidate['mode'] = config['mode']
     validate(candidate)
     # Recheck ownership immediately before the only mutating controller call.
@@ -125,6 +128,11 @@ def reload_verified(before, after, controller, validate, persist):
         if row.get('type') == 'Selector' and selected in row.get('all', []) and row.get('now') != selected:
             _, peer = controller.request('PUT', '/proxies/'+quote(name, safe=''), {'name': selected})
             if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
+    for name, (kind, selected) in locks.items():
+        row = actual.get(name, {})
+        if row.get('type') == kind and selected in row.get('all', []) and row.get('fixed') != selected:
+            _, peer = controller.request('PUT', '/proxies/'+quote(name, safe=''), {'name': selected})
+            if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
     current, peer = controller.request('GET', '/proxies')
     if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
     actual = current.get('proxies', {})
@@ -135,6 +143,10 @@ def reload_verified(before, after, controller, validate, persist):
     for name, selected in choices.items():
         row = actual.get(name, {})
         if row.get('type') == 'Selector' and selected in row.get('all', []) and row.get('now') != selected:
+            raise ManagementError('MIHOMO_RELOAD_SELECTION_NOT_PRESERVED')
+    for name, (kind, selected) in locks.items():
+        row = actual.get(name, {})
+        if row.get('type') == kind and selected in row.get('all', []) and row.get('fixed') != selected:
             raise ManagementError('MIHOMO_RELOAD_SELECTION_NOT_PRESERVED')
     rules, peer = controller.request('GET', '/rules')
     if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')

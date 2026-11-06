@@ -21,7 +21,7 @@ API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板�
 
 ```sh
 node frontend/build.mjs
-node --test frontend/tests/model.test.mjs frontend/tests/diagnostics.test.mjs frontend/tests/overview.test.mjs frontend/tests/proxies.test.mjs frontend/tests/rules.test.mjs
+node --test frontend/tests/*.test.mjs
 ```
 
 ```sh
