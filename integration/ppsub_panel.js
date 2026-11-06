@@ -43,6 +43,8 @@
     apply.textContent = '保存并应用';
     apply.dataset.ppsubApply = '';
     apply.disabled = true;
+    const dirtyState=document.createElement('span');dirtyState.className='editor-dirty-state';dirtyState.dataset.editorDirty='';
+    editor.setLoading?.(true,false);
     const notice = document.createElement('div');
     notice.className = 'ppgw-editor-status';
     notice.setAttribute('role', 'status');
@@ -110,7 +112,7 @@
     }
     refreshNodes.onclick=()=>refreshProviders();
     refreshNodes.title='立即更新全部订阅，包括仅手动更新的机场';
-    editor.header.append(backup,refreshNodes,apply);
+    editor.header.append(backup,refreshNodes,dirtyState,apply);
     editor.header.after(cacheNote);
     editor.header.after(notice,exportNote);
     const optionsHost = document.createElement('div');
@@ -118,7 +120,7 @@
     const optionsSection=document.createElement('details');optionsSection.className='editor-schedule';
     const optionsTitle=document.createElement('summary');optionsTitle.textContent='订阅更新计划';
     optionsSection.append(optionsTitle,optionsHost);
-    editor.header.parentElement.querySelector('.monitor')?.append(optionsSection);
+    (editor.header.parentElement.querySelector('.monitor')||editor.header.parentElement.querySelector('.editor-body'))?.append(optionsSection);
     const detachOptions = window.ppgwGateway?.attachOptions(optionsHost);
     state.setSettingsBusy = busy => { state.settingsBusy = busy; syncEditing(); updateApply(); };
     function show(message, failed = false, loadedNotice = false) {
@@ -224,11 +226,17 @@
 
     function hasChanges() { return state.loaded && fingerprint() !== state.baseline; }
 
+    for(const type of ['input','change','click'])editor.header.parentElement.addEventListener(type,()=>updateApply(),{signal:lifetime.signal});
+
     function updateApply() {
+      editor.setLoading?.(state.loading,state.loaded);
+      const changed=hasChanges()||window.ppgwGateway?.editorOptionsChanged();
+      const dirtyText=state.loaded?(changed?'有未保存的修改':'没有未保存的修改'):'';
+      if(dirtyState.textContent!==dirtyText)dirtyState.textContent=dirtyText;
       refreshNodes.hidden=state.editKind!=='ppsub';
       refreshNodes.disabled=state.stopped||state.loading||state.active||state.settingsBusy||!state.loaded||!state.writeAllowed;
       apply.disabled = state.stopped || state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed ||
-        (state.editKind === 'clash_patch' && !state.snapshotId);
+        (state.editKind === 'clash_patch' && !state.snapshotId) || !changed;
     }
 
     async function refresh() {
@@ -308,7 +316,7 @@
     };
 
     apply.onclick = async () => {
-      if (state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed || (state.editKind === 'clash_patch' && !state.snapshotId)) return;
+      if (state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed || (state.editKind === 'clash_patch' && !state.snapshotId) || !(hasChanges()||window.ppgwGateway?.editorOptionsChanged())) return;
       try {
         const config=editor.exportConfig();
         if (state.editKind!=='clash_patch'&&(!config.subs?.length||config.subs.some(item=>!item.name?.trim()||!item.url?.trim()))) throw Error('请先填写订阅提供商的名称和订阅链接。');
@@ -366,7 +374,7 @@
       window.ppgwGateway?.setEditorBusy(false);
       capabilityObserver.disconnect(); editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); backup.remove(); exportNote.remove(); refreshNodes.remove(); cacheNote.remove();
       detachOptions?.(); optionsHost.remove();
-      apply.remove();
+      dirtyState.remove();apply.remove();
       notice.remove();
       if (current === state) current = null;
     }

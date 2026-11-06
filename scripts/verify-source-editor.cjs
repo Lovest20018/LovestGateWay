@@ -48,7 +48,7 @@ async function exercise(browser,kind){
     await page.goto(origin+'/ui/#/subscriptions');
     assert.equal(await page.evaluate(()=>isSecureContext),false,'must exercise HTTP LAN password hashing');
     await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();
-    const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);await ready();
+    const ready=()=>page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded');await ready();
     {const privateProvider=page.locator('.subs .item').first(),privateUrl=privateProvider.locator('[data-field=url]');assert.equal(await privateUrl.inputValue(),'');assert.equal((await privateProvider.innerText()).includes(config.subs[0].url),false);await privateProvider.getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await privateUrl.inputValue(),config.subs[0].url);await privateProvider.getByRole('button',{name:'隐藏地址',exact:true}).click();assert.equal(await privateUrl.inputValue(),'');}
     if(kind==='ppsub'){
       await page.evaluate(()=>{const original=File.prototype.text;window.delayedImports={};File.prototype.text=function(){if(this.name.startsWith('delayed-import-')){const name=this.name;return new Promise(resolve=>{window.delayedImports[name]=()=>original.call(this).then(resolve);});}return original.apply(this,arguments);};});

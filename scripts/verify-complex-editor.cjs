@@ -67,7 +67,7 @@ async function exercise(browser, kind, width) {
   });
   const timings = {};
   const measure = async (name, action)=>{const begin=performance.now();await action();timings[name]=Math.round(performance.now()-begin);};
-  const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);
+  const ready=()=>page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded');
   const groups=page.locator('.groups > .item');
   const noOverflow=async()=>{
     const size=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
@@ -142,7 +142,7 @@ async function exercise(browser, kind, width) {
     await page.screenshot({path:path.join(evidenceDir,`failure-${kind}-${width}.png`)}).catch(()=>{});
     await fs.writeFile(path.join(evidenceDir,`failure-${kind}-${width}.json`),JSON.stringify({timings,providerPolls,errors,unexpected,error:String(error)},null,2)+'\n');
     throw error;
-  } finally {await context.close();}
+  } finally {for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await context.close();}
 }
 (async()=>{
   await fs.mkdir(evidenceDir,{recursive:true});
@@ -154,4 +154,4 @@ async function exercise(browser, kind, width) {
       await fs.writeFile(path.join(evidenceDir,'browser-evidence.json'),JSON.stringify({syntheticOnly:true,results},null,2)+'\n');
     }
   } finally {await browser.close();}
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>process.stdout.write('',()=>process.exit(0)),error=>{console.error(error);process.stderr.write('',()=>process.exit(1));});
