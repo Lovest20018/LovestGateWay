@@ -75,6 +75,13 @@ class System:
                      (settings['service']['PPGW_DNS_LISTEN'], socket.SOCK_DGRAM),
                      (settings['service']['PPGW_DNS_LISTEN'], socket.SOCK_STREAM),
                      ('127.0.0.1:8789', socket.SOCK_STREAM), ('127.0.0.1:8790', socket.SOCK_STREAM)]
+        from urllib.parse import urlsplit
+        import ipaddress
+        web = urlsplit('http://' + settings['service']['PPGW_WEB_LISTEN'])
+        address = ipaddress.ip_address(web.hostname)
+        if not address.is_unspecified and not address.is_loopback:
+            host = '[::1]' if address.version == 6 else '127.0.0.1'
+            endpoints.append((f'{host}:{web.port}', socket.SOCK_STREAM))
         if settings['api']['enabled']:
             endpoints.append((f"{settings['api']['listen']}:{settings['api']['port']}", socket.SOCK_STREAM))
         with ExitStack() as stack:

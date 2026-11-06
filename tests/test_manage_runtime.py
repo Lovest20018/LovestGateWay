@@ -25,6 +25,36 @@ class RuntimeTests(unittest.TestCase):
             return SimpleNamespace(returncode=0, stdout='loaded')
         self.system.command = command
 
+    def test_initial_bind_preflight_covers_the_companion_channel_and_its_conflicts(self):
+        from unittest.mock import patch
+        from manage_common import ManagementError
+        settings = load_settings(self.layout)
+        self.system.command = lambda *args, **kwargs: SimpleNamespace(returncode=1 if args[0] == 'nft' else 0, stdout='[]')
+        bindings = []
+        blocked = [None]
+        class Listener:
+            def __enter__(self): return self
+            def __exit__(self, *args): pass
+            def setsockopt(self, *args): pass
+            def bind(self, address):
+                bindings.append(address)
+                if address == blocked[0]: raise OSError('occupied')
+            def listen(self, *args): pass
+        with patch('manage_runtime.socket.socket', side_effect=lambda *args: Listener()):
+            for public, private in [('192.0.2.10:18080', ('127.0.0.1', 18080)),
+                                    ('[fd00::10]:18080', ('::1', 18080))]:
+                settings['service']['PPGW_WEB_LISTEN'] = public
+                bindings.clear(); self.system.preflight_listeners(settings)
+                self.assertIn(private, bindings)
+                blocked[0] = private
+                with self.assertRaisesRegex(ManagementError, 'LISTENER_UNAVAILABLE'):
+                    self.system.preflight_listeners(settings)
+                blocked[0] = None
+            for public in ('0.0.0.0:18080', '[::]:18080', '127.0.0.2:18080'):
+                settings['service']['PPGW_WEB_LISTEN'] = public
+                bindings.clear(); self.system.preflight_listeners(settings)
+                self.assertEqual(sum(port == 18080 for host, port in bindings), 1)
+
     def test_rollback_keeps_the_job_worker_alive_and_restores_other_units(self):
         states = {unit: {'active': True, 'enabled': True} for unit in ('paopaogw', 'paopaogw-settings', 'paopaogw-api')}
         self.system.stop_all(); self.system.restore_services(states)

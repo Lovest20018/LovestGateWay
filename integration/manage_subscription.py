@@ -6,7 +6,10 @@ import re
 import subprocess
 import tempfile
 
-from manage_common import ManagementError, atomic_write
+from manage_common import ManagementError, atomic_write, operation_lock, require_idle, write_json, digest
+from manage_backup import BackupStore
+
+JOURNAL = 'var/lib/paopaogw/admin/transaction.json'
 from manage_model import load_settings
 
 
@@ -44,6 +47,33 @@ def payload_content(raw):
 
 
 def refresh_nodes(layout, system, names=None, progress=None):
+    with operation_lock(layout):
+        require_idle(layout)
+        return _refresh_nodes(layout, system, names, progress)
+
+
+def rollback_subscription(layout, system, journal):
+    """Idempotently roll back all published providers, then prove core readiness."""
+    try:
+        BackupStore(layout).restore(journal['backup'], expected=journal['expected'])
+        journal['phase'] = 'rollback_verifying'
+        write_json(layout, JOURNAL, journal)
+        if journal['restart']:
+            system.command('systemctl', 'restart', 'paopaogw')
+            runtime = system.wait(load_settings(layout))
+            if isinstance(runtime, dict):
+                from manage_operations import remember_loaded
+                from manage_model import settings_revision
+                remember_loaded(layout, settings_revision(layout), runtime)
+    except Exception:
+        journal['phase'] = 'rollback_unconfirmed'
+        write_json(layout, JOURNAL, journal)
+        raise ManagementError('SUBSCRIPTION_ROLLBACK_UNCONFIRMED') from None
+    journal['phase'] = 'rolled_back'
+    write_json(layout, JOURNAL, journal)
+
+
+def _refresh_nodes(layout, system, names=None, progress=None):
     from manage_subscription_schedule import providers, source_path, record_attempt, record_results, identity
     progress = progress or (lambda stage: None)
     settings = load_settings(layout)
@@ -127,11 +157,32 @@ def refresh_nodes(layout, system, names=None, progress=None):
                 old_row = old_rows.get(provider['name'], {})
                 row['node_delta'] = row.get('nodes', 0) - (old_row.get('nodes', 0) if filename in original else 0)
                 changed = changed or not same
+            updates = {'var/lib/paopaogw/subscriptions/' + target.name: target.read_bytes()
+                       for target in stage.glob('*.json') if re.fullmatch(r'[0-9a-f]{64}\.json', target.name)}
+            status_path = 'var/lib/paopaogw/subscriptions/status.json'
+            updates[status_path] = (json.dumps(status, ensure_ascii=False) + '\n').encode()
+            backups = BackupStore(layout)
+            services = system.status() if hasattr(system, 'status') else {}
+            backup = backups.create(updates, {'kind': 'subscription', 'services': services})
+            records = backups.index(backup)['files']
+            # Retain candidate bytes as well as old bytes before any publication.
+            for index, (path, raw) in enumerate(sorted(updates.items())):
+                atomic_write(layout, f'{backups.base}/{backup}/candidate/{index:06d}', raw)
+            journal = {'kind': 'subscription', 'phase': 'prepared', 'backup': backup,
+                       'restart': changed, 'services': services,
+                       'restore_services': {unit: state for unit, state in services.items() if unit == 'paopaogw'},
+                       'expected': {
+                           path: [digest(raw), None if records[path] is None else records[path]['sha256']]
+                           for path, raw in updates.items() if path != status_path}}
+            # Startup regenerates status.json; it is derived state, restored from
+            # the snapshot without a checksum conflict against startup metadata.
+            write_json(layout, JOURNAL, journal)
             published = True
             progress('saving')
-            for target in stage.glob('*.json'):
-                if re.fullmatch(r'[0-9a-f]{64}\.json', target.name):
-                    atomic_write(layout, 'var/lib/paopaogw/subscriptions/' + target.name, target.read_bytes())
+            for path, raw in updates.items():
+                if path != status_path: atomic_write(layout, path, raw)
+            journal['phase'] = 'applying'
+            write_json(layout, JOURNAL, journal)
             if changed:
                 progress('applying')
                 system.command('systemctl', 'restart', 'paopaogw')
@@ -145,18 +196,14 @@ def refresh_nodes(layout, system, names=None, progress=None):
             atomic_write(layout, 'var/lib/paopaogw/subscriptions/status.json',
                          (json.dumps(status, ensure_ascii=False) + '\n').encode())
             record_results(layout, configured, selected, rows)
+            journal['phase'] = 'complete'
+            write_json(layout, JOURNAL, journal)
             return rows
         except Exception:
             if published:
                 progress('rolling_back')
                 try:
-                    for target in cache.glob('*.json'):
-                        if re.fullmatch(r'(?:[0-9a-f]{64}|status)\.json', target.name) and target.name not in original:
-                            target.unlink()
-                    for filename, raw in original.items():
-                        atomic_write(layout, 'var/lib/paopaogw/subscriptions/' + filename, raw)
-                    system.command('systemctl', 'restart', 'paopaogw')
-                    system.wait(settings)
+                    rollback_subscription(layout, system, journal)
                 except Exception:
                     # Restored cache bytes do not prove that forwarding recovered.
                     # Keep this distinction even if writing provider status fails.

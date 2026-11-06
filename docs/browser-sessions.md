@@ -37,3 +37,11 @@
 ## 验收
 
 实际 HTTP 测试覆盖登录限速、随机性、期限、注销和并发撤销、密码变化、重启失效、远端永久 Bearer 拒绝、本机内部认证、同源检查及长连接撤销。浏览器覆盖刷新恢复、旧凭据清理与偏好保留、过期后草稿保留、重新登录、不重放写请求；API 契约说明会话与内部凭据边界。
+
+## 写路由与内部回环通道
+
+`/sniffbox/traffic/clear`、`/sniffbox/nodes/clear`、`/sniffbox/reload`、`/sniffbox/reload/core`、`/sniffbox/clash/up` 仅接受 POST。合法会话的 GET/HEAD 返回 405，不执行操作；Cookie POST 必须有匹配 Host（含端口）的 Origin，不能依赖 SameSite 区分同主机不同端口。内部 clash/up 继续仅允许无浏览器来源头的回环请求。
+
+Mihomo 的节点/组 delay 与 provider healthcheck 虽然上游使用 GET，也会主动发起探测。浏览器须通过 POST 调用这些精确白名单路径，网关认证后才转换为上游 GET；Cookie GET 不执行探测。回环内部 Bearer 保留原生 GET 契约。PUT/PATCH/DELETE 等原有写方法仍执行同源校验。
+
+公开 Web 监听为指定非回环 IPv4/IPv6 地址时，核心额外绑定同地址族、同端口的 127.0.0.1/::1，内部 Python 服务及 clash-up 使用该回环地址。通配监听直接使用其覆盖的同族回环地址；已有回环别名（例如 127.0.0.2）保持原地址。两个监听共用认证、ACL、后台任务和关闭信号，附加绑定失败会使整个 Web 服务启动失败。安装前检查也包含附加回环端口。此变更没有允许非回环永久 Bearer。

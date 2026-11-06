@@ -100,10 +100,19 @@ pub fn classify(method: &str, path: &str) -> Route {
         return Route::ConfigGet;
     }
 
-    if clash_allowed(method, path) {
+    if clash_allowed(method, path) || (method == "POST" && active_get(path)) {
         return Route::ProxyClash;
     }
     Route::Blocked
+}
+
+// These upstream GETs actively probe nodes and are writes at the browser
+// boundary. Only this exact allowlist receives POST -> GET translation.
+pub fn active_get(path: &str) -> bool {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    matches!(segments.as_slice(), ["proxies", _, "delay"] | ["group", _, "delay"]
+        | ["providers", "proxies", _, "healthcheck"]
+        | ["providers", "proxies", _, _, "healthcheck"])
 }
 
 fn clash_allowed(method: &str, path: &str) -> bool {
@@ -199,6 +208,18 @@ mod tests {
                 Route::ProxyClash,
                 "{m} {p} should be whitelisted"
             );
+        }
+    }
+
+    #[test]
+    fn post_probe_translation_is_restricted_to_the_active_get_allowlist() {
+        for path in ["/proxies/A/delay", "/group/A/delay", "/providers/proxies/A/healthcheck", "/providers/proxies/A/B/healthcheck"] {
+            assert!(active_get(path));
+            assert_eq!(classify("POST", path), Route::ProxyClash);
+        }
+        for path in ["/proxies/A", "/providers/proxies", "/configs", "/rules", "/providers/proxies/A/B/C/healthcheck"] {
+            assert!(!active_get(path));
+            assert_eq!(classify("POST", path), Route::Blocked);
         }
     }
 

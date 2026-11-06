@@ -63,7 +63,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
         if(target.startsWith('/connections/')){assert.equal(method,'DELETE');if(closeFailures)return reply({},503);return route.fulfill({status:204,body:''});}
         if(target.startsWith('/providers/proxies/')&&method==='PUT'){if(decodeURIComponent(target.slice('/providers/proxies/'.length))===failedProvider)return reply({},500);version++;return route.fulfill({status:204,body:''});}
         if(target.endsWith('/delay')||target.endsWith('/healthcheck')){
-          assert.equal(method,'GET');activeTests++;maxTests=Math.max(maxTests,activeTests);if(holdTests)await new Promise(resolve=>heldTests.push(resolve));else await new Promise(resolve=>setTimeout(resolve,60));activeTests--;
+          assert.equal(method,'POST','active browser probes must use a write method');activeTests++;maxTests=Math.max(maxTests,activeTests);if(holdTests)await new Promise(resolve=>heldTests.push(resolve));else await new Promise(resolve=>setTimeout(resolve,60));activeTests--;
           if(testFailures||target.includes(encodeURIComponent(offline)))return reply({message:'timeout'},504);
           return reply({delay:77});
         }

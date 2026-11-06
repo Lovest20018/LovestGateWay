@@ -58,6 +58,86 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
             self.assertIn('geodata-mode: true', Path(command[command.index('-f') + 1]).read_text())
         return SimpleNamespace(returncode=0)
 
+    def test_process_exit_at_both_publication_boundaries_restores_multiple_providers(self):
+        import subprocess
+        from manage_common import require_idle
+        from manage_config import ConfigManager
+        from manage_subscription_schedule import identity
+        providers = [{'name': name, 'url': 'https://example.com/' + name} for name in ('A', 'B')]
+        self.layout.path('etc/paopaogw/files/ppsub.json').write_text(json.dumps({'subs': providers}))
+        original = {identity(row) + '.json': json.dumps({'raw_yaml': 'old ' + row['name']}).encode() for row in providers}
+        for name, raw in original.items(): (self.cache / name).write_bytes(raw)
+        fixture = Path(__file__).parent / 'fixtures/subscription_crash.py'
+        for point in ('first_provider', 'before_verification'):
+            with self.subTest(point=point):
+                result = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(fixture), str(self.layout.root), point],
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 77, result.stderr)
+                payloads = [(self.cache / name).read_bytes() for name in original]
+                self.assertEqual(sum(raw != original[name] for name, raw in zip(original, payloads)),
+                                 1 if point == 'first_provider' else 2)
+                with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): require_idle(self.layout)
+                self.assertEqual(ConfigManager(self.layout, self.system).recover()['status'], 'rolled_back')
+                self.assertEqual({name: (self.cache / name).read_bytes() for name in original}, original)
+                require_idle(self.layout)
+
+    def test_interrupted_publication_is_durable_and_recovery_is_unified(self):
+        from manage_common import atomic_write, require_idle
+        from manage_config import ConfigManager
+        for phase in ('first_provider', 'before_verification'):
+            with self.subTest(phase=phase):
+                # BaseException models abrupt termination: exception rollback
+                # cannot run. The child-process test covers actual os._exit.
+                class Interrupted(BaseException): pass
+                def publish(layout, path, raw, *args, **kwargs):
+                    atomic_write(layout, path, raw, *args, **kwargs)
+                    if phase == 'first_provider' and path.endswith(self.filename): raise Interrupted()
+                def progress(stage):
+                    if phase == 'before_verification' and stage == 'verifying':
+                        # Actual startup rewrites derived status metadata.
+                        (self.cache / 'status.json').write_text('{"at":123,"source":"cache"}')
+                        raise Interrupted()
+                with patch('manage_subscription.subprocess.run', side_effect=self.execute), \
+                        patch('manage_subscription.atomic_write', side_effect=publish):
+                    with self.assertRaises(Interrupted): refresh_nodes(self.layout, self.system, progress=progress)
+                with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): require_idle(self.layout)
+                journal = json.loads(self.layout.path('var/lib/paopaogw/admin/transaction.json').read_bytes())
+                candidate = self.layout.path('var/backups/paopaogw/' + journal['backup'] + '/candidate')
+                self.assertTrue(list(candidate.iterdir()))
+                self.assertEqual(ConfigManager(self.layout, self.system).recover()['status'], 'rolled_back')
+                self.assertEqual((self.cache / self.filename).read_bytes(), self.original)
+                require_idle(self.layout)
+
+    def test_external_provider_edit_blocks_restore_without_overwriting_any_cache(self):
+        from manage_config import ConfigManager
+        from manage_common import require_idle
+        class Interrupted(BaseException): pass
+        def progress(stage):
+            if stage == 'verifying': raise Interrupted()
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute):
+            with self.assertRaises(Interrupted): refresh_nodes(self.layout, self.system, progress=progress)
+        external = b'{"raw_yaml":"external replacement"}'
+        (self.cache / self.filename).write_bytes(external)
+        with self.assertRaisesRegex(ManagementError, 'SUBSCRIPTION_ROLLBACK_UNCONFIRMED'):
+            ConfigManager(self.layout, self.system).recover()
+        self.assertEqual((self.cache / self.filename).read_bytes(), external)
+        with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): require_idle(self.layout)
+
+    def test_unconfirmed_recovery_blocks_conflicting_operations_until_retry(self):
+        from manage_common import require_idle
+        from manage_config import ConfigManager
+        self.system.wait = lambda _: (_ for _ in ()).throw(RuntimeError('unavailable'))
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute):
+            with self.assertRaisesRegex(ManagementError, 'SUBSCRIPTION_ROLLBACK_UNCONFIRMED'):
+                refresh_nodes(self.layout, self.system)
+        with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): require_idle(self.layout)
+        with self.assertRaisesRegex(ManagementError, 'RECOVERY_REQUIRED'): refresh_nodes(self.layout, self.system)
+        with self.assertRaisesRegex(ManagementError, 'SUBSCRIPTION_ROLLBACK_UNCONFIRMED'):
+            ConfigManager(self.layout, self.system).recover()
+        self.system.wait = self.wait
+        self.assertEqual(ConfigManager(self.layout, self.system).recover()['status'], 'rolled_back')
+        require_idle(self.layout)
+
     def test_manual_schedule_is_valid_and_other_interval_values_remain_bounded(self):
         self.assertEqual(validate('ini', 'subtime', 'manual'), 'manual')
         self.assertEqual(validate('ini', 'subtime', '365d'), '365d')

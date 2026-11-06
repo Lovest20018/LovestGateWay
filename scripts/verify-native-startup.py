@@ -30,9 +30,10 @@ def main():
         assert result.returncode == 0 and '127.0.0.1' in result.stdout, result.stderr
         assert private.stat().st_mode & 0o777 == 0o600
         report['genhost_reads_private_configuration_before_dropping_privileges'] = True
-    # The endpoint keeps its loopback-only peer restriction on a LAN-bound UI.
+    # Model the companion management listener, independently of the public IP.
+    internal = ip if ip.is_loopback else ipaddress.ip_address('::1' if ip.version == 6 else '127.0.0.1')
     with socket.socket(socket.AF_INET6 if ip.version == 6 else socket.AF_INET) as listener:
-        listener.bind((str(ip), 0)); listener.listen(1); listener.settimeout(10)
+        listener.bind((str(internal), 0)); listener.listen(1); listener.settimeout(10)
         port = listener.getsockname()[1]
         peers = []
         def serve():
@@ -51,7 +52,7 @@ def main():
                                 capture_output=True, text=True, timeout=20)
         server.join(timeout=1)
         assert result.returncode == 0 and peers and ipaddress.ip_address(peers[0]).is_loopback
-        report['custom_listener_uses_loopback_source_and_ignores_proxy_environment'] = True
+        report['custom_listener_uses_loopback_channel_and_ignores_proxy_environment'] = True
     script = '''
 . "$1"
 ppgw_owned_pid "$$" sh || exit 10

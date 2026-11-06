@@ -24,6 +24,13 @@ pub async fn handle(
         respond::not_found(stream, ka).await?;
         return Ok(ka);
     }
+    // Historical mutators must never execute via image/navigation GETs.
+    if matches!(req.path_only(), "/sniffbox/traffic/clear" | "/sniffbox/nodes/clear"
+        | "/sniffbox/reload" | "/sniffbox/reload/core" | "/sniffbox/clash/up")
+        && req.method != "POST" {
+        respond::send(stream, 405, "Method Not Allowed", &[("Allow", "POST")], b"", ka).await?;
+        return Ok(ka);
+    }
     match req.path_only() {
         path if path.starts_with("/sniffbox/settings/") => {
             if std::env::var("PPGW_DEBIAN").as_deref() != Ok("1") {

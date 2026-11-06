@@ -148,6 +148,10 @@ class ConfigManager:
         with operation_lock(self.layout):
             journal = self.journal()
             if not journal or journal['phase'] in {'complete', 'rolled_back'}: return {'status': 'nothing_to_recover'}
+            if journal.get('kind') == 'subscription':
+                from manage_subscription import rollback_subscription
+                rollback_subscription(self.layout, self.system, journal)
+                return {'status': 'rolled_back', 'backup': journal['backup']}
             if journal.get('kind') in {'deploy', 'restore', 'backup'}:
                 from manage_deploy import Deployer
                 return Deployer(self.layout, self.system).recover()

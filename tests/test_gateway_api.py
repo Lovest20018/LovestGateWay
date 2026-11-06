@@ -55,6 +55,22 @@ class FakeCore:
         raise AssertionError('Unexpected core path: ' + path)
 
 
+class InternalChannelAddressTests(unittest.TestCase):
+    def test_all_supported_listener_forms_use_a_bound_loopback_channel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / 'service.env'
+            for listen, expected in (
+                    ('0.0.0.0:18080', '127.0.0.1:18080'),
+                    ('192.0.2.10:18080', '127.0.0.1:18080'),
+                    ('[::]:18080', '[::1]:18080'),
+                    ('[fd00::1]:18080', '[::1]:18080'),
+                    ('127.0.0.2:18080', '127.0.0.2:18080'),
+                    ('[::1]:18080', '[::1]:18080')):
+                with self.subTest(listen=listen):
+                    env.write_text('PPGW_WEB_LISTEN=' + listen + '\n')
+                    self.assertEqual(api.core_base_url(env), 'http://' + expected)
+
+
 class ObserverStartupTests(unittest.TestCase):
     def test_disabled_api_does_not_construct_a_listener(self):
         settings = api.Settings(IDENTITY, TOKEN)

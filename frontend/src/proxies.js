@@ -143,7 +143,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
         while(index<plans.length&&!disposed&&!paused&&!controller.signal.aborted){
           const {name,url}=plans[index++];
           try{
-            const result=await request(testPath(data,name,url),{signal:controller.signal}),latency=result.value?.delay;
+            const result=await request(testPath(data,name,url),{method:'POST',signal:controller.signal}),latency=result.value?.delay;
             if(controller.signal.aborted||disposed)break;
             if(typeof latency!=='number'||!Number.isFinite(latency)||latency<=0)throw Error('测速超时。');
             if(data.proxies[name]){const node=data.proxies[name];node.delay=latency;node.alive=true;node.extra={...node.extra,[url]:latency};node.hist=[...(node.hist||[]).slice(-7),latency];}

@@ -77,7 +77,7 @@ fn control_address(debian: bool, listen: &str, legacy_port: &str) -> Result<Sock
     } else {
         SocketAddr::new(Ipv4Addr::LOCALHOST.into(), legacy_port.parse::<u16>().map_err(|e| e.to_string())?)
     };
-    if address.ip().is_unspecified() {
+    if !address.ip().is_loopback() {
         address.set_ip(loopback(address));
     }
     Ok(address)
@@ -112,9 +112,9 @@ mod tests {
     fn native_control_follows_the_configured_listener() {
         for (listen, expected) in [
             ("0.0.0.0:18781", "127.0.0.1:18781"),
-            ("192.0.2.10:18080", "192.0.2.10:18080"),
+            ("192.0.2.10:18080", "127.0.0.1:18080"),
             ("[::]:8081", "[::1]:8081"),
-            ("[fd00::1]:8081", "[fd00::1]:8081"),
+            ("[fd00::1]:8081", "[::1]:8081"),
         ] {
             assert_eq!(control_address(true, listen, "80").unwrap().to_string(), expected);
         }
