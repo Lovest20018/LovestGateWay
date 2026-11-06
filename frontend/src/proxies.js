@@ -37,7 +37,20 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const empty=make('p','暂无可用的节点组。','glass proxies-empty');empty.hidden=true;
   const dialog=make('dialog',undefined,'proxy-dialog');dialog.setAttribute('aria-label','节点详情');
   const dialogHead=make('header'),dialogTitle=make('h2','节点详情'),close=button('关闭',()=>dialog.close()),dialogBody=make('div',undefined,'proxy-detail-body');dialogHead.append(dialogTitle,close);dialog.append(dialogHead,dialogBody);dialog.addEventListener('close',()=>{detailsVersion++;detailName='';});
-  page.append(heading,status,modeNotice,settings,toolbar,information,groupHost,empty,providerHost,usageHost,dialog);host.replaceChildren(page);
+  let lockTarget=null;
+  const lockMenu=make('div',undefined,'proxy-lock-menu');lockMenu.setAttribute('popover','auto');lockMenu.setAttribute('role','menu');lockMenu.setAttribute('aria-label','节点锁定操作');
+  const lockText=make('p'),lockConfirm=button('锁定此节点',()=>{const target=lockTarget;lockMenu.hidePopover();if(target&&data.proxies[target.group])fixed(target.group,target.name);}),lockCancel=button('取消',()=>lockMenu.hidePopover());
+  for(const control of [lockConfirm,lockCancel])control.setAttribute('role','menuitem');lockMenu.append(lockText,lockConfirm,lockCancel);
+  lockMenu.addEventListener('toggle',event=>{if(event.newState==='closed')lockTarget=null;});
+  lockMenu.addEventListener('keydown',event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();(document.activeElement===lockConfirm?lockCancel:lockConfirm).focus();}});
+  function openLock(group,name,anchor){
+    if(busy||paused||disposed||!lockable(data.proxies[group]))return;
+    const unlocking=data.proxies[group].fixed===name;
+    if(typeof lockMenu.showPopover!=='function'){if(confirm((unlocking?'解除锁定：':'锁定节点：')+name+'？'))fixed(group,name);return;}
+    lockTarget={group,name};lockText.textContent=group+' · '+name;lockConfirm.textContent=unlocking?'解锁此节点':'锁定此节点';
+    const bounds=anchor.getBoundingClientRect();lockMenu.style.left=Math.max(12,Math.min(bounds.left,innerWidth-280))+'px';lockMenu.style.top=Math.max(12,Math.min(bounds.bottom,innerHeight-160))+'px';lockMenu.showPopover();lockConfirm.focus();
+  }
+  page.append(heading,status,modeNotice,settings,toolbar,information,groupHost,empty,providerHost,usageHost,dialog,lockMenu);host.replaceChildren(page);
   function message(text){if(disposed)return;status.textContent=text;status.hidden=!text;}
   function authorized(){paused=true;if(!disposed)onUnauthorized();}
   async function request(url,{method='GET',body,signal,tag,allowNotModified=false}={}){
@@ -167,10 +180,10 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     const display=make('span',undefined,'proxy-node-name'),latency=make('span',undefined,'proxy-latency'),badges=make('span',undefined,'proxy-node-tags');choice.append(display,latency);
     const footer=make('div',undefined,'proxy-node-footer'),details=button('详情',()=>openDetails(name,view.name)),test=button('测速',()=>perform('节点测速',async()=>runTests([{name,url:testUrl(data,view.name,prefs,filterFor(view.name).url)}]))),lock=button('锁定',()=>fixed(view.name,name));test.dataset.action='node-test';lock.dataset.action='lock';footer.append(badges,details,test,lock);
     const curve=make('div',undefined,'proxy-sparkline');curve.setAttribute('aria-hidden','true');row.append(curve,choice,footer);
-    let press=null,suppress=false;const clear=()=>{clearTimeout(press);press=null;};choice.addEventListener('pointerdown',event=>{if(event.button!==0||!lockable(data.proxies[view.name])||busy||paused)return;suppress=false;press=setTimeout(()=>{suppress=true;fixed(view.name,name);},650);});
+    let press=null,suppress=false;const clear=()=>{clearTimeout(press);press=null;};choice.addEventListener('pointerdown',event=>{if(event.button!==0||!lockable(data.proxies[view.name])||busy||paused)return;suppress=false;press=setTimeout(()=>{suppress=true;openLock(view.name,name,choice);},650);});
     for(const type of ['pointerup','pointercancel','pointerleave'])choice.addEventListener(type,clear);
     choice.addEventListener('click',event=>{if(suppress){event.preventDefault();suppress=false;}},true);
-    choice.addEventListener('contextmenu',event=>{if(lockable(data.proxies[view.name])){event.preventDefault();clear();fixed(view.name,name);}});
+    choice.addEventListener('contextmenu',event=>{if(lockable(data.proxies[view.name])){event.preventDefault();clear();openLock(view.name,name,choice);}});
     return {row,choice,display,latency,badges,lock,test,curve,clear};
   }
   function renderGroup(view){
@@ -239,5 +252,5 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const visibility=()=>{if(document.hidden){clearTimeout(timer);sequence++;readController?.abort();reading=false;}else if(!disposed&&!paused)refresh(false);};
   const focus=()=>{if(!disposed&&!paused&&!busy)refresh(false);};document.addEventListener('visibilitychange',visibility);window.addEventListener('focus',focus);
   if(initialInfo&&!['yaml','suburl'].includes(initialInfo.mode)){message('当前出站模式不使用 Mihomo 代理组，请在网关设置中选择配置来源。');summary.textContent='当前模式无代理组';toolbar.hidden=true;modeButton.hidden=true;refreshButton.hidden=true;}else if(!document.hidden)refresh();
-  return {refresh,dispose(){disposed=true;sequence++;detailsVersion++;clearTimeout(timer);for(const controller of controllers)controller.abort();for(const view of views.values())for(const card of view.cards.values())card.clear();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',focus);if(dialog.open)dialog.close();host.replaceChildren();}};
+  return {refresh,dispose(){disposed=true;sequence++;detailsVersion++;clearTimeout(timer);for(const controller of controllers)controller.abort();for(const view of views.values())for(const card of view.cards.values())card.clear();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',focus);if(dialog.open)dialog.close();if(lockMenu.matches(':popover-open'))lockMenu.hidePopover();host.replaceChildren();}};
 }
