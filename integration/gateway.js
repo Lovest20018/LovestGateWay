@@ -331,7 +331,7 @@
         input.addEventListener('input', update); update(); wrap.append(warning);
       }
       if (spec.secret && saved && !['secret', 'observer_token'].includes(spec.type)) {
-        wrap.append(el('button', {class: 'button small secondary', type: 'button', text: '清空已保存的值', onclick: () => { input.value = ''; setValue(namespace, key, ''); }}));
+        wrap.append(el('button', {class: 'btn btn-ghost secret-clear', type: 'button', text: '清空已保存的值', onclick: () => { input.value = ''; setValue(namespace, key, ''); }}));
       }
       return wrap;
     }
@@ -355,9 +355,9 @@
       const input = el('input', {id: 'setting-password-confirm', type: 'password', autocomplete: 'new-password',
         value: passwordConfirmation, placeholder: '再次输入新密码'});
       input.oninput = () => { passwordConfirmation = input.value; };
-      return card('修改管理密码', '填写新密码并再次确认，然后点击底部“预览变更”，在预览中“确认应用”。留空保留原密码；应用后请用新密码重新登录。', '01', [
+      return card('修改管理密码', '填写新密码并再次确认后，页面底部会出现保存栏。点击“预览变更”，再在预览中“确认应用”。留空保留原密码；应用后请用新密码重新登录。', '01', [
         el('div', {class: 'field-grid'}, [field('ini', 'clash_web_password'), el('div', {class: 'field'}, [
-          el('label', {htmlFor: input.id, text: '确认新管理密码'}), input,
+          el('div',{class:'setting-field-heading'},[el('label', {htmlFor: input.id, text: '确认新管理密码'})]), input,
         ])]),
       ]);
     }

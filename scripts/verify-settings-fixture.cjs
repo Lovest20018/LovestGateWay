@@ -268,6 +268,10 @@ async function main() {
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).inputValue(), '8999');
     await page.locator('#discard').click();
     await blur(page.getByLabel('流量记录上限', {exact: true}), '9000');
+    await page.setViewportSize({width:1120,height:1000});
+    const passwordBox=await page.getByLabel('管理密码',{exact:true}).boundingBox(),confirmationBox=await page.getByLabel('确认新管理密码',{exact:true}).boundingBox();
+    assert.ok(Math.abs(passwordBox.y-confirmationBox.y)<1,'password fields align at intermediate desktop width');
+    await page.screenshot({path:path.join(root,'dist/settings-password-1120.png')});await page.setViewportSize({width:1440,height:1000});
     await blur(page.getByLabel('管理密码', {exact: true}), 'seven77');
     await page.locator('#preview').click();
     await page.getByText('管理密码至少需要 8 个字符。', {exact: true}).waitFor();
