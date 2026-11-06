@@ -84,7 +84,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
       for(const [index,value]of [[2,row.type||'—'],[3,row.payload||'—'],[4,typeof row.size==='number'&&row.size>=0?String(row.size):'—'],[5,row.extra.hitCount??'—'],[6,row.extra.missCount??'—'],[7,date(row.extra.hitAt)],[8,date(row.extra.missAt)],[9,String(row.index)]])view.cells[index].textContent=typeof value==='string'||typeof value==='number'?value:'—';
       if(tbody.children[position]!==view.tr)tbody.insertBefore(view.tr,tbody.children[position]||null);
     }
-    for(const [key,view]of rowViews)if(!keep.has(key)){view.tr.remove();rowViews.delete(key);}let empty=tbody.querySelector('.rules-empty');if(!selection.rows.length){if(!empty){empty=make('tr',undefined,'rules-empty');const cell=make('td',loaded?'没有匹配的规则。':'正在读取规则…');cell.colSpan=10;empty.append(cell);tbody.append(empty);}}else empty?.remove();
+    for(const [key,view]of rowViews)if(!keep.has(key)){view.tr.remove();rowViews.delete(key);}let empty=tbody.querySelector('.rules-empty');if(!selection.rows.length){if(!empty){empty=make('tr',undefined,'rules-empty');const cell=make('td');cell.colSpan=10;empty.append(cell);tbody.append(empty);}empty.firstChild.replaceChildren(document.createTextNode(!loaded?'正在读取规则…':!rows.length?'当前配置没有规则。':'没有匹配的规则。'));if(loaded&&!rows.length){const link=make('a','前往订阅与策略');link.href='#/subscriptions';empty.firstChild.append(' ',link);}}else empty?.remove();
     pageCount.textContent=selection.page+' / '+selection.pages+' · '+selection.total+' 条';previous.disabled=selection.page<=1;next.disabled=selection.page>=selection.pages;tip.hidden=rows.length<=3;tableCard.classList.toggle('global',mode==='global');actionState();
   }
   function renderProviders(){
