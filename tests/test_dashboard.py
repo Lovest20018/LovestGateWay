@@ -15,7 +15,14 @@ class DashboardTests(unittest.TestCase):
     def test_source_build_without_retired_upstream_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
             output=Path(temporary)
+            (output/'bundle.retired.js').write_text('retired')
+            (output/'bundle.retired.js.gz').write_bytes(b'retired')
+            (output/'keep.txt').write_text('caller-owned')
+            (output/'manifest.json').write_text(json.dumps({'precompressed':{'bundle.retired.js':'bundle.retired.js.gz'}}))
             entry=dashboard.prepare_dashboard(output)
+            self.assertFalse((output/'bundle.retired.js').exists())
+            self.assertFalse((output/'bundle.retired.js.gz').exists())
+            self.assertEqual((output/'keep.txt').read_text(),'caller-owned')
             index=(output/'index.html').read_text(encoding='utf-8')
             manifest=json.loads((output/'manifest.json').read_text())
             self.assertIn(entry,index)
