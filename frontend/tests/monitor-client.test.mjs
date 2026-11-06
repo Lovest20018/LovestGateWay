@@ -8,7 +8,7 @@ async function until(check){for(let i=0;i<100;i++){if(check())return;await wait(
 test('shared monitoring cancels hidden/disposed reads, handles timeouts and stops all work on 401',async()=>{
   const original={document:globalThis.document,localStorage:globalThis.localStorage,fetch:globalThis.fetch},document=new EventTarget();document.hidden=false;globalThis.document=document;globalThis.localStorage={getItem:()=>JSON.stringify({clashAPIConfigs:[{secret:'fixture'}]})};
   let calls=0,aborts=0,expired=0,status=200,values=0;
-  globalThis.fetch=(url,options)=>{assert.equal(options.headers.Authorization,'Bearer fixture');assert.equal(url.includes('fixture'),false);calls++;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>resolve(new Response(JSON.stringify({value:1}),{status})),10);options.signal.addEventListener('abort',()=>{aborts++;clearTimeout(timer);reject(new DOMException('stop','AbortError'));},{once:true});});};
+  globalThis.fetch=(url,options)=>{assert.equal(options.headers.Authorization,undefined);assert.equal(url.includes('fixture'),false);calls++;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>resolve(new Response(JSON.stringify({value:1}),{status})),10);options.signal.addEventListener('abort',()=>{aborts++;clearTimeout(timer);reject(new DOMException('stop','AbortError'));},{once:true});});};
   const client=monitorClient({onUnauthorized:()=>expired++});
   try{
     client.poll('/sample',()=>values++,{interval:10});await until(()=>values>=1);document.hidden=true;document.dispatchEvent(new Event('visibilitychange'));const count=calls;await wait(35);assert.equal(calls,count);document.hidden=false;document.dispatchEvent(new Event('visibilitychange'));await until(()=>values>=2);

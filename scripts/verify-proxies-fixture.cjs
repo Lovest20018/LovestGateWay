@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Maintained proxy-page acceptance. Every request is intercepted; no gateway is contacted. */
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
@@ -26,13 +27,14 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     let data=structuredClone(fixture),expectedSecret='fixture-token',version=1,readStatus=200,notModified=0,holdSelect=false,releaseSelect,failSelect=false,denyMutation=false,holdRead=false,releaseRead,heldReads=[],holdTests=false,heldTests=[],activeTests=0,maxTests=0,testFailures=false,closeFailures=false,failedProvider='',infoMode='suburl';
     releasePending=()=>{holdSelect=holdRead=holdTests=false;releaseSelect?.();for(const release of [...heldReads,...heldTests])release();};
     const writes=()=>requests.filter(row=>!['GET','HEAD'].includes(row.method));
+    const sessions=sessionFixture({proof:()=>expectedSecret});
     await page.route('**/*',async route=>{
       const request=route.request(),url=new URL(request.url()),target=url.pathname,method=request.method(),body=request.postData()?JSON.parse(request.postData()):undefined;
       if(url.origin!==origin){unexpected.push(request.url());return route.abort();}
-      requests.push({target,query:url.search,method,body,auth:request.headers().authorization});
+      requests.push({target,query:url.search,method,body,auth:sessions.authorized(request)});
       const reply=(value,code=200,headers={})=>route.fulfill({status:code,contentType:'application/json',body:JSON.stringify(value),headers});
       if(!target.startsWith('/ui')){
-        if(request.headers().authorization!=='Bearer '+expectedSecret)return reply({error:'LOGIN_REQUIRED'},401);
+        if(!sessions.authorized(request))return reply({error:'LOGIN_REQUIRED'},401);
         if(target==='/sniffbox/info'||target==='/sniffbox/info/dynamic')return reply({mode:infoMode,version:'fixture',clash_version:'v1.19.33',clash_meta:true,timestamp:1793890000,traffic:{downloadTotal:1024,uploadTotal:512},connections:{active:0},memory:{total:1024**3,available:512*1024**2}});
         if(target==='/sniffbox/geo')return reply({files:[]});
         if(target==='/sniffbox/proxies'){
@@ -73,6 +75,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
       try{const name=target==='/ui/'?'index.html':path.basename(target);return route.fulfill({body:await fs.readFile(path.join(output,name)),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
     async function capture(name){await page.evaluate(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(evidence,name),fullPage:true,animations:'disabled'});}
+    await sessions.install(page);
     await page.goto(origin+'/ui/#/proxies');
     if(!baseline){await page.locator('.proxy-current').first().waitFor();assert.match(await page.locator('.proxy-current').first().evaluate(node=>getComputedStyle(node).fontFamily),/^"Twemoji Country Flags"/);}
     if(baseline){await page.locator('#runtime-panel').getByText(main,{exact:true}).first().waitFor();await capture('proxies-baseline-desktop.png');await page.setViewportSize({width:320,height:900});await capture('proxies-baseline-mobile-320.png');console.log('Saved unchanged compatibility baseline');return;}
@@ -126,7 +129,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
 
     denyMutation=true;const before401=writes().length,authTarget=data.proxies[main].now===alpha?beta:alpha;await exactCard(main,authTarget).getByRole('button',{name:'选择 '+authTarget,exact:true}).click();await page.getByRole('button',{name:'重新登录',exact:true}).waitFor();assert.equal(writes().length,before401+1);
     const password='ProxyFixtureChanged8';expectedSecret=createHash('sha256').update(password).digest('hex');denyMutation=false;await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.locator('#reauth-panel').getByLabel('管理密码',{exact:true}).fill(password);await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});await page.waitForTimeout(5400);assert.equal(writes().length,before401+1,'reauthentication must not replay a mutation');assert.equal(await page.evaluate(()=>window.documentIdentity),'proxies-source');
-    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+expectedSecret));
+    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth===true));
     readStatus=503;await proxies.getByRole('button',{name:'刷新',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'HTTP 503'}).waitFor();readStatus=200;await proxies.getByRole('button',{name:'刷新',exact:true}).click();await proxies.locator('.proxies-status').waitFor({state:'hidden'});
     await page.getByRole('group',{name:'外观',exact:true}).getByRole('button',{name:'暗色',exact:true}).click();await capture('proxies-source-dark.png');assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('ppgw-proxy-settings')).unrelated),'retained');assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')).unrelatedPreference),17);
     for(const width of [1440,1120,750,375,320]){await page.setViewportSize({width,height:900});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);if(!await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)){await capture('proxies-overflow-'+width+'.png');console.error(await page.evaluate(()=>[...document.querySelectorAll('#proxies-page *')].map(node=>({tag:node.tagName,class:node.className,text:node.textContent.slice(0,60),right:node.getBoundingClientRect().right,width:node.getBoundingClientRect().width})).filter(row=>row.right>innerWidth+1).slice(0,30)));}assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.ok(await proxies.locator('.proxy-group-tools input[type=search]').first().evaluate(node=>node.getBoundingClientRect().width)>=140);await capture('proxies-source-mobile-'+width+'.png');}

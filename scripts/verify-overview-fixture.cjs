@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Maintained overview acceptance. All requests use intercepted synthetic origins. */
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
@@ -24,12 +25,13 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     await page.addInitScript(()=>{localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]}));localStorage.setItem('debug','1');});
     let expectedSecret='fixture-token',dynamic=0,status=200,boot='fixture-boot-1',reset=false,hold=false,releaseHeld;
     async function capture(name){const viewport=page.viewportSize(),height=await page.evaluate(()=>document.documentElement.scrollHeight);await page.setViewportSize({width:viewport.width,height:Math.max(viewport.height,height)});await page.evaluate(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(evidence,name),fullPage:true,animations:'disabled'});await page.setViewportSize(viewport);}
+    const sessions=sessionFixture({proof:()=>expectedSecret});
     await page.route(origin+'/**',async route=>{
       const request=route.request(),target=new URL(request.url()).pathname;requests.push({target,method:request.method()});
       const reply=(data,code=200)=>route.fulfill({status:code,contentType:'application/json',body:JSON.stringify(data)});
       if(target.startsWith('/sniffbox/')){
         assert.equal(request.method(),'GET','overview cannot mutate the gateway');
-        if(request.headers().authorization!=='Bearer '+expectedSecret)return reply({error:'LOGIN_REQUIRED'},401);
+        if(!sessions.authorized(request))return reply({error:'LOGIN_REQUIRED'},401);
         if(target==='/sniffbox/info/dynamic'){
           if(hold)await new Promise(resolve=>{releaseHeld=resolve;});
           if(status!==200)return reply({error:'fixture'},status);
@@ -47,6 +49,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
       if(target==='/connections')return reply({connections:[],downloadTotal:0,uploadTotal:0});
       try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
+    await sessions.install(page);
     await page.goto(origin+'/ui/#/overview');const overview=page.locator('#overview-page');await overview.getByText('Fixture CPU 4-core',{exact:true}).waitFor();
     assert.equal(requests.filter(row=>/\/(editor|diagnostics|proxies|rules|connections|traffic|distribution|logs|region)\.[a-f0-9]+\.js$/.test(row.target)).length,0,'unvisited routes must not load on the overview');
     assert.equal(await overview.locator('[data-field=mode]').textContent(),'订阅');await page.evaluate(()=>window.documentIdentity='overview-source');
@@ -89,7 +92,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     hold=true;for(let i=0;i<100&&!releaseHeld;i++)await page.waitForTimeout(50);assert.equal(typeof releaseHeld,'function');
     await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route=connections]').click();
     await page.locator('#overview-page').waitFor({state:'detached'});hold=false;releaseHeld();await page.waitForTimeout(100);assert.equal(await page.locator('#overview-page').count(),0);assert.deepEqual(errors,[]);
-    delete fixture.cpu.cloudflared;delete fixture.memory.cloudflared_rss;expectedSecret='fixture-token';await page.goto(origin+'/ui/?without-cloudflared#/overview');await page.locator('#overview-page [data-field=cpu-model]').getByText('Fixture CPU 4-core',{exact:true}).waitFor();assert.equal(await page.locator('#overview-page canvas[aria-label*=Cloudflared]').count(),0);assert.doesNotMatch(await page.locator('[data-cpu-legend]').textContent(),/Cloudflared/);
+    delete fixture.cpu.cloudflared;delete fixture.memory.cloudflared_rss;expectedSecret='fixture-token';sessions.reset();await page.goto(origin+'/ui/?without-cloudflared#/overview');await page.locator('#overview-page [data-field=cpu-model]').getByText('Fixture CPU 4-core',{exact:true}).waitFor();assert.equal(await page.locator('#overview-page canvas[aria-label*=Cloudflared]').count(),0);assert.doesNotMatch(await page.locator('[data-cpu-legend]').textContent(),/Cloudflared/);
     const report={syntheticOnly:true,sourceOverviewWithoutRuntimeBundle:true,readOnlyRequests:true,nestedStaticFieldsRetained:true,trafficSamples:true,counterAndBootReset:true,apiFailureRecovery:true,reauthWithoutReload:true,untrustedTextOnly:true,chartHover:true,theme:true,mobileWidths:[375,320],backForward:true,pollingDisposed:true,lateResponseIgnored:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'overview-browser-evidence.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));await context.close();
   }finally{await browser.close();}

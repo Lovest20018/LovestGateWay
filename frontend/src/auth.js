@@ -8,5 +8,20 @@ export function sha256(value) {
     let [a,b,c,d,e,f,g,h]=hash;for(let i=0;i<64;i++){const t1=(h+(rotate(e,6)^rotate(e,11)^rotate(e,25))+((e&f)^(~e&g))+k[i]+w[i])>>>0,t2=((rotate(a,2)^rotate(a,13)^rotate(a,22))+((a&b)^(a&c)^(b&c)))>>>0;h=g;g=f;f=e;e=(d+t1)>>>0;d=c;c=b;b=a;a=(t1+t2)>>>0;}for(const [i,v]of [a,b,c,d,e,f,g,h].entries())hash[i]=(hash[i]+v)>>>0;
   }return hash.map(n=>n.toString(16).padStart(8,'0')).join('');
 }
-export function storedSecret(){try{const value=JSON.parse(localStorage.getItem('PaoPaoGateWay')||'{}');return value.clashAPIConfigs?.[0]?.secret||value.secret||'';}catch{return '';}}
-export function storeSecret(secret){let saved={};try{saved=JSON.parse(localStorage.getItem('PaoPaoGateWay')||'{}');}catch{}if(!saved||typeof saved!=='object'||Array.isArray(saved))saved={};if(Array.isArray(saved.clashAPIConfigs)&&saved.clashAPIConfigs.length){saved.clashAPIConfigs[0]={...saved.clashAPIConfigs[0],secret};}else if(secret)saved.clashAPIConfigs=[{secret}];if('secret' in saved)saved.secret=secret;localStorage.setItem('PaoPaoGateWay',JSON.stringify(saved));}
+// This identifier is a public cache boundary, never an authentication credential.
+let context='';
+export function clearLegacyCredentials(){
+  try{const saved=JSON.parse(localStorage.getItem('PaoPaoGateWay')||'{}');if(!saved||typeof saved!=='object'||Array.isArray(saved))return;let changed=false;if('secret' in saved&&saved.secret){saved.secret='';changed=true;}if(Array.isArray(saved.clashAPIConfigs))for(const profile of saved.clashAPIConfigs)if(profile&&typeof profile==='object'&&profile.secret){profile.secret='';changed=true;}if(changed)localStorage.setItem('PaoPaoGateWay',JSON.stringify(saved));}catch{}
+}
+export function sessionContext(){return context;}
+export function setSessionContext(value){context=value||'';clearLegacyCredentials();}
+async function sessionRequest(path,body){
+  const response=await fetch('/sniffbox/auth/'+path,{method:body===undefined?'GET':'POST',credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(15000)});
+  const value=await response.json().catch(()=>({}));
+  if(!response.ok)throw Object.assign(Error(response.status===401?'管理密码不正确。':response.status===429?'登录尝试过多，请一分钟后重试。':'暂时无法连接网关。'),{status:response.status});
+  return value;
+}
+export async function restoreSession(){clearLegacyCredentials();const value=await sessionRequest('session');setSessionContext(value.authenticated&&typeof value.context==='string'?value.context:'');return !!context;}
+export async function loginSession(password){await sessionRequest('login',{proof:sha256(password)});if(!await restoreSession())throw Error('登录状态未确认，请重新登录。');}
+export async function logoutSession(){await sessionRequest('logout',{});setSessionContext('');}
+if(typeof window!=='undefined')window.ppgwAuth={active:()=>!!context,identity:sessionContext};

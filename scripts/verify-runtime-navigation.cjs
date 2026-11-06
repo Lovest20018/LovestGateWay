@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Synthetic first-install runtime mode changes; never writes to a live gateway. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -23,6 +24,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.addInitScript(() => localStorage.setItem('PaoPaoGateWay', JSON.stringify({clashAPIConfigs: [{secret: 'fixture-token'}]})));
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: false}, mihomo_installed: true};
     let job, infoReads = 0, sourceImports = 0;
+    const sessions=sessionFixture({proof:()=> 'fixture-token'});
     await page.route(origin + '/**', async route => {
       const request = route.request(), target = new URL(request.url()).pathname;
       const reply = (data, status = 200) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
@@ -51,6 +53,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
         return route.fulfill({body: await fs.readFile(filename), contentType: target.endsWith('.js') ? 'application/javascript' : target.endsWith('.css') ? 'text/css' : target.endsWith('.svg') ? 'image/svg+xml' : 'text/html'});
       } catch { return route.fulfill({status: 404, body: ''}); }
     });
+    await sessions.install(page);
     await page.goto(origin + '/ui/#/subscriptions');
     await page.getByRole('tab', {name: '配置来源', exact: true}).click();
     await page.locator('.source-kind').waitFor();

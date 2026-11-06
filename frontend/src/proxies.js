@@ -1,5 +1,4 @@
 import {modeControl} from './mode-control.js';
-import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
 import {formatBytes} from './format.js';
 import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode} from './proxy-model.js';
@@ -58,7 +57,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     const controller=new AbortController();controllers.add(controller);const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)controller.abort();
     const timeout=setTimeout(cancel,12000);
     try{
-      const response=await fetch(url,{method,headers:{Authorization:'Bearer '+storedSecret(),...(body!==undefined?{'Content-Type':'application/json'}:{}),...(tag?{'If-None-Match':tag}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:controller.signal,cache:'no-store'});
+      const response=await fetch(url,{method,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{}),...(tag?{'If-None-Match':tag}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:controller.signal,cache:'no-store'});
       if(response.status===401){authorized();const error=Error('登录已失效，请重新登录后读取最新状态。');error.unauthorized=true;throw error;}
       if(allowNotModified&&response.status===304)return {unchanged:true};
       if(!response.ok){const error=Error('请求失败（HTTP '+response.status+'）。');error.status=response.status;throw error;}

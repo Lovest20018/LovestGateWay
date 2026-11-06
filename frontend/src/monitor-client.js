@@ -1,4 +1,3 @@
-import {storedSecret} from './auth.js';
 import {eventDecoder} from './monitor-model.js';
 
 export function monitorClient({onUnauthorized=()=>{}, onPause=()=>{}, onResume=()=>{}}={}) {
@@ -19,7 +18,7 @@ export function monitorClient({onUnauthorized=()=>{}, onPause=()=>{}, onResume=(
     let timedOut=false;
     const timer = timeout ? setTimeout(()=>{timedOut=true;abort();},timeout) : null;
     try {
-      const response = await fetch(url, {method, signal:controller.signal, cache:'no-store', headers:{Authorization:'Bearer '+storedSecret(), ...headers, ...(body!==undefined?{'Content-Type':'application/json'}:{})}, ...(body!==undefined?{body:JSON.stringify(body)}:{})});
+      const response = await fetch(url, {method, signal:controller.signal, cache:'no-store', headers:{ ...headers, ...(body!==undefined?{'Content-Type':'application/json'}:{})}, ...(body!==undefined?{body:JSON.stringify(body)}:{})});
       if(headerTimeoutOnly)clearTimeout(timer);
       if (response.status === 401) { expire(); throw Object.assign(Error('登录已失效，请重新登录后读取最新状态。'), {unauthorized:true}); }
       if (!response.ok) throw Object.assign(Error(response.status===429?'后端繁忙，请稍后手动重试。':'请求失败（HTTP '+response.status+'）。'), {status:response.status});

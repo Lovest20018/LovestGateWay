@@ -1,4 +1,3 @@
-import {storedSecret} from './auth.js';
 
 import {storageKey,pendingRecoveryJob} from './recovery-job.js';
 export {pendingRecoveryJob} from './recovery-job.js';
@@ -73,7 +72,7 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
   function later(callback,ms){const id=setTimeout(()=>{timers.delete(id);if(!stopped)callback();},ms);timers.add(id);}
   function schedulePoll(ms){if(pollTimer!==null)clearTimeout(pollTimer);pollTimer=setTimeout(()=>{pollTimer=null;pollJob();},ms);}
   async function api(path,body){
-    const response=await fetch('/sniffbox/settings/'+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+storedSecret(),...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.any([lifetime.signal,AbortSignal.timeout(15000)])});
+    const response=await fetch('/sniffbox/settings/'+path,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.any([lifetime.signal,AbortSignal.timeout(15000)])});
     const data=await response.json().catch(()=>({}));
     if(stopped)throw new DOMException('View closed','AbortError');
     if(!response.ok){if(response.status===401)onUnauthorized();throw Object.assign(Error(message(data.error)),{status:response.status,code:data.error});}return data;

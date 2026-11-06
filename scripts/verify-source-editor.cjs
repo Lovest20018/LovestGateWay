@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Source UI acceptance on a non-secure HTTP synthetic origin; no live gateway. */
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');
 const {execFileSync}=require('node:child_process');
@@ -22,10 +23,11 @@ async function exercise(browser,kind){
   await page.addInitScript(()=>{if(!localStorage.getItem('PaoPaoGateWay'))localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'preserve-me',clashAPIConfigs:[{secret:'',label:'existing-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}]}));});
   let config=structuredClone(kind==='ppsub'?native:baseline),operation=null,expired=false,posted=null,merged=null,validations=0;
   const model={...structuredClone(defaults),revision:'a'.repeat(64),assets:[],source:{native_ppsub:kind==='ppsub',local_policy:kind==='clash_patch'},mihomo_installed:true};
+  const sessions=sessionFixture({proof:()=>secret,initial:false,expired:()=>expired});
   await page.route(origin+'/**',async route=>{
     const request=route.request(),target=new URL(request.url()).pathname,reply=(value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
     if(target.startsWith('/sniffbox/')){
-      if(request.headers().authorization!=='Bearer '+secret||expired)return reply({error:'LOGIN_REQUIRED'},401);
+      if(!sessions.authorized(request)||expired)return reply({error:'LOGIN_REQUIRED'},401);
       if(target==='/sniffbox/info')return reply({mode:'suburl',ppsub:kind==='ppsub',clash_version:'fixture'});
       if(target==='/sniffbox/settings/config')return reply(model);
       if(target==='/sniffbox/settings/status')return reply({management:{state:'loaded',recent:[]},running_mode:'suburl',source:model.source});
@@ -45,6 +47,7 @@ async function exercise(browser,kind){
     try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
   });
   try{
+    await sessions.install(page);
     await page.goto(origin+'/ui/#/subscriptions');
     assert.equal(await page.evaluate(()=>isSecureContext),false,'must exercise HTTP LAN password hashing');
     await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();
@@ -70,18 +73,19 @@ async function exercise(browser,kind){
       // Visit the maintained connection page and verify shared storage preferences.
       await page.locator('#shell-nav [data-route="connections"]').click();await page.locator('#connections-page').waitFor();
       const storageCheck=await page.locator('#connections-page').evaluate(async(_,secret)=>{
-        const manifest=await (await fetch('/ui/manifest.json')).json();const {storeSecret}=await import('/ui/'+manifest.assets['auth.js']);
-        const verified=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        const manifest=await (await fetch('/ui/manifest.json')).json();const {setSessionContext,sessionContext}=await import('/ui/'+manifest.assets['auth.js']);
+        const contextBefore=sessionContext(),verified=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'changed-in-legacy',clashAPIConfigs:[{secret,label:'updated-legacy-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}],legacyOption:'new-value'}));
         const changed=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
-        localStorage.setItem('ppgw-theme','dark');storeSecret('');const loggedOut=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
+        localStorage.setItem('ppgw-theme','dark');setSessionContext('');const loggedOut=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret,label:'explicit-single-profile'}],favorite:'explicit-settings-update'}));const explicit=JSON.parse(localStorage.getItem('PaoPaoGateWay'));
         localStorage.setItem('PaoPaoGateWay',JSON.stringify({favorite:'preserve-me',clashAPIConfigs:[{secret,label:'existing-profile'},{secret:'secondary-auth-fixture',label:'second-profile'}]}));
+        setSessionContext(contextBefore);
         return{verified,changed,loggedOut,explicit,theme:localStorage.getItem('ppgw-theme')};
       },secret);
-      assert.equal(storageCheck.verified.clashAPIConfigs.length,2);assert.equal(storageCheck.verified.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.verified.clashAPIConfigs[1].secret,'secondary-auth-fixture');
+      assert.equal(storageCheck.verified.clashAPIConfigs.length,2);assert.equal(storageCheck.verified.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.verified.clashAPIConfigs[1].secret,'');
       assert.equal(storageCheck.changed.favorite,'changed-in-legacy');assert.equal(storageCheck.changed.clashAPIConfigs[0].label,'updated-legacy-profile');
-      assert.equal(storageCheck.loggedOut.favorite,'changed-in-legacy');assert.equal(storageCheck.loggedOut.legacyOption,'new-value');assert.equal(storageCheck.loggedOut.clashAPIConfigs[0].secret,'');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].secret,'secondary-auth-fixture');assert.equal(storageCheck.theme,'dark');
+      assert.equal(storageCheck.loggedOut.favorite,'changed-in-legacy');assert.equal(storageCheck.loggedOut.legacyOption,'new-value');assert.equal(storageCheck.loggedOut.clashAPIConfigs[0].secret,'');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].label,'second-profile');assert.equal(storageCheck.loggedOut.clashAPIConfigs[1].secret,'');assert.equal(storageCheck.theme,'dark');
       assert.equal(storageCheck.explicit.favorite,'explicit-settings-update');assert.equal(storageCheck.explicit.clashAPIConfigs.length,1,'explicit profile removal remains possible');assert.equal(storageCheck.explicit.clashAPIConfigs[0].label,'explicit-single-profile');
       await page.locator('#shell-nav [data-route="subscriptions"]').click();await ready();assert.equal(await groupName.inputValue(),'Main','disposed import must not write into a newly mounted editor');
       const advanced=page.locator('.editor-body > .editor-advanced');await advanced.locator('summary').click();await page.waitForFunction(()=>document.querySelector('.editor-body > .editor-advanced textarea')?.value);
@@ -122,7 +126,7 @@ async function exercise(browser,kind){
     await page.waitForFunction(()=>document.querySelector('#shell-status')?.textContent.includes('重新登录'),null,{timeout:45000});expired=false;
     await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});
     assert.equal(await page.locator('.groups .item').first().locator('[data-field="name"]').inputValue(),'Draft survives reauthentication');
-    const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(saved.favorite,'preserve-me');assert.equal(saved.clashAPIConfigs[0].label,'existing-profile');assert.equal(saved.clashAPIConfigs[0].secret,secret);assert.equal(saved.clashAPIConfigs[1].label,'second-profile');assert.equal(saved.clashAPIConfigs[1].secret,'secondary-auth-fixture');
+    const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(saved.favorite,'preserve-me');assert.equal(saved.clashAPIConfigs[0].label,'existing-profile');assert.equal(saved.clashAPIConfigs[0].secret,'');assert.equal(saved.clashAPIConfigs[1].label,'second-profile');assert.equal(saved.clashAPIConfigs[1].secret,'');
     await page.evaluate(()=>window.postMessage({type:'ppgw:route',hash:'#/overview'},location.origin));assert.equal(new URL(page.url()).hash,'#/subscriptions','messages from an untrusted source are ignored');
     page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav').getByRole('button',{name:'退出登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).waitFor();const loggedOut=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(loggedOut.favorite,'preserve-me');assert.equal(loggedOut.clashAPIConfigs[0].label,'existing-profile');assert.equal(loggedOut.clashAPIConfigs[0].secret,'');
     assert.deepEqual(errors,[]);return{kind,nonSecureHttpLogin:true,actualFormsValidatedByBackend:true,hiddenFieldsPreserved:true,copyMoveDelete:true,reauthenticationPreservesDraft:true,storedPreferencesPreserved:true,foreignMessageIgnored:true,...(kind==='ppsub'?{lateImportPreservesNewInput:true,reloadInvalidatesImport:true,newerImportWins:true,unmountedImportIgnored:true}:{}),validations,pageErrors:errors};

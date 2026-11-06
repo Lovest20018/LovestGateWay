@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Shared-document navigation, authentication and layout; synthetic APIs only. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -23,6 +24,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.addInitScript(() => {if(!localStorage.getItem('PaoPaoGateWay'))localStorage.setItem('PaoPaoGateWay', JSON.stringify({clashAPIConfigs: [{secret: 'fixture-token'}]}));});
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: false}, mihomo_installed: true};
     let job, infoReads=0,sourceImports=0,expectedSecret='fixture-token';const requests=[];
+    const sessions=sessionFixture({proof:()=>expectedSecret});
     await page.route(origin + '/**', async route => {
       const request = route.request(), target = new URL(request.url()).pathname;
       const reply = (data, status = 200) => route.fulfill({status, contentType: 'application/json', body: JSON.stringify(data)});
@@ -31,8 +33,8 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
       if(target==='/rules')return reply({rules:[{type:'Match',payload:'',proxy:'Fixture Main'}]});
       if(target==='/providers/rules')return reply({providers:{}});
       if (target.startsWith('/sniffbox/')) {
-        requests.push({target,auth:request.headers().authorization});
-        if(request.headers().authorization!=='Bearer '+expectedSecret)return reply({error:'LOGIN_REQUIRED'},401);
+        requests.push({target,auth:sessions.authorized(request)});
+        if(!sessions.authorized(request))return reply({error:'LOGIN_REQUIRED'},401);
         if(target.endsWith('/sse'))return route.fulfill({contentType:'text/event-stream',body:': fixture\n\n'});
         if(target==='/sniffbox/screen')return route.fulfill({body:'Fixture log',headers:{'X-Screen-Status':'unavailable'}});
         if(target==='/sniffbox/traffic/total')return reply({downloadTotal:0,uploadTotal:0,domains:[],ips:[],processes:[]});
@@ -62,6 +64,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
         return route.fulfill({body: await fs.readFile(filename), contentType: target.endsWith('.js') ? 'application/javascript' : target.endsWith('.css') ? 'text/css' : target.endsWith('.svg') ? 'image/svg+xml' : 'text/html'});
       } catch { return route.fulfill({status: 404, body: ''}); }
     });
+    await sessions.install(page);
     await page.goto(origin+'/ui/#/overview');
     await page.locator('#overview-page').waitFor();
     await page.evaluate(()=>{window.documentIdentity='same-document';});
@@ -112,7 +115,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.locator('#traffic-page').waitFor();
     await page.locator('#shell-nav [data-route="proxies"]').click();
     await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
-    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth==='Bearer '+newSecret),'the source proxy page must use the new secret after source reauth');
+    assert.ok(requests.some(row=>row.target==='/sniffbox/proxies'&&row.auth===true),'the source proxy page must use the new secret after source reauth');
     assert.equal(await page.evaluate(()=>window.documentIdentity),'same-document','reauthentication must not reload the document');
     await page.goBack();await page.waitForURL('**/#/traffic');await page.locator('#traffic-page h1').waitFor();
     await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();

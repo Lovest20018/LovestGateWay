@@ -1,5 +1,4 @@
 import {modeControl} from './mode-control.js';
-import {storedSecret} from './auth.js';
 import {icon} from './icons.js';
 import {snapshot,isGroup,segment,nodeLabel,delay} from './proxy-model.js';
 import {rulesSnapshot,providersSnapshot,rulePage,proxyChain,matchLog,testAddress,geoResult} from './rule-model.js';
@@ -42,7 +41,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   async function request(url,{method='GET',body,signal,timeout=15000}={}){
     if(disposed)throw new DOMException('页面已离开。','AbortError');
     const active=new AbortController();controllers.add(active);const abort=()=>active.abort();signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();const deadline=setTimeout(abort,timeout);
-    try{const response=await fetch(url,{method,headers:{Authorization:'Bearer '+storedSecret(),...(body!==undefined?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),cache:'no-store',signal:active.signal});
+    try{const response=await fetch(url,{method,headers:{...(body!==undefined?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),cache:'no-store',signal:active.signal});
       if(response.status===401){paused=true;if(!disposed)onUnauthorized();const error=Error('登录已失效，请重新登录后读取最新状态。');error.unauthorized=true;throw error;}
       if(!response.ok)throw Error(response.status===429?'当前已有测试正在运行，请稍后手动重试。':'请求失败（HTTP '+response.status+'）。');
       if(response.status===204)return null;const text=await response.text();return text?JSON.parse(text):null;

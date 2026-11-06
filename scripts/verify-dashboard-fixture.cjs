@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Exercise the source editor and opaque compatibility dashboard with synthetic data; no live Gateway. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -45,6 +46,7 @@ async function exercise(browser, kind) {
     let releaseInitialRead;
     const initialRead = new Promise(resolve => { releaseInitialRead = resolve; });
     const maintenanceRequests = [];
+    const sessions=sessionFixture({proof:()=> 'fixture-token'});
     await page.route(origin + '/**', async route => {
       const target = new URL(route.request().url()).pathname;
       if (target === '/sniffbox/settings/config') return route.fulfill({contentType: 'application/json', body: JSON.stringify(model)});
@@ -67,7 +69,7 @@ async function exercise(browser, kind) {
         }
         if (/\/subscription\/(maintenance|core\/|policy\/reset)/.test(target)) maintenanceRequests.push(target);
         if (target.endsWith('/apply')) {
-          assert.equal(route.request().headers().authorization, 'Bearer fixture-token');
+          assert.equal(sessions.authorized(route.request()),true);
           const payload = route.request().postDataJSON();
           if(payload.kind==='export_yaml')return route.fulfill({contentType:'application/json',body:JSON.stringify({filename:'gateway-running.yaml',content:'proxies: []\ndns:\n  nameserver: [1.1.1.1]\n'})});
           assert.equal(payload.kind,'editor'); assert.equal(payload.edit_kind,kind);
@@ -96,6 +98,7 @@ async function exercise(browser, kind) {
         await route.fulfill({contentType: target.endsWith('.js') ? 'application/javascript' : target.endsWith('.css') ? 'text/css' : target.endsWith('.svg') ? 'image/svg+xml' : 'text/html', body});
       } catch { await route.fulfill({status: 404, body: ''}); }
     });
+    await sessions.install(page);
     await page.goto(origin + '/ui/#/ppsub');
     await page.evaluate(() => { window.fixtureDocument = 'unchanged'; });
     await page.waitForURL('**/#/subscriptions');

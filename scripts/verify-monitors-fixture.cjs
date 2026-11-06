@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Five maintained pages against a loopback fixture; no external API is contacted. */
 const assert=require('node:assert/strict'),http=require('node:http'),fs=require('node:fs/promises'),path=require('node:path');
 const {chromium}=require(process.env.PPGW_PLAYWRIGHT_MODULE||'playwright');
@@ -5,6 +6,7 @@ const root=path.resolve(__dirname,'..'),output=path.resolve(process.argv[2]||'di
 const routes=['connections','traffic','distribution','logs','region'];
 (async()=>{
  await fs.mkdir(evidence,{recursive:true});const requests=[],streams=new Map(),sockets=new Set(),errors=[],checks=[];let expected='fixture-token',deny=false,probeDelay=5,probeActive=0,probeMax=0,screenAvailable=true,probe429=0;
+ const sessions=sessionFixture({proof:()=>expected,expired:()=>deny});
  let connections=Array.from({length:250},(_,i)=>({id:'connection-'+i,metadata:{host:'host-'+i+'.example.com',sourceIP:'192.0.2.'+(i%20+1),destinationPort:443,sourcePort:1200+i,network:'tcp',type:'TUN'},download:1024+i,upload:100,start:new Date(Date.now()-60000).toISOString(),chains:['Fixture Main','Fixture Node'],rule:'DomainSuffix',rulePayload:'example.com'}));
  let traffic=Array.from({length:250},(_,i)=>({client:'192.0.2.'+(i%20+1),domain:'host-'+i+'.example.com',down:1024+i,up:100,conns:2,ts:Date.now()-60000,last_seen:Date.now(),dport:[443],head:'Fixture Head',sniff:i%2?['tls']:['Video'],transport:'tcp',inbound:['TUN']}));
  let nodes=[{node:'Fixture Node',up:1024,down:2048,total:3072},{node:'DIRECT',up:512,down:100,total:612}];
@@ -14,8 +16,9 @@ const routes=['connections','traffic','distribution','logs','region'];
  const server=http.createServer(async(request,response)=>{try{
   const url=new URL(request.url,'http://localhost'),target=url.pathname,method=request.method;
   if(target.startsWith('/ui/')){try{const filename=path.join(output,target==='/ui/'?'index.html':path.basename(target));response.writeHead(200,{'Content-Type':target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':target.endsWith('.woff2')?'font/woff2':'text/html'});response.end(await fs.readFile(filename));}catch{response.writeHead(404);response.end();}return;}
-  requests.push({target,method,authorized:request.headers.authorization==='Bearer '+expected,at:Date.now()});
-  if(deny||request.headers.authorization!=='Bearer '+expected)return send(response,{error:'LOGIN_REQUIRED'},401);
+  if(target.startsWith('/sniffbox/auth/')){let raw='';for await(const chunk of request)raw+=chunk;const reply=sessions.handle(request,raw?JSON.parse(raw):undefined);return send(response,reply.data,reply.status,reply.headers);}
+  requests.push({target,method,authorized:sessions.authorized(request),at:Date.now()});
+  if(!sessions.authorized(request))return send(response,{error:'LOGIN_REQUIRED'},401);
   if(target==='/sniffbox/info'||target==='/sniffbox/info/dynamic')return send(response,{mode:server.fixtureMode||'yaml',version:'fixture',clash_version:'fixture',features:{net_rec:server.recording!==false},traffic:{downloadTotal:4096,uploadTotal:2048}});
   if(target==='/connections'){if(method==='DELETE')connections=[];return send(response,{connections,downloadTotal:4096,uploadTotal:2048});}
   if(target.startsWith('/connections/')){connections=connections.filter(row=>row.id!==decodeURIComponent(target.slice(13)));response.writeHead(204);return response.end();}

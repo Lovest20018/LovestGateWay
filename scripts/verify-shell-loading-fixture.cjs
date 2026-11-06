@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Synthetic route loading and mobile keyboard checks; no live gateway access. */
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');
 const {chromium}=require(process.env.PPGW_PLAYWRIGHT_MODULE||'playwright');
@@ -10,6 +11,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve('dist/ui-optimi
     page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
     await page.addInitScript(()=>localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]})));
     let hold=true;
+    const sessions=sessionFixture({proof:()=> 'fixture-token'});
     await context.route(origin+'/**',async route=>{
       const request=route.request(),target=new URL(request.url()).pathname;
       const reply=data=>route.fulfill({contentType:'application/json',body:JSON.stringify(data)});
@@ -24,6 +26,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve('dist/ui-optimi
       if(hold&&/\/proxies\.[a-f0-9]+\.js$/.test(target))await new Promise(resolve=>{release=resolve;});
       try{return await route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
+    await sessions.install(context);
     await page.goto(origin+'/ui/#/overview');await page.locator('#overview-page [data-field=cpu-model]').getByText('Fixture CPU',{exact:true}).waitFor();
     assert.equal(modules.filter(name=>/^(editor|diagnostics|proxies|rules|connections|traffic|distribution|logs|region)\./.test(name)).length,0);
     await page.locator('#shell-nav [data-route=proxies]').click();
