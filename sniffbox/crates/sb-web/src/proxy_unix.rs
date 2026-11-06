@@ -20,6 +20,7 @@ fn is_hop_by_hop(lname: &str) -> bool {
             | "keep-alive"
             | "proxy-authenticate"
             | "proxy-authorization"
+            | "cookie"
             | "te"
             | "trailer"
             | "trailers"

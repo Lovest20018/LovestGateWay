@@ -5,7 +5,7 @@ use crate::events::LogTx;
 use crate::screen::ScreenHistory;
 use crate::traffic::TrafficSource;
 use crate::{
-    auth, clash_logs, connections, gate, http, native, proxy_unix, respond, router, screen_poll,
+    clash_logs, connections, gate, http, native, proxy_unix, respond, router, screen_poll, session,
     static_files,
 };
 use arc_swap::ArcSwap;
@@ -23,6 +23,7 @@ pub struct ServerConfig {
     pub listen: SocketAddr,
 
     pub token: crate::auth::TokenHandle,
+    pub sessions: Arc<session::Sessions>,
 
     pub admin: Arc<ArcSwap<AdminAcl>>,
     pub clash_sock: PathBuf,
@@ -173,7 +174,7 @@ async fn handle_conn(
         let ka = req.keep_alive();
 
         let local_ctl = req.path_only() == "/sniffbox/clash/up";
-        if local_ctl && !peer.ip().is_loopback() {
+        if local_ctl && (!peer.ip().is_loopback() || req.headers.iter().any(|(key, _)| key.eq_ignore_ascii_case("origin") || key.eq_ignore_ascii_case("sec-fetch-site"))) {
             respond::forbidden(&mut stream, "loopback only\n", ka).await?;
             carry = consume_body(&mut stream, req.framing()?, body_prefix).await?;
             if !ka {
@@ -182,10 +183,22 @@ async fn handle_conn(
             continue;
         }
 
-        if route.needs_auth()
-            && !local_ctl
-            && !auth::check_bearer(req.header("authorization"), cfg.token.load().as_str())
-        {
+        if req.path_only().starts_with("/sniffbox/auth/") {
+            let read = http::read_body_bounded(&mut stream, req.framing()?, body_prefix, 1024);
+            let (body, leftover) = match tokio::time::timeout(Duration::from_secs(10), read).await {
+                Ok(Ok(value)) => value,
+                _ => { respond::send(&mut stream, 400, "Bad Request", &[], b"invalid login request", false).await?; return Ok(()); }
+            };
+            session::handle(&mut stream, &req, &cfg, peer.ip(), &body, ka).await?;
+            carry = leftover;
+            if !ka { return Ok(()); }
+            continue;
+        }
+        let lease = if route.needs_auth() && session::cookie_allowed(&req) {
+            session::cookie(&req).and_then(|raw| cfg.sessions.authorize(raw, cfg.token.load().as_str(), std::time::Instant::now()))
+        } else { None };
+        if route.needs_auth() && !local_ctl && lease.is_none()
+            && !session::internal(&req, peer.ip(), cfg.token.load().as_str()) {
             respond::unauthorized(&mut stream, ka).await?;
             carry = consume_body(&mut stream, req.framing()?, body_prefix).await?;
             if !ka {
@@ -227,7 +240,7 @@ async fn handle_conn(
                 let self_serve = is_conn && !(cfg.clash_enabled && is_delete);
                 if let Some(src) = cfg.connections.as_ref().filter(|_| self_serve) {
 
-                    match connections::handle(&mut stream, &req, path, src, ka).await? {
+                    match session::guard(&cfg, lease.as_ref(), connections::handle(&mut stream, &req, path, src, ka)).await? {
                         connections::Outcome::KeepAlive => {
                             carry = consume_body(&mut stream, req.framing()?, body_prefix).await?;
                             continue;
@@ -248,7 +261,7 @@ async fn handle_conn(
                 } else {
 
                     let (outcome, leftover) =
-                        proxy_unix::proxy(&mut stream, &req, &body_prefix, &cfg.clash_sock).await?;
+                        session::guard(&cfg, lease.as_ref(), proxy_unix::proxy(&mut stream, &req, &body_prefix, &cfg.clash_sock)).await?;
                     match outcome {
                         proxy_unix::ProxyOutcome::KeepAlive => {
                             carry = leftover;
@@ -302,6 +315,9 @@ async fn handle_conn(
                     }
                     Err(e) => return Err(e),
                 };
+                if lease.as_ref().is_some_and(|lease| !cfg.sessions.valid(lease, cfg.token.load().as_str(), std::time::Instant::now())) {
+                    respond::unauthorized(&mut stream, false).await?; return Ok(());
+                }
                 if !router::configs_patch_mode_only(&body) {
                     tracing::info!(%peer, path = %req.path_only(), "blocked clash PATCH /configs (only mode change allowed)");
                     respond::forbidden(&mut stream, "only mode change allowed\n", ka).await?;
@@ -389,7 +405,7 @@ async fn handle_conn(
                     Err(e) => return Err(e),
                 };
 
-                if native::handle(&mut stream, &req, &cfg, ka, &body, &shutdown).await? {
+                if session::guard(&cfg, lease.as_ref(), native::handle(&mut stream, &req, &cfg, ka, &body, &shutdown)).await? {
                     carry = leftover;
                     if !ka {
                         return Ok(());
@@ -451,6 +467,115 @@ async fn serve_static(
             }
         }
         Err(_) => respond::not_found(stream, ka).await,
+    }
+}
+
+#[cfg(test)]
+mod session_http_tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+    fn config() -> Arc<ServerConfig> {
+        Arc::new(ServerConfig {
+            listen: "127.0.0.1:0".parse().unwrap(), token: crate::auth::token_handle(crate::auth::derive_secret("synthetic-password")),
+            sessions: Arc::new(session::Sessions::default()), admin: crate::acl::admin_handle(AdminAcl::default()),
+            clash_sock: PathBuf::from("/missing-fixture.sock"), clash_enabled: false, webroot: PathBuf::from("/missing-fixture-root"),
+            screen_dev: PathBuf::from("/missing-fixture-screen"), screen_history: ScreenHistory::new(10),
+            log_tx: None, traffic: None, connections: None, nodes: None, info: None, proxies: None,
+            reload_cmd: None, reload_inflight: Arc::new(AtomicBool::new(false)), group_delay_inflight: Arc::new(std::sync::Mutex::new(Default::default())),
+            probe: None, clash_control: None, geo: None, cloudflared: None, cloudflared_log: None,
+        })
+    }
+    async fn exchange(cfg: Arc<ServerConfig>, wire: String, remote: bool) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = listener.local_addr().unwrap();
+        let serve = async {
+            let (stream, mut peer) = listener.accept().await.unwrap();
+            if remote { peer.set_ip("192.0.2.10".parse().unwrap()); }
+            let (_tx, rx) = watch::channel(false);
+            handle_conn(stream, peer, cfg, rx).await.unwrap();
+        };
+        let read = async {
+            let mut stream = TcpStream::connect(address).await.unwrap();stream.write_all(wire.as_bytes()).await.unwrap();
+            let mut bytes = vec![]; stream.read_to_end(&mut bytes).await.unwrap();String::from_utf8(bytes).unwrap()
+        };
+        let (_, result) = tokio::join!(serve, read); result
+    }
+    fn request(method: &str, path: &str, extra: &str, body: &str) -> String {
+        format!("{method} {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\nContent-Length: {}\r\n{extra}\r\n{body}", body.len())
+    }
+    #[tokio::test]
+    async fn remote_login_cookie_logout_and_permanent_bearer_boundary() {
+        let cfg = config(); let proof = crate::auth::derive_secret("synthetic-password");
+        let bearer = format!("Authorization: Bearer {proof}\r\n");
+        let denied = exchange(cfg.clone(), request("GET", "/configs", &bearer, ""), true).await;
+        assert!(denied.starts_with("HTTP/1.1 401"));
+        let local = exchange(cfg.clone(), request("GET", "/configs", &bearer, ""), false).await;
+        assert!(local.starts_with("HTTP/1.1 503"), "local bearer reaches the authenticated route");
+        let payload = serde_json::json!({"proof":proof}).to_string();
+        let denied = exchange(cfg.clone(), request("POST", "/sniffbox/auth/login", "Origin: https://evil.test\r\n", &payload), true).await;
+        assert!(denied.starts_with("HTTP/1.1 403"));
+        let login = exchange(cfg.clone(), request("POST", "/sniffbox/auth/login", "Origin: https://gateway.test\r\n", &payload), true).await;
+        assert!(login.starts_with("HTTP/1.1 200")); assert!(login.contains("HttpOnly; SameSite=Strict")); assert!(login.contains("; Secure\r\n"));
+        let cookie = login.lines().find_map(|line| line.strip_prefix("Set-Cookie: ")).unwrap().split(';').next().unwrap();
+        assert!(!cookie.contains(&proof));
+        let header = format!("Cookie: {cookie}\r\n");
+        let status = exchange(cfg.clone(), request("GET", "/sniffbox/auth/session", &header, ""), true).await;
+        assert!(status.contains("\"authenticated\":true")); assert!(!status.contains(cookie)); assert!(!status.contains(&proof));
+        let protected = exchange(cfg.clone(), request("GET", "/configs", &header, ""), true).await;
+        assert!(protected.starts_with("HTTP/1.1 503"));
+        let csrf = exchange(cfg.clone(), request("PATCH", "/configs", &header, "{}"), true).await;
+        assert!(csrf.starts_with("HTTP/1.1 401"));
+        let logout = exchange(cfg.clone(), request("POST", "/sniffbox/auth/logout", &format!("{header}Origin: https://gateway.test\r\n"), "{}"), true).await;
+        assert!(logout.contains("Max-Age=0"));
+        let denied = exchange(cfg.clone(), request("GET", "/configs", &header, ""), true).await;
+        assert!(denied.starts_with("HTTP/1.1 401"));
+        for _ in 0..9 { let _ = exchange(cfg.clone(), request("POST", "/sniffbox/auth/login", "Origin: http://gateway.test\r\n", "{}"), true).await; }
+        let limited = exchange(cfg, request("POST", "/sniffbox/auth/login", "Origin: http://gateway.test\r\n", &payload), true).await;
+        assert!(limited.starts_with("HTTP/1.1 429")); assert!(limited.contains("Retry-After: 60"));
+    }
+    #[tokio::test]
+    async fn real_sse_socket_closes_on_logout_password_rotation_and_expiry() {
+        for kind in ["logout", "password", "expiry"] {
+            let mut cfg = config();
+            if kind == "expiry" {
+                Arc::get_mut(&mut cfg).unwrap().sessions = Arc::new(session::Sessions::with_limits(Duration::from_millis(250), Duration::from_millis(250)));
+            }
+            let proof = cfg.token.load().to_string();
+            let raw = cfg.sessions.issue(&proof, None, std::time::Instant::now()).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap(); let served = cfg.clone();
+            let task = tokio::spawn(async move {
+                let (stream, mut peer) = listener.accept().await.unwrap(); peer.set_ip("192.0.2.10".parse().unwrap());
+                let (_tx, rx) = watch::channel(false); handle_conn(stream, peer, served, rx).await
+            });
+            let mut client = TcpStream::connect(address).await.unwrap();
+            client.write_all(request("GET", "/sniffbox/screen/sse", &format!("Cookie: ppgw_session={raw}\r\n"), "").as_bytes()).await.unwrap();
+            let mut head = Vec::new();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !head.ends_with(b"\r\n\r\n") { head.push(client.read_u8().await.unwrap()); }
+            }).await.unwrap();
+            assert!(head.starts_with(b"HTTP/1.1 200"));
+            if kind == "logout" {
+                let response = exchange(cfg.clone(), request("POST", "/sniffbox/auth/logout", &format!("Cookie: ppgw_session={raw}\r\nOrigin: http://gateway.test\r\n"), "{}"), true).await;
+                assert!(response.starts_with("HTTP/1.1 200"));
+            } else if kind == "password" { cfg.token.store(Arc::new(crate::auth::derive_secret("changed-password"))); }
+            let mut remaining = Vec::new();
+            tokio::time::timeout(Duration::from_secs(3), client.read_to_end(&mut remaining)).await.unwrap().unwrap();
+            assert_eq!(task.await.unwrap().unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        }
+    }
+    #[tokio::test]
+    async fn revocation_closes_pending_streams_and_password_change_invalidates_cookie() {
+        let cfg = config(); let proof = cfg.token.load().to_string();
+        let raw = cfg.sessions.issue(&proof, None, std::time::Instant::now()).unwrap();
+        let lease = cfg.sessions.authorize(&raw, &proof, std::time::Instant::now()).unwrap();
+        let work = session::guard(&cfg, Some(&lease), std::future::pending::<io::Result<()>>());
+        let cancel = async { tokio::task::yield_now().await; cfg.sessions.revoke(&raw); };
+        let (result, _) = tokio::time::timeout(Duration::from_secs(2), async { tokio::join!(work, cancel) }).await.unwrap();
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
+        let raw = cfg.sessions.issue(&proof, None, std::time::Instant::now()).unwrap();
+        cfg.token.store(Arc::new(crate::auth::derive_secret("changed-password")));
+        let denied = exchange(cfg, request("GET", "/configs", &format!("Cookie: ppgw_session={raw}\r\n"), ""), true).await;
+        assert!(denied.starts_with("HTTP/1.1 401"));
     }
 }
 

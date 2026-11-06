@@ -202,17 +202,14 @@
       }
       node.append(...children.filter(Boolean)); return node;
     }
-    function secret() {
-      try { const saved = JSON.parse(localStorage.getItem('PaoPaoGateWay') || '{}'); return saved.clashAPIConfigs?.[0]?.secret || saved.secret || ''; }
-      catch { return ''; }
-    }
+    function secret() { return window.ppgwAuth?.active() ? 'session' : ''; }
     async function api(path, body, namespace = 'settings') {
       if (stopped) throw new DOMException('View closed', 'AbortError');
       const token = secret();
       if (!token) throw Object.assign(Error(message('LOGIN_REQUIRED')), {status: 401});
       const response = await fetch('/sniffbox/' + namespace + '/' + path, {
         method: body === undefined ? 'GET' : 'POST',
-        headers: {Authorization: 'Bearer ' + token, ...(body === undefined ? {} : {'Content-Type': 'application/json'})},
+        headers: {...(body === undefined ? {} : {'Content-Type': 'application/json'})},
         body: body === undefined ? undefined : JSON.stringify(body), cache: 'no-store', signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(15000)]),
       });
       const data = await response.json().catch(() => ({}));
@@ -721,7 +718,7 @@
       const action = plan?.action || data.effects?.core || data.action;
       items.push(el('div', {class: 'notice', 'data-application-action':action, text: plan?.runtime_state === 'unknown' ? '运行状态暂无法确认，后台将按实际状态保存或加载配置，应用结果以任务验收为准。' : plan?.runtime_state === 'staged' ? '此次仅保存到离线目录，尚未验证运行加载。' : plan?.pending_load ? '网关当前未运行。此次仅保存配置，启动后再加载；保存成功不代表已加载。' :
         action === 'restart' ? '将重启网关并验证新配置，现有连接可能中断。' :
-        action === 'mihomo_reload' ? '将热加载静态规则或节点组，并核对实际规则、组和节点选择；失败时恢复原配置并重启。' : action === 'reload' ? '将热更新转发核心，保留核心进程和现有 Mihomo 配置。' : action === 'auxiliary' ? (plan?.core_active === true ? '仅调整辅助服务，转发核心保持运行。' : plan?.core_active === false ? '仅调整辅助服务，转发核心当前未运行，此次不会启动。' : '仅调整辅助服务，不改变转发核心的运行状态。') : '无需重启转发核心。'}));
+        action === 'mihomo_reload' ? '将热加载静态规则或节点组，并核对规则、组和节点选择；新建连接可能短暂失败，热加载失败时恢复原配置并重启。' : action === 'reload' ? '将热更新转发核心，保留核心进程和现有 Mihomo 配置。' : action === 'auxiliary' ? (plan?.core_active === true ? '仅调整辅助服务，转发核心保持运行。' : plan?.core_active === false ? '仅调整辅助服务，转发核心当前未运行，此次不会启动。' : '仅调整辅助服务，不改变转发核心的运行状态。') : '无需重启转发核心。'}));
       const services = plan?.services || data.effects?.services;
       if (services?.length) items.push(el('p', {class: 'subtext', text: '调整辅助服务：' + services.map(v => ({api: '对外观测 API', history: '历史采集', maintenance_timer: '自动维护', subscription: '订阅服务',settings:'设置服务'})[v] || v).join('、')}));
       if (plan?.services_uncertain) items.push(el('p', {class:'subtext',text:'辅助服务的运行状态尚未确认，具体调整范围以执行时状态为准。'}));

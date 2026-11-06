@@ -1,7 +1,7 @@
 let overviewCache=null;
 import {formatBytes} from './format.js';
 export {formatBytes} from './format.js';
-import {storedSecret} from './auth.js';
+import {sessionContext} from './auth.js';
 import {icon} from './icons.js';
 
 const number=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?value:null;
@@ -71,7 +71,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   page.querySelector('.overview-interfaces-heading').prepend(icon('radio'));
   let cloudflaredSeen=false;
   let data={},history=[],poolHistory=[],previous=null,disposed=false,paused=false,timer=null,controller=null,sequence=0,clockAt=performance.now(),lastFull=0;
-  let cacheChecked=false;const authIdentity=storedSecret();
+  let cacheChecked=false;const authIdentity=sessionContext();
   const button=page.querySelector('[data-refresh]'),status=page.querySelector('[role=status]');
   const currentBoot=()=>text(data.integration?.data?.boot_id??data.integration?.boot_id);
   function merge(value){
@@ -135,7 +135,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
     }
     render();trafficChart.update(history);cpuChart.update(history,100,cloudflaredSeen?[...cpuSeries,['cpuCf','Cloudflared','--err']]:cpuSeries);memoryChart.update(history,data.memory?.total||undefined,cloudflaredSeen?[...memorySeries,['memCf','Cloudflared','--err']]:memorySeries);
   }
-  async function request(url,signal){const response=await fetch(url,{headers:{Authorization:'Bearer '+storedSecret()},cache:'no-store',signal});if(response.status===401){const error=new Error('登录已失效。');error.unauthorized=true;throw error;}if(!response.ok)throw Error('读取状态失败（HTTP '+response.status+'）。');const value=await response.json();if(!value||typeof value!=='object'||Array.isArray(value))throw Error('状态数据格式无效。');return value;}
+  async function request(url,signal){const response=await fetch(url,{credentials:'same-origin',cache:'no-store',signal});if(response.status===401){const error=new Error('登录已失效。');error.unauthorized=true;throw error;}if(!response.ok)throw Error('读取状态失败（HTTP '+response.status+'）。');const value=await response.json();if(!value||typeof value!=='object'||Array.isArray(value))throw Error('状态数据格式无效。');return value;}
   async function refresh(full=true){
     clearTimeout(timer);controller?.abort();const current=++sequence,active=new AbortController();controller=active;const timeout=setTimeout(()=>active.abort(),10000);button.disabled=true;paused=false;
     try{
@@ -153,5 +153,5 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   const visibility=()=>{if(document.hidden){clearTimeout(timer);controller?.abort();sequence++;button.disabled=false;}else if(!disposed&&!paused)refresh();};document.addEventListener('visibilitychange',visibility);
   if(initialInfo)accept(initialInfo,false);else render();
   if(!document.hidden)refresh();const clockTimer=setInterval(clock,1000);
-  return {refresh,dispose(){if(!paused&&authIdentity===storedSecret())overviewCache={auth:authIdentity,identity:[currentBoot(),data.version,data.mode,data.clash_version,data.integration?.core?.start_time].join('|'),at:Date.now(),history:history.slice(-40),poolHistory:poolHistory.slice(-40),previous,cloudflaredSeen};else overviewCache=null;disposed=true;sequence++;clearTimeout(timer);clearInterval(clockTimer);controller?.abort();document.removeEventListener('visibilitychange',visibility);trafficChart.dispose();cpuChart.dispose();memoryChart.dispose();host.replaceChildren();}};
+  return {refresh,dispose(){if(!paused&&authIdentity===sessionContext())overviewCache={auth:authIdentity,identity:[currentBoot(),data.version,data.mode,data.clash_version,data.integration?.core?.start_time].join('|'),at:Date.now(),history:history.slice(-40),poolHistory:poolHistory.slice(-40),previous,cloudflaredSeen};else overviewCache=null;disposed=true;sequence++;clearTimeout(timer);clearInterval(clockTimer);controller?.abort();document.removeEventListener('visibilitychange',visibility);trafficChart.dispose();cpuChart.dispose();memoryChart.dispose();host.replaceChildren();}};
 }

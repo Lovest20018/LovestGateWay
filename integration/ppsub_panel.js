@@ -2,19 +2,13 @@
 (() => {
   let current = null;
 
-  function secret() {
-    try {
-      const saved = JSON.parse(localStorage.getItem('PaoPaoGateWay') || '{}');
-      return saved.clashAPIConfigs?.[0]?.secret || saved.secret || '';
-    } catch { return ''; }
-  }
-
+  function secret() { return window.ppgwAuth?.active() ? 'session' : ''; }
   async function api(path, body, signal) {
     const token = secret();
     if (!token) throw Error('登录已失效，请刷新面板后重试。');
     const response = await fetch('/sniffbox/subscription/' + path, {
       method: body ? 'POST' : 'GET',
-      headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
       signal: AbortSignal.any([AbortSignal.timeout(15000), ...(signal ? [signal] : [])]),

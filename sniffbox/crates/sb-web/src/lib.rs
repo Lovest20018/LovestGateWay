@@ -21,6 +21,7 @@ pub mod respond;
 pub mod router;
 pub mod rule_test;
 pub mod screen;
+pub mod session;
 mod screen_poll;
 pub mod server;
 pub mod sse;

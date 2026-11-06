@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Browser acceptance against synthetic APIs; never connects to a live gateway. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -39,10 +40,11 @@ async function main() {
     const management={state:'unknown',policy_state:'saved_unconfirmed',recent:[],latest:null};
     model.management=management;
     model.latest_job={id:'f'.repeat(32),kind:'config',status:'failed',error:'MANAGEMENT_BUSY',created_at:1700000000,finished_at:1700000001};
+    const sessions=sessionFixture({proof:()=> 'fixture-token'});
     await page.route(origin + '/**', async route => {
       const req = route.request(), target = new URL(req.url()).pathname;
       if (target === '/sniffbox/subscription/core/update') {
-        assert.equal(req.headers().authorization, 'Bearer fixture-token');
+        assert.equal(sessions.authorized(req),true);
         const body = req.postDataJSON(); localOperations.push(body.operation);
         if (body.operation === 'begin') { localUpload = {...body, bytes: Buffer.alloc(0)}; return route.fulfill({contentType:'application/json',body:JSON.stringify({received:0,chunk_bytes:16384})}); }
         assert.equal(body.id, localUpload.id);
@@ -52,7 +54,7 @@ async function main() {
         localInstalled=true;coreId='mihomo_'+(++coreSerial);return route.fulfill({contentType:'application/json',body:JSON.stringify({id:coreId,status:'running',action:'install-local'})});
       }
       if (target === '/sniffbox/subscription/core/check' || target === '/sniffbox/subscription/core/rollback' || target === '/sniffbox/subscription/maintenance') {
-        assert.equal(req.headers().authorization, 'Bearer fixture-token');
+        assert.equal(sessions.authorized(req),true);
         if (!target.endsWith('/maintenance')) { coreId='mihomo_'+(++coreSerial);coreMutations++;coreReads=0; }
         if (target.endsWith('/maintenance') && coreRestart) {
           coreReads++;
@@ -72,7 +74,7 @@ async function main() {
       if (target === '/sniffbox/subscription/status') return route.fulfill({contentType: 'application/json', body: JSON.stringify({ready: true, edit_kind: 'clash_patch', ppsub_write_allowed: true, base_revision: model.revision})});
       if (target === '/sniffbox/subscription/config') return route.fulfill({contentType: 'application/json', body: JSON.stringify({config: editorConfig, edit_kind: 'clash_patch', snapshot_id: 'fixture-snapshot', base_revision: model.revision, settings_revision: model.revision, write_allowed: true, node_choices: ['N1'], notice: 'Synthetic editor'})});
       if (target.startsWith('/sniffbox/settings/')) {
-        assert.equal(req.headers().authorization, 'Bearer fixture-token');
+        assert.equal(sessions.authorized(req),true);
         const body = req.method() === 'POST' ? req.postDataJSON() : undefined;
         let data, status = 200;
         if (target.endsWith('/recheck')) {
@@ -120,6 +122,7 @@ async function main() {
     const blur = async (locator, value) => { await locator.fill(value); await locator.press('Tab'); };
     const apply = async () => { await page.locator('#preview').click(); await page.locator('#preview-dialog').waitFor({state: 'visible'}); await page.locator('#apply').click(); };
     const saved = () => page.getByText('配置已应用，运行状态验收通过。', {exact: true}).waitFor();
+    await sessions.install(page);
     await page.goto(origin + '/ui/gateway.html#/settings');
     await page.locator('.ppgw-management [role=status]').waitFor();
     assert.equal(await page.locator('#notice').isVisible(),false,'a historical failure must not become a current busy alert');

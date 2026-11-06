@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Optional API settings acceptance against synthetic APIs; no live gateway. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -29,12 +30,13 @@ const fixture = JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-
           Object.defineProperty(navigator,'clipboard',{value:undefined});
           document.execCommand = action => action === 'copy';
         }, theme);
+        const sessions=sessionFixture({proof:()=> 'fixture-admin'});
         await page.route(origin + '/**', async route => {
           const request = route.request(), target = new URL(request.url()).pathname;
           if (target.startsWith('/sniffbox/')) {
             let data = {mode:'free',ppsub:false,clash_version:'fixture'}, status = 200;
             if (target.startsWith('/sniffbox/settings/')) {
-              assert.equal(request.headers().authorization,'Bearer fixture-admin');
+              assert.equal(sessions.authorized(request),true);
               if (target.endsWith('/config')) data = model;
               else if (target.endsWith('/observer-token')) {
                 assert.equal(request.method(),'POST'); assert.deepEqual(request.postDataJSON(),{});
@@ -74,6 +76,7 @@ const fixture = JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-
           await page.locator('#apply').click();
         };
         const saved = () => page.getByText('配置已应用，运行状态验收通过。',{exact:true}).waitFor();
+        await sessions.install(page);
         await page.goto(origin + '/ui/#/settings'); await maintenance();
         assert.equal(await toggle().isChecked(),false);
         await page.getByText('API 已关闭：不监听端口',{exact:true}).waitFor();

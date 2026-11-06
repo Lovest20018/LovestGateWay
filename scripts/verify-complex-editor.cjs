@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Large synthetic subscription documents; no deployed gateway or real providers. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
@@ -39,6 +40,7 @@ async function exercise(browser, kind, width) {
   let config = structuredClone(kind==='ppsub'?native:baseline), posted, operation, merged, providerPolls=0;
   const initial = structuredClone(config);
   const model = {...structuredClone(defaults),revision:'a'.repeat(64),assets:[],source:{native_ppsub:kind==='ppsub',local_policy:kind==='clash_patch'},mihomo_installed:true};
+  const sessions=sessionFixture({proof:()=> 'fixture-token'});
   await page.route('**/*', async route=>{
     const request = route.request(), url = new URL(request.url()), target=url.pathname;
     const reply = (value,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(value)});
@@ -75,6 +77,7 @@ async function exercise(browser, kind, width) {
     return size;
   };
   try {
+    await sessions.install(page);
     await measure('load',async()=>{await page.goto(origin+'/ui/#/subscriptions');await ready();assert.equal(await groups.count(),counts.groups);});
     assert.equal(await page.locator('.subs > .item').count(),counts.providers);
     assert.equal(await page.locator('.rules > .item').count(),kind==='ppsub'?counts.rules:1);

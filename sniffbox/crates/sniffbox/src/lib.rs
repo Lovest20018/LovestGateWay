@@ -613,6 +613,7 @@ async fn run(cfg: Config, source: ConfigSource) -> std::io::Result<()> {
         let web_cfg = Arc::new(sb_web::ServerConfig {
             listen: cfg.web.listen,
             token: shared.web_token(),
+            sessions: shared.web_sessions(),
             admin: shared.web_admin(),
             clash_sock: cfg.web.clash_sock.clone(),
 

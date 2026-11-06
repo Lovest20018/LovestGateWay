@@ -110,6 +110,7 @@ pub struct SharedState {
     web_admin: AdminHandle,
 
     web_token: TokenHandle,
+    web_sessions: Arc<sb_web::session::Sessions>,
 
     openport_auth: ArcSwap<Option<Arc<(String, String)>>>,
 
@@ -196,6 +197,7 @@ impl SharedState {
             net_cleanday: AtomicU8::new(stats_net_cleanday(cfg)),
             web_admin: admin_handle(AdminAcl::new(cfg.web.admin_cidr.nets().to_vec())),
             web_token: token_handle(derive_secret(&cfg.web.password)),
+            web_sessions: Arc::new(sb_web::session::Sessions::default()),
             openport_auth: ArcSwap::from_pointee(cfg.inbound_proxy.auth.clone().map(Arc::new)),
             openport_listen: ArcSwap::from_pointee(Vec::new()),
             node_dist: Arc::new(NodeDist::new()),
@@ -245,6 +247,10 @@ impl SharedState {
 
     pub fn web_token(&self) -> TokenHandle {
         self.web_token.clone()
+    }
+
+    pub fn web_sessions(&self) -> Arc<sb_web::session::Sessions> {
+        self.web_sessions.clone()
     }
 
     pub fn openport_auth(&self) -> Option<Arc<(String, String)>> {
@@ -318,8 +324,10 @@ impl SharedState {
         self.openport_auth
             .store(Arc::new(new_cfg.inbound_proxy.auth.clone().map(Arc::new)));
 
-        self.web_token
-            .store(Arc::new(derive_secret(&new_cfg.web.password)));
+        let new_token = derive_secret(&new_cfg.web.password);
+        let password_changed = self.web_token.load().as_str() != new_token;
+        self.web_token.store(Arc::new(new_token));
+        if password_changed { self.web_sessions.revoke_all(); }
 
         self.outbound.reload(new_cfg);
 
@@ -1814,11 +1822,17 @@ mod tests {
         assert!(state.web_admin().load().allows(lan));
         assert!(state.openport_auth().is_none());
         assert_eq!(**state.web_token().load(), derive_secret("old-pass"));
+        let now = std::time::Instant::now();
+        let raw = state.web_sessions().issue(&derive_secret("old-pass"), None, now).unwrap();
+        let lease = state.web_sessions().authorize(&raw, &derive_secret("old-pass"), now).unwrap();
+        state.reload(&c);
+        assert!(state.web_sessions().authorize(&raw, &derive_secret("old-pass"), now).is_some());
 
         c.web.admin_cidr = crate::config::CidrAcl::parse("192.168.0.0/16").unwrap();
         c.inbound_proxy.auth = Some(("u".into(), "pw".into()));
         c.web.password = "new-pass".into();
         state.reload(&c);
+        assert!(*lease.revoked.borrow(), "password changes revoke immediately without waiting for an HTTP request");
         assert!(!state.web_admin().load().allows(lan));
         assert_eq!(**state.web_token().load(), derive_secret("new-pass"));
         assert!(
@@ -1835,6 +1849,10 @@ mod tests {
         );
         let auth = state.openport_auth().expect("auth set");
         assert_eq!(auth.as_ref(), &("u".into(), "pw".into()));
+
+        c.web.password = "old-pass".into();
+        state.reload(&c);
+        assert!(state.web_sessions().authorize(&raw, &derive_secret("old-pass"), now).is_none(), "changing back cannot resurrect an old session");
 
         c.web.admin_cidr = crate::config::CidrAcl::default();
         c.inbound_proxy.auth = None;

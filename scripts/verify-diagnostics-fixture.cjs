@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Isolated diagnostics/recovery UI acceptance. Every request uses synthetic data. */
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');
 const {execFileSync}=require('node:child_process'),{createHash}=require('node:crypto');
@@ -19,10 +20,11 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
   const posts=[],jobReads=[],pageOffsets=[];
   let holdInfo=false,heldInfoReads=0;const heldInfo=[];
   const states={paopaogw:{active:true,enabled:true},'paopaogw-settings':{active:true,enabled:true},'paopaogw-api':{active:false,enabled:false}};
+  const sessions=sessionFixture({proof:()=>expectedSecret});
   await page.route(origin+'/**',async route=>{
     const request=route.request(),target=new URL(request.url()).pathname,reply=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
     if(target.startsWith('/sniffbox/')){
-      if(request.headers().authorization!=='Bearer '+expectedSecret)return reply({error:'LOGIN_REQUIRED'},401);
+      if(!sessions.authorized(request))return reply({error:'LOGIN_REQUIRED'},401);
       if(target==='/sniffbox/info'){if(holdInfo){heldInfoReads++;await new Promise(resolve=>heldInfo.push(resolve));}return reply({mode:'free',clash_version:'fixture'});}
       if(target==='/sniffbox/settings/config')return reply({...defaults,revision:'a'.repeat(64),assets:[],source:{native_ppsub:false,local_policy:false},mihomo_installed:true});
       if(target==='/sniffbox/settings/status')return reply({management:{state:'loaded',recent:[]},running_mode:'free',source:{local_policy:false}});
@@ -57,6 +59,7 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
     try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
   });
   try{
+    await sessions.install(page);
     await page.goto(origin+'/ui/#/settings');await page.getByLabel('流量记录上限',{exact:true}).waitFor();await page.locator('#shell-nav [data-route="diagnostics"]').click();
     const rootView=page.locator('.diagnostic-page'),status=rootView.locator('> [role="status"]'),preview=page.locator('.diagnostic-preview');
     const diagnosticTabs=rootView.getByRole('tablist',{name:'诊断与恢复分栏',exact:true});

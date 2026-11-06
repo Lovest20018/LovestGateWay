@@ -1,3 +1,4 @@
+const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Subscription operation model: isolated browser fixture, no live gateway writes. */
 const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
@@ -28,6 +29,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
       rule_providers:{counts:{before:0,after:0,added:0,removed:0,modified:0},changed:false},rules:{counts:{before:1,after:2,added:1,removed:0,modified:0},changed:true,unit:'lines'},features:{changed:true,modified:1,changed_keys:['global_monitor']}};
     let providerRows=[],providerPolls=0,editorConfigReads=0;
     const kind=()=>model.source.native_ppsub?'ppsub':'clash_patch';
+    const sessions=sessionFixture({proof:()=> 'fixture-token'});
     await page.route(origin+'/**',async route=>{
       const request=route.request(),target=new URL(request.url()).pathname,body=request.method()==='POST'?request.postDataJSON():null;
       const reply=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
@@ -66,6 +68,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
       }
       try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
+    await sessions.install(page);
     await page.goto(origin+'/ui/#/subscriptions');
     const ready=()=>page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded');
     await ready();
