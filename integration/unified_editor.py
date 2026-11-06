@@ -123,7 +123,13 @@ def candidate(admin, body, preview=None):
                 actual = json.loads(layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json').read_bytes())
                 if stable(actual) != stable(submitted): raise ManagementError('PPSUB_NOT_LOADED')
     system = System(layout, preserve_units={'paopaogw-subscription'})
-    if effective is not None: system.validate_policy(effective)
+    if effective is not None:
+        system.validate_policy(effective)
+        from mihomo_reload import plan
+        reload_plan = plan(snapshot['document'], effective)
+        if reload_plan['eligible'] and features == feature_options(snapshot['baseline']):
+            options['mihomo_update'] = {'before': snapshot['document'], 'after': effective}
+        if preview is not None: preview['mihomo_reload'] = reload_plan
     return layout, system, patch, options, verify
 
 
@@ -151,6 +157,7 @@ def handle(admin, body):
         result = ConfigManager(layout, system).apply(patch, body['settings_revision'], dry_run=True, **options)
         result['editor_changed'] = any(raw is not None for raw in options.values())
         result['save_target'] = 'local_policy' if body['edit_kind'] == 'clash_patch' else 'ppsub'
+        if preview.get('mihomo_reload'): result['mihomo_reload'] = preview['mihomo_reload']
         return complete_preview(result, layout, system, preview['summary'], preview['source'])
     with admin.lock:
         if admin.operation and admin.operation.get('id') == body['operation_id']:

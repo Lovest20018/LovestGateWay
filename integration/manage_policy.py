@@ -203,7 +203,10 @@ class PolicyManager:
             snapshot, merged, policy, effective = self.candidate(body)
             changed = merged != snapshot['document']
             if changed: self.system.validate_policy(effective)
-            return {'status': 'preview', 'action': 'restart' if changed else 'none',
+            from mihomo_reload import plan
+            reload_plan = plan(snapshot['document'], effective)
+            return {'status': 'preview', 'action': ('mihomo_reload' if reload_plan['eligible'] else 'restart') if changed else 'none',
+                    'mihomo_reload': reload_plan,
                     'base_revision': snapshot['revision'], 'changed': changed,
                     'counts': {'groups': len(merged.get('proxy-groups', [])), 'rules': len(merged.get('rules', [])),
                                'providers': len(merged.get('rule-providers', {}))}}
@@ -217,8 +220,10 @@ class PolicyManager:
                 current = self.reader()
                 if any(current.get(key) != merged.get(key) for key in policy['sections']):
                     raise ManagementError('POLICY_NOT_LOADED')
+            from mihomo_reload import plan
+            options = {'mihomo_update': {'before': snapshot['document'], 'after': effective}} if plan(snapshot['document'], effective)['eligible'] else {}
             result = ConfigManager(self.layout, self.system).apply({}, snapshot['revision'],
-                policy_update=(json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode(), verify=verify)
+                policy_update=(json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode(), verify=verify, **options)
             with self.lock: self.snapshots.pop(body['snapshot_id'], None)
             return result
 
