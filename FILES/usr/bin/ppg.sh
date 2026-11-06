@@ -550,14 +550,22 @@ load_clash() {
     fi
     unset PPGW_FORCE_CLOSEALL
     select_start_node="$1"
-    if [ "${PPGW_DEBIAN:-0}" = "1" ] && [ -n "$saved_start_node" ]; then
-        restored_start_node=$(ppgw -now_node 2>"$PPGWTTY")
-        if [ "$restored_start_node" = "$saved_start_node" ]; then
-            # Native store-selected restored the choice. Keep it until the
-            # ordinary health loop detects a failure; do not race it with a
-            # fresh fastest-node selection on every managed/cold restart.
+    if [ "${PPGW_DEBIAN:-0}" = "1" ] && [ -n "$saved_start_node" ] && [ "$select_start_node" = "yes" ]; then
+        # The controller can answer before Mihomo applies profile.store-selected.
+        # Wait for the actual choice instead of racing it with speed selection.
+        if printf '%s' "$saved_start_node" | /usr/bin/python3 /usr/local/lib/paopaogw/clash_selection.py --wait-restored /tmp/clash.sock /tmp/clash.yaml 2>"$PPGWTTY"; then
             select_start_node=no
             log "Preserved saved Clash node selection." succ
+        else
+            selection_wait_rc=$?
+            if [ "$selection_wait_rc" = "3" ]; then
+                log "Saved Clash node is no longer available; selecting a node." warn
+            else
+                # A timeout or failed read does not prove that the choice was
+                # removed. Leave it to native restore and the normal health loop.
+                select_start_node=no
+                log "Saved Clash selection is unconfirmed; skipped startup speed selection." warn
+            fi
         fi
     fi
     if pidof clash >/dev/null 2>&1 && [ "$select_start_node" = "yes" ]; then
