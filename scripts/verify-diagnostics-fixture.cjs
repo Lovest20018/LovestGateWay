@@ -67,13 +67,15 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
     await rootView.getByText('策略变更 · 已应用',{exact:true}).waitFor();await rootView.getByText('配置变更 · 未变化',{exact:true}).waitFor();
     assert.equal(await rootView.locator('#diagnostic-recent details').count(),0);
     report.recent.push({source:'settings',kind:'config',status:'failed',phase:'complete',updated_at:1,recovery_required:false,error:'MANAGEMENT_BUSY'});
+    report.runtime.state='running';
     await rootView.getByRole('button',{name:'刷新诊断',exact:true}).click();await rootView.getByText(/该次操作因其他管理任务占用未执行/).waitFor();
+    assert.equal(await rootView.locator('.diagnostic-runtime.ok').count(),1);assert.equal(await rootView.locator('.diagnostic-service.unknown').count(),1);
     await page.screenshot({path:path.join(root,'dist/diagnostics-unified-recent.png')});
     await diagnosticTabs.getByRole('tab',{name:'备份与恢复',exact:true}).click();
     await rootView.getByText('全部备份文件校验通过',{exact:true}).first().waitFor();
     assert.equal(await rootView.locator('.diagnostic-backup').nth(1).getByRole('button',{name:'预览恢复',exact:true}).isDisabled(),true);
     assert.equal(await rootView.locator('img').count(),0,'untrusted report/backup fields are text');assert.equal(await page.evaluate(()=>window.xss),undefined);
-    const counts=pageOffsets.length;await page.waitForResponse(response=>new URL(response.url()).pathname==='/sniffbox/info');assert.equal(pageOffsets.length,counts,'idle runtime polling must not revalidate backup contents');
+    const counts=pageOffsets.length;await Promise.all([page.waitForResponse(response=>new URL(response.url()).pathname==='/sniffbox/info'),page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')))]);assert.equal(pageOffsets.length,counts,'idle runtime polling must not revalidate backup contents');
     await rootView.getByRole('button',{name:'下一页',exact:true}).click();await rootView.getByText('20261103120000-0123456789ab',{exact:true}).waitFor();await rootView.getByRole('button',{name:'上一页',exact:true}).click();await rootView.getByText(backupId,{exact:true}).waitFor();assert.deepEqual(pageOffsets.slice(-2),[10,0]);
     const downloading=page.waitForEvent('download');await rootView.getByRole('button',{name:'导出脱敏报告',exact:true}).click();const file=await downloading;assert.equal(file.suggestedFilename(),'lovestgateway-diagnostics.json');const exported=JSON.parse(await fs.readFile(await file.path(),'utf8'));assert.deepEqual(Object.keys(exported).sort(),['schema','generated_at','services','runtime','recovery','source','recent','causes'].sort());assert.doesNotMatch(JSON.stringify(exported),/do-not-export|private\.invalid|<img|private-service/);assert.equal(exported.causes.includes('OPERATION_FAILED'),true);
     await rootView.getByRole('button',{name:'预览中断事务恢复',exact:true}).click();await status.filter({hasText:'没有待恢复的中断事务'}).waitFor();assert.equal(await preview.isVisible(),false);
