@@ -2,6 +2,7 @@ import {readFile,writeFile,mkdir,copyFile,unlink} from 'node:fs/promises';
 import {resolve,dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
+import {pruneScopedStyles} from './css-prune.mjs';
 const here=dirname(fileURLToPath(import.meta.url)), root=resolve(here,'..');
 const textFile=async path=>(await readFile(path,'utf8')).replaceAll('\r\n','\n');
 export async function build(output=join(here,'dist')) {
@@ -20,7 +21,7 @@ export async function build(output=join(here,'dist')) {
   if(!bundle) throw Error('Upstream public entry point missing');
   for(const name of [bundle,'TwemojiCountryFlags.woff2','lovestgateway.svg','paopaogateway.svg']) await copyFile(join(original,name),join(output,name));
   const styles=[...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
-  await emit('theme.css',styles);
+  await emit('theme.css',pruneScopedStyles(styles));
   for(const name of ['gateway.js','gateway.css','ppsub_panel.js']) await emit(name,await textFile(join(root,'integration',name)));
   for(const name of ['model.js','url-privacy.js','auth.js','icons.js','proxy-model.js','rule-model.js','monitor-model.js','connection-model.js','traffic-model.js','log-model.js','region-catalog.js','region-engine.js','monitor-client.js','monitor-view.js','editor.js','diagnostics.js','overview.js','proxies.js','rules.js','connections.js','traffic.js','distribution.js','logs.js','region.js','shell.js']) {
     let source=await textFile(join(here,'src',name));

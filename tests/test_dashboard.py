@@ -29,6 +29,11 @@ class DashboardTests(unittest.TestCase):
             self.assertNotIn('legacy-bridge.js',manifest['assets'])
             for view in ['Connections','Traffic','Distribution','Logs','Region']:
                 self.assertIn('mount'+view,shell)
+            theme=(output/manifest['assets']['theme.css']).read_text(encoding='utf-8')
+            self.assertLess(len(theme.encode('utf-8')),25000)
+            self.assertNotRegex(theme,r'\.svelte-[a-z0-9]+')
+            self.assertIn('@font-face',theme)
+            self.assertIn(':root[data-theme=dark]',theme)
             for label,name in manifest['assets'].items():
                 if label.endswith('.js'):
                     source=(output/name).read_text(encoding='utf-8')
