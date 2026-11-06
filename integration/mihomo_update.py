@@ -23,7 +23,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, build_opener, HTTPRedirectHandler, ProxyHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler, ProxyHandler
 
 API = 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest'
 CODE = Path('/usr/local/lib/paopaogw')
@@ -134,6 +134,60 @@ class OfficialRedirect(HTTPRedirectHandler):
         return super().redirect_request(request, fp, code, message, headers, target)
 
 
+def gateway_socket(host, port, timeout):
+    """Keep the destination domain intact through the core's private SOCKS ingress."""
+    deadline = time.monotonic() + timeout
+    stream = socket.create_connection(('127.0.0.1', 1079), min(timeout, 1))
+
+    def remaining():
+        value = deadline - time.monotonic()
+        if value <= 0: raise TimeoutError()
+        return value
+
+    def receive(size):
+        result = bytearray()
+        while len(result) < size:
+            stream.settimeout(remaining())
+            data = stream.recv(size - len(result))
+            if not data: raise ConnectionError('GATEWAY_SOCKS_CLOSED')
+            result.extend(data)
+        return bytes(result)
+
+    try:
+        name = host.encode('idna')
+        if not 1 <= len(name) <= 253: raise ValueError('INVALID_RELEASE_HOST')
+        stream.settimeout(remaining())
+        stream.sendall(b'\x05\x01\x00')
+        if receive(2) != b'\x05\x00': raise ConnectionError('GATEWAY_SOCKS_AUTH')
+        stream.sendall(b'\x05\x01\x00\x03' + bytes([len(name)]) + name + port.to_bytes(2, 'big'))
+        reply = receive(4)
+        if reply[:3] != b'\x05\x00\x00': raise ConnectionError('GATEWAY_SOCKS_CONNECT')
+        size = {1: 4, 4: 16}.get(reply[3])
+        if reply[3] == 3: size = receive(1)[0]
+        if not size: raise ConnectionError('GATEWAY_SOCKS_ADDRESS')
+        receive(size + 2)
+        stream.settimeout(remaining())
+        return stream
+    except BaseException:
+        stream.close()
+        raise
+
+
+class GatewayHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        stream = gateway_socket(self.host, self.port, self.timeout)
+        try:
+            self.sock = self._context.wrap_socket(stream, server_hostname=self.host)
+        except BaseException:
+            stream.close()
+            raise
+
+
+class GatewayHTTPSHandler(HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(GatewayHTTPSConnection, request, context=self._context)
+
+
 def rate_limit_retry_at(headers):
     now = time.time()
     candidates = [now + 60]
@@ -150,7 +204,21 @@ def rate_limit_retry_at(headers):
 def fetch(url, limit):
     if not official_url(url):
         raise ValueError('UNTRUSTED_RELEASE_URL')
-    opener = build_opener(ProxyHandler({}), OfficialRedirect())
+    try:
+        return fetch_once(url, limit, gateway=True)
+    except ReleaseFetchError as error:
+        # Fresh installs may have no core. HTTP/rate-limit/TLS failures are final;
+        # only a failed network path is retried directly, with the same checks.
+        if str(error) not in {'RELEASE_DNS_FAILED', 'RELEASE_NETWORK_TIMEOUT',
+                             'RELEASE_NETWORK_FAILED', 'RELEASE_DOWNLOAD_INTERRUPTED'}:
+            raise
+    return fetch_once(url, limit, gateway=False)
+
+
+def fetch_once(url, limit, gateway):
+    handlers = [ProxyHandler({}), OfficialRedirect()]
+    if gateway: handlers.append(GatewayHTTPSHandler())
+    opener = build_opener(*handlers)
     request = Request(url, headers={'User-Agent': 'LovestGateWay-Debian', 'Accept': 'application/vnd.github+json'})
     try:
         with opener.open(request, timeout=30) as response:

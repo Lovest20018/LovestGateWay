@@ -11,3 +11,4 @@
 /sniffbox/**/*.rs text eol=lf
 /.github/** text eol=lf
 /.githooks/* text eol=lf
+/install.sh text eol=lf

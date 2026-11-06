@@ -152,6 +152,19 @@ class ReleaseTests(RepositoryTests):
         self.export(prefixed=False)
         self.assertEqual(self.validate()['source_manifest_sha256'], self.source_sha)
 
+    def test_online_installer_is_required_and_bound_to_release_commit(self):
+        installer = b'#!/bin/sh\necho fixture\n'
+        (self.root / 'install.sh').write_bytes(installer)
+        self.commit_id = self.commit('add online installer')
+        self.export()
+        self.source_sha = release.verify_source(self.source, self.commit_id, self.version)
+        self.make_package()
+        with self.assertRaisesRegex(ValueError, 'Online installer'): self.validate()
+        (self.directory / 'install.sh').write_bytes(installer)
+        self.assertIn('install.sh', self.validate()['assets'])
+        (self.directory / 'install.sh').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'Online installer'): self.validate()
+
     def test_rejects_external_checksum_mismatch(self):
         self.source.with_suffix('.gz.sha256').write_text('0' * 64 + '  ' + self.source.name, encoding='ascii')
         with self.assertRaisesRegex(ValueError, 'external checksum'):

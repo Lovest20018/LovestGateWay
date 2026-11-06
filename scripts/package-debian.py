@@ -74,7 +74,7 @@ def main():
         for filename in ('LICENSE',):
             copy(ROOT / filename, filename)
         for filename in ('debian-deployment.md', 'debian-management.md', 'debian-web-settings.md',
-                         'browser-sessions.md', 'mihomo-reload-assessment.md', 'mihomo-selection-window.md',
+                         'browser-sessions.md', 'mihomo-reload-assessment.md', 'mihomo-selection-window.md', 'reference/debian-runtime.md',
                          'integration-api-v1.md', 'openapi-v1.json'):
             copy(ROOT / 'docs' / filename, 'docs/' + filename)
         (stage / 'lib/build.json').write_text(json.dumps({'version': args.version,

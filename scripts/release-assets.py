@@ -95,6 +95,13 @@ def validate(directory, version, commit, ledger):
         build = release.build
     if verify_source(source, commit, version, normalize_lf=normalize_lf) != build['source_sha256']:
         raise ValueError('Package source manifest does not match the source archive')
+    try: installer = git('show', commit + ':install.sh')
+    except subprocess.CalledProcessError: installer = None  # historical releases predate the online entry point
+    if installer is not None:
+        path = directory / 'install.sh'
+        if path.is_symlink() or not path.is_file() or path.read_bytes() != installer:
+            raise ValueError('Online installer does not match the release commit')
+        assets[path.name] = {'sha256': file_sha(path), 'bytes': path.stat().st_size}
     return {'schema': 1, 'version': version, 'tag': 'v' + version, 'commit': commit,
             'architecture': 'amd64', 'source_manifest_sha256': build['source_sha256'],
             'source_export': 'git-tree-checkout-crlf' if normalize_lf else 'git-archive',

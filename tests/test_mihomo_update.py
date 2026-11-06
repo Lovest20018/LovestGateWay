@@ -9,7 +9,7 @@ import gzip
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 import mihomo_update as update
 
@@ -46,6 +46,47 @@ class UpdaterTests(unittest.TestCase):
                  patch.object(update, 'version_of', return_value='v0.0.1'), patch.object(update, 'fetch', return_value=b'bad'):
                 with self.assertRaisesRegex(ValueError, 'CHECKSUM'):updater.update()
             self.assertEqual(binary.read_bytes(), b'old')
+
+    def test_gateway_network_failure_falls_back_without_inheriting_environment_proxy(self):
+        gateway, direct = Mock(), Mock()
+        gateway.open.side_effect = URLError(ConnectionRefusedError())
+        direct.open.return_value.__enter__ = Mock(return_value=Mock(read=Mock(return_value=b'official')))
+        direct.open.return_value.__exit__ = Mock(return_value=False)
+        with patch.object(update, 'build_opener', side_effect=[gateway, direct]) as build:
+            self.assertEqual(update.fetch(update.API, 128), b'official')
+        self.assertEqual(build.call_count, 2)
+        self.assertTrue(any(isinstance(h, update.GatewayHTTPSHandler) for h in build.call_args_list[0].args))
+        self.assertFalse(any(isinstance(h, update.GatewayHTTPSHandler) for h in build.call_args_list[1].args))
+        self.assertTrue(all(call.args[0].proxies == {} for call in build.call_args_list))
+
+    def test_gateway_http_and_tls_errors_do_not_switch_network_routes(self):
+        headers = Message(); headers['X-RateLimit-Remaining'] = '0'
+        for error in (HTTPError(update.API, 403, 'limited', headers, None), URLError(ssl.SSLCertVerificationError())):
+            with self.subTest(kind=type(error).__name__), patch.object(update, 'build_opener') as build:
+                build.return_value.open.side_effect = error
+                with self.assertRaises(update.ReleaseFetchError): update.fetch(update.API, 128)
+                self.assertEqual(build.call_count, 1)
+
+    def test_gateway_socks_keeps_domain_and_handles_fragmented_replies(self):
+        stream = Mock()
+        data = bytearray(b'\x05\x00\x05\x00\x00\x01' + bytes(6))
+        def receive(size):
+            value = bytes(data[:1]); del data[:1]; return value
+        stream.recv.side_effect = receive
+        with patch.object(update.socket, 'create_connection', return_value=stream) as connect:
+            self.assertIs(update.gateway_socket('api.github.com', 443, 5), stream)
+        connect.assert_called_once_with(('127.0.0.1', 1079), 1)
+        self.assertEqual(stream.sendall.call_args_list[1].args[0], b'\x05\x01\x00\x03\x0eapi.github.com\x01\xbb')
+        stream.close.assert_not_called()
+        connection = update.GatewayHTTPSConnection('api.github.com', timeout=5)
+        self.assertTrue(connection._context.check_hostname)
+        self.assertEqual(connection._context.verify_mode, ssl.CERT_REQUIRED)
+
+    def test_gateway_socks_rejection_closes_connection(self):
+        stream = Mock(); stream.recv.return_value = b'\x05\xff'
+        with patch.object(update.socket, 'create_connection', return_value=stream):
+            with self.assertRaises(ConnectionError): update.gateway_socket('api.github.com', 443, 5)
+        stream.close.assert_called_once()
 
     def test_failed_health_restores_previous_core(self):
         compressed = gzip.compress(self.elf())
