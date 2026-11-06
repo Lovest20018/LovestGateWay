@@ -1,6 +1,6 @@
 # Dashboard source
 
-Build with Node.js 18 or later. No npm install, package downloads, framework compiler, or production Node server is required.
+Use Node.js 24 for builds and tests, matching Debian CI. The full test suite uses browser APIs such as global Web Crypto that are not enabled by default in Node.js 18. No npm install, package downloads, framework compiler, or production Node server is required.
 
 ```sh
 npm --prefix frontend run build
