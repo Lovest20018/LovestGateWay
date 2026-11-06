@@ -10,7 +10,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
   memory:{total:8*1024**3,available:5*1024**3,sniffbox_rss:40*1024**2,sniffbox_uptime:600,clash_rss:80*1024**2,clash_uptime:599,cloudflared_rss:20*1024**2,cloudflared_uptime:500},
   cpu:{model:'Fixture CPU 4-core',cores:4,freq_min:800,freq_max:4200,usage:12.5,per_core:[10,15,20,5],freq:2400,freq_per_core:[2200,2400,2600,2400],temp:51.5,temp_sensor:'Fixture sensor',sniffbox:2.5,clash:3.5,cloudflared:1},
   interfaces:[{name:'ens18',ipv4:['192.0.2.10/24'],ipv6:['2001:db8::10/64'],gateway:'192.0.2.1',mac:'00:11:22:33:44:55',model:'Fixture NIC',speed:1000,duplex:'full',link:true},
-    {name:'<img src=x onerror="window.untrustedRan=true">',ipv4:[],ipv6:[],link:false}],
+    {name:'docker0',ipv4:[],ipv6:[],mac:'00:00:00:00:00:00',link:true},{name:'veth-test',gateway:'192.0.2.1',ipv4:[],ipv6:[],link:true},{name:'<img src=x onerror="window.untrustedRan=true">',ipv4:[],ipv6:[],link:false}],
   dns:{trusted:{ip:'1.1.1.1',port:53},ex_dns:['9.9.9.9'],system:['192.0.2.1']},acl:{admin_cidr:['192.0.2.0/24'],proxy_cidr:['2001:db8::/32']},
   features:{net_rec:true,dns_burn:false,openport:false,openport_port:1080,udp_enable:true,max_rec:9000,net_cleanday:7},
   route:{block_bittorrent:true,block_quic:false,block_unknown:false},fakeip:{cidr:'198.18.0.0/15',mapped:82},
@@ -57,7 +57,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     assert.equal(await overview.locator('[data-field=memory-total]').innerText(),'8.0 GB','dynamic nested fields must retain static totals');
     assert.equal(await overview.locator('[data-field=cpu-model]').innerText(),'Fixture CPU 4-core');
     assert.equal(await overview.locator('[data-cores]>.overview-core').count(),4);
-    assert.equal(await overview.locator('[data-interfaces] tr').count(),2);
+    assert.equal(await overview.locator('[data-interfaces] tr').count(),3);assert.equal(await overview.locator('.overview-virtual').getAttribute('open'),null);assert.match(await overview.locator('.overview-virtual summary').textContent(),/虚拟接口（1）/);assert.equal(await overview.locator('.overview-virtual tr').count(),1);
     assert.equal(await overview.locator('[data-interfaces] img').count(),0);assert.equal(await page.evaluate(()=>window.untrustedRan),undefined);
     await overview.locator('canvas').first().hover();await overview.locator('.overview-chart-tip').first().waitFor({state:'visible'});
     await capture('overview-source-desktop.png');
@@ -78,8 +78,9 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     const stoppedAt=dynamic;await page.waitForTimeout(1200);assert.equal(dynamic,stoppedAt,'leaving overview must stop source polling');
     await page.goBack();await page.waitForURL('**/#/overview');await page.locator('#overview-page').waitFor();
     assert.equal(await page.locator('#runtime-panel').isVisible(),false);assert.equal(await page.evaluate(()=>window.documentIdentity),'overview-source');
+    await page.waitForFunction(()=>Number(document.querySelector('[data-chart=cpu] .overview-chart')?.dataset.samples)>0);const retainedSamples=Number(await overview.locator('[data-chart=cpu] .overview-chart').getAttribute('data-samples'));
     await page.goForward();await page.waitForURL('**/#/proxies');await page.locator('#proxies-page').getByRole('heading',{name:'代理',exact:true}).waitFor();
-    await page.locator('#shell-nav [data-route=overview]').click();
+    await page.locator('#shell-nav [data-route=overview]').click();await page.locator('#overview-page').waitFor();assert.ok(Number(await overview.locator('[data-chart=cpu] .overview-chart').getAttribute('data-samples'))>=retainedSamples,'returning with the same session retains recent samples');
     for(const width of [390,320]){
       await page.setViewportSize({width,height:900});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
