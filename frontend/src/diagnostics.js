@@ -29,6 +29,7 @@ const errors={
   JOB_ID_REUSED:'任务身份冲突，请保留任务号并核对管理记录。',
 };
 const message=code=>Object.hasOwn(errors,code)?errors[code]:'操作未完成，请核对下方诊断与最近操作记录。';
+export const operationError=row=>row?.error==='MANAGEMENT_BUSY'&&!row.recovery_required&&!['queued','running','applying'].includes(row.status)?'该次操作因其他管理任务占用未执行。':message(row?.error);
 const time=value=>Number.isFinite(value)?new Date(value*1000).toLocaleString():'未知';
 const el=(tag,attrs={},children=[])=>{const node=document.createElement(tag);for(const[key,value]of Object.entries(attrs)){if(key==='text')node.textContent=value;else if(key.startsWith('on'))node.addEventListener(key.slice(2),value);else node.setAttribute(key,value);}node.append(...children);return node;};
 const button=(text,onclick,extra={})=>el('button',{type:'button',class:'btn',text,onclick,...extra});
@@ -118,7 +119,7 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
     const source={none:'未配置订阅',local_yaml:'本地 YAML',remote_yaml:'远程完整配置',native_ppsub:'原生 PPsub',unknown:'尚未确认'};
     const policy={active:'本地覆盖生效',none:'无本地覆盖',invalid:'本地策略无法校验',source_mismatch:'本地策略与当前来源不一致',unknown:'尚未确认'};
     const causes=(value.causes||[]).map(code=>el('li',{text:message(code)}));
-    const recent=(value.recent||[]).slice(0,20).map(row=>el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:(kinds[row.kind]||'管理操作')+' · '+({succeeded:'成功',failed:'失败',interrupted:'中断',running:'执行中',queued:'等待中',applying:'应用中',applied:'已应用',unchanged:'未变化',complete:'已完成'}[row.status]||'待核对')})]),el('p',{class:'subtext',text:time(row.updated_at)+(row.error?' · '+message(row.error):'')} )]));
+    const recent=(value.recent||[]).slice(0,20).map(row=>el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:(kinds[row.kind]||'管理操作')+' · '+({succeeded:'成功',failed:'失败',interrupted:'中断',running:'执行中',queued:'等待中',applying:'应用中',applied:'已应用',unchanged:'未变化',complete:'已完成'}[row.status]||'待核对')})]),el('p',{class:'subtext',text:time(row.updated_at)+(row.error?' · '+operationError(row):'')} )]));
     overview.replaceChildren(card('当前状态',[el('p',{class:'diagnostic-runtime',text:runtime[value.runtime?.state]||runtime.unknown}),el('ul',{class:'diagnostic-services'},rows),el('p',{class:'subtext',text:'采样时间：'+time(value.generated_at)})]),card('配置来源与故障',[el('p',{text:(source[value.source?.kind]||source.unknown)+' · '+(policy[value.source?.policy_state]||policy.unknown)}),el('p',{text:value.recovery?.required?'存在待核对事务：'+(phases[value.recovery.phase]||'状态未知'):'没有已记录的待恢复事务。'}),causes.length?el('ul',{},causes):el('p',{text:'本次诊断未发现已记录的故障。'}),el('p',{class:'subtext',text:'本页核对网关本机状态；客户端 DNS、路由和透明转发仍需从对应客户端验证。'})]));
     recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'最近 '+recent.length+' 条管理、订阅与核心维护记录。'})]),recent.length?el('ol',{class:'operation-list'},recent):el('p',{class:'empty-state',text:'暂无操作记录。'}));
   }

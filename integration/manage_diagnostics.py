@@ -234,7 +234,8 @@ class Diagnostics:
                                'policy_state': policy.get('state') if policy.get('state') in {'none', 'invalid', 'active', 'source_mismatch'} else 'unknown',
                                'overridden_sections': len(policy.get('sections', []))}
         except Exception: value['causes'].append('STATE_SAMPLE_UNAVAILABLE')
-        value['causes'] = sorted(set(value['causes'] + [row['error'] for row in value['recent'] if 'error' in row]))
+        value['causes'] = sorted(set(value['causes'] + [row['error'] for row in value['recent']
+            if 'error' in row and (row.get('recovery_required') or row.get('status') in {'queued', 'running', 'applying'})]))
         return value
 
     def _check_expected(self, journal):
