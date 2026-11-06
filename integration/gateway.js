@@ -14,6 +14,7 @@
     let model, category = 'access', subscriptionPage = 'editor', subscriptionControls = null, sourceDraft = null, sourceDetails = null, sourceExpanded = false;
     let passwordConfirmation = '';
     let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0, corePolling = null;
+    let gatewayUpdate = null, gatewayPolling = null;
     const bridge = {setEditorBusy: busy => { if(editorBusy!==busy){editorBusy=busy;updateDirty();} },
       syncEditor: data => {
         if (!data.settings_revision) throw Error('配置已变化，请重新读取后再保存。');
@@ -159,6 +160,15 @@
     };
     const modeNames = {free: '直连', socks5: 'SOCKS5', ovpn: 'OpenVPN', yaml: '本地 YAML', suburl: '订阅'};
     const errors = {
+      GATEWAY_RELEASE_CHECK_FAILED: '无法读取 GitHub 正式发行信息，请检查网络或稍后重试。尚未更改网关。',
+      GATEWAY_DOWNLOAD_FAILED: '发行包下载失败，请检查网络或稍后重新检查。尚未执行安装。',
+      GATEWAY_RELEASE_INVALID: '发行包校验未通过，已停止安装。',
+      GATEWAY_UPDATE_CHECK_REQUIRED: '版本检查已过期或当前版本已变化，请重新检查并确认。',
+      GATEWAY_UPDATE_START_FAILED: '后台更新任务未能启动，请检查系统服务后重试。',
+      GATEWAY_INSTALL_FAILED: '升级未完成，请在“诊断与恢复”核对事务及服务状态。',
+      GATEWAY_INSTALLED_VERSION_MISMATCH: '安装后的版本尚未核对通过，请在“诊断与恢复”检查。',
+      GATEWAY_UPDATE_FAILED: '网关更新未完成，请核对运行状态后重试。',
+      DEPLOY_FAILED_ROLLED_BACK: '升级验收失败，已恢复安装前的版本与配置。',
       LOGIN_REQUIRED: '登录已失效，请先返回管理面板重新登录。',
       CONFIG_REVISION_CONFLICT: '配置已被其他操作修改。请刷新配置后重新编辑。',
       STALE_POLICY_SNAPSHOT: '运行配置或订阅已变化，请重新载入策略后再编辑。',
@@ -427,6 +437,7 @@
           ['ini', 'net_rec'], ['ini', 'max_rec'], ['ini', 'net_cleanday'], ['ini', 'traffic_window_min'],
         ])]));
       } else if (category === 'maintenance') {
+        result.push(gatewayUpdateCard());
         result.push(card('维护计划', '按需开启 Mihomo 自动更新，调度时区同时用于订阅和维护。', '01', [fields([
           ['maintenance', 'auto_update'], ['service', 'TZ'],
         ])]));
@@ -582,7 +593,7 @@
     const statusHost = el('section', {class:'ppgw-management', 'aria-label':'运行状态'});
     const recentHost = el('section', {class:'management-history card glass', 'aria-label':'最近操作'});
     root.querySelector('#content').before(navigationHost, statusHost);
-    const phaseNames = {queued:'等待执行',validating:'校验配置',fetching:'获取订阅',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置',complete:'已结束',interrupted:'结果待核实'};
+    const phaseNames = {queued:'等待执行',checking:'检查发行版',downloading:'下载发行包',installing:'备份并安装',validating:'校验配置',fetching:'获取订阅',saving:'保存配置',applying:'应用配置',verifying:'校验与验证',rolling_back:'恢复原配置',complete:'已结束',interrupted:'结果待核实'};
     const statusNames = {succeeded:'成功',complete:'成功',applied:'已应用',unchanged:'内容未变',failed:'失败',interrupted:'结果待核实',running:'进行中',applying:'进行中',queued:'等待执行'};
     let statusFingerprint = '', checking = false;
     function renderManagement() {
@@ -599,7 +610,7 @@
       const heading = el('p',{role:'status',text:'运行模式：' + (modeNames[model?.running_mode] || model?.running_mode || '暂时无法确认') + coreText + ' · ' + (names[data?.state] || names.unknown) + policyText});
       const records = el('ol',{class:'operation-list'});
       for (const row of rows) {
-        const kind = {config:'配置修改',policy:'策略保存',policy_reset:'恢复原策略',asset:'资源导入',refresh_nodes:'订阅更新',check:'Mihomo 检查',update:'Mihomo 更新',rollback:'Mihomo 回退',scheduled:'自动维护'}[row.kind] || '订阅与策略';
+        const kind = {gateway_check:'网关版本检查',gateway_update:'网关升级',config:'配置修改',policy:'策略保存',policy_reset:'恢复原策略',asset:'资源导入',refresh_nodes:'订阅更新',check:'Mihomo 检查',update:'Mihomo 更新',rollback:'Mihomo 回退',scheduled:'自动维护'}[row.kind] || '订阅与策略';
         const when = new Date((row.started_at || row.created_at || row.updated_at)*1000).toLocaleString();
         const outcome={core_inactive:'已保存待加载',staged:'已暂存待加载',retained:'部分获取失败，沿用旧节点',unchanged:'内容未变，无需重启',updated:'已更新并加载'}[row.outcome];
         const errorText=row.error==='MANAGEMENT_BUSY'?'该次操作因其他管理任务占用未执行':row.error?message(row.error):'';
@@ -877,6 +888,107 @@
       corePolling = pollCore(record).finally(() => { corePolling = null; running = Boolean(pendingCore()); updateDirty(); });
       return corePolling;
     }
+    function pendingGateway() {
+      try { const value = JSON.parse(sessionStorage.getItem('lovestgateway-release-job') || 'null'); return /^[0-9a-f]{32}$/.test(value?.id || '') ? value : null; } catch { return null; }
+    }
+    function gatewayUpdateCard() {
+      const box = card('LovestGateWay 更新', '检查本项目 GitHub 正式版；确认升级后保留配置、密码、订阅、节点和启动设置。', 'GW', [
+        el('div', {id:'gateway-release-state', role:'status', 'aria-live':'polite'}),
+        el('div', {class:'button-row'}, [
+          el('button', {id:'gateway-release-check', type:'button', class:'button secondary', text:'检查网关更新', onclick:()=>gatewayAction('check')}),
+          el('button', {id:'gateway-release-install', type:'button', class:'button primary', text:'升级 LovestGateWay', disabled:true, onclick:()=>gatewayAction('update')}),
+          el('button', {id:'gateway-release-query', type:'button', class:'button secondary', text:'查询更新结果', onclick:()=>resumeGateway()}),
+        ]),
+      ]);
+      later(async () => {
+        paintGateway();
+        try { gatewayUpdate = await api('gateway-update'); paintGateway(); if (gatewayUpdate.operation && ['queued','running'].includes(gatewayUpdate.operation.status) && !gatewayPolling) await followGateway(gatewayUpdate.operation.id); }
+        catch (error) { if ($('gateway-release-state')) $('gateway-release-state').textContent = error.message; }
+      }, 0);
+      return box;
+    }
+    function paintGateway() {
+      const host = $('gateway-release-state'); if (!host) return;
+      const data = gatewayUpdate, op = data?.operation;
+      const lines = [el('p', {class:'subtext', text:'当前版本：' + (data?.installed?.version || '读取中…')})];
+      if (data?.candidate) {
+        const candidate = data.candidate;
+        lines.push(el('p', {text:`最新正式版：v${candidate.version} · ${data.available ? '可升级（检查结果保留 30 分钟）' : '无需升级或检查已过期'}`}));
+        if (/^https:\/\/github\.com\/Lovest20018\/LovestGateWay\/releases\/tag\/v[0-9]+\.[0-9]+\.[0-9]+$/.test(candidate.release_url || ''))
+          lines.push(el('a', {href:candidate.release_url, target:'_blank', rel:'noopener noreferrer', text:'查看此版本更新说明 ↗'}));
+      }
+      if (op) {
+        lines.push(el('p', {text: op.error ? message(op.error) : op.status === 'succeeded' ? (op.action === 'update' ? '升级成功；请刷新页面加载新版界面。' : data.available ? '发现新版本，请查看更新说明后确认升级。' : '检查完成；当前没有可升级的更新版本。') : `${phaseNames[op.stage] || '处理中'}，刷新页面不会重复提交。`}));
+        if (op.backup) lines.push(el('p', {class:'subtext', text:'升级前备份：' + op.backup}));
+        if (op.action === 'update' && op.status === 'succeeded') lines.push(el('button', {type:'button', class:'button secondary', text:'刷新新版页面', onclick:()=>location.reload()}));
+      }
+      host.replaceChildren(...lines);
+      const busy = Boolean(pendingGateway()) || ['queued','running'].includes(op?.status);
+      const check = $('gateway-release-check'), install = $('gateway-release-install');
+      if (check) { check.disabled = busy || running; check.dataset.wasDisabled = busy ? '1' : '0'; }
+      if (install) { install.disabled = busy || running || !data?.available; install.dataset.wasDisabled = busy || !data?.available ? '1' : '0'; }
+    }
+    async function followGateway(id) {
+      if (gatewayPolling || !/^[0-9a-f]{32}$/.test(id)) return gatewayPolling;
+      sessionStorage.setItem('lovestgateway-release-job', JSON.stringify({id}));
+      running = true; updateDirty(); paintGateway();
+      gatewayPolling = (async () => {
+        for (let attempt = 0; attempt < 450 && !stopped; attempt++) {
+          if (attempt) await pause(2000);
+          try {
+            gatewayUpdate = await api('gateway-update/jobs/' + id); paintGateway();
+            const op = gatewayUpdate.operation;
+            if (!op || ['queued','running'].includes(op.status)) continue;
+            if (pendingGateway()?.id === id) sessionStorage.removeItem('lovestgateway-release-job');
+            notice(op.error ? message(op.error) : op.action === 'update' ? 'LovestGateWay 升级完成，请刷新页面。' : '网关版本检查完成。', op.error ? 'error' : 'success');
+            if (op.action === 'update' && op.status === 'succeeded') await refreshRuntime();
+            return;
+          } catch (error) {
+            if (stopped) return;
+            if (error.status === 401) { notice(message('LOGIN_REQUIRED'), 'error'); return; }
+            if (error.code === 'JOB_NOT_FOUND') {
+              notice('未查到此任务，提交结果尚未确认；不会自动重试安装。请先核对后台状态。', 'error');
+              $('notice').append(el('button', {type:'button',class:'btn',text:'核对后台状态',onclick:async()=>{
+                try {
+                  gatewayUpdate = await api('gateway-update');
+                  sessionStorage.removeItem('lovestgateway-release-job');
+                  paintGateway();
+                  if (['queued','running'].includes(gatewayUpdate.operation?.status)) await followGateway(gatewayUpdate.operation.id);
+                  else notice('后台没有进行中的网关更新，可重新检查版本。');
+                } catch (error) { notice(error.message, 'error'); }
+              }}));
+              return;
+            }
+            notice('网关更新期间暂时断连，正在重新连接并查询同一任务；请勿重复安装。');
+          }
+        }
+        if (!stopped) notice('更新结果尚未确认，任务号已保留。请点击“查询更新结果”继续核对。');
+      })().finally(() => { gatewayPolling = null; running = false; updateDirty(); paintGateway(); });
+      return gatewayPolling;
+    }
+    async function resumeGateway() {
+      try {
+        const record = pendingGateway();
+        if (record) return await followGateway(record.id);
+        gatewayUpdate = await api('gateway-update'); paintGateway();
+        if (['queued','running'].includes(gatewayUpdate.operation?.status)) await followGateway(gatewayUpdate.operation.id);
+      } catch (error) { notice(error.message, 'error'); }
+    }
+    async function gatewayAction(action) {
+      if (!coreAvailable() || pendingGateway()) return;
+      if (action === 'update' && (!gatewayUpdate?.available || !confirm(`升级 LovestGateWay 至 v${gatewayUpdate.candidate.version}？\n将先下载并校验发行包，再备份和重启网关。转发和管理页面会短暂断开；升级失败会恢复原版本。`))) return;
+      const id = identifier(), body = {id, ...(action === 'update' ? {candidate:gatewayUpdate.candidate.token} : {})};
+      // Retain identity before sending. A lost response is resolved by GET, never another POST.
+      sessionStorage.setItem('lovestgateway-release-job', JSON.stringify({id}));
+      running = true; updateDirty(); paintGateway();
+      try { await api('gateway-update/' + action, body); }
+      catch (error) {
+        if (error.status && error.status < 500) {
+          sessionStorage.removeItem('lovestgateway-release-job'); running = false; updateDirty(); paintGateway(); notice(error.message, 'error'); return;
+        }
+      }
+      await followGateway(id);
+    }
     function coreAvailable() {
       if (dirty.size || running || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) { notice('请先完成当前配置操作。', 'error'); return false; }
       return true;
@@ -1032,6 +1144,7 @@
       const record = pending();
       if (record) { running = true; updateDirty(); if (record.address && new URL(record.address).origin !== location.origin) { showReconnect(record.address); running = false; updateDirty(); } else pollJob(record); }
       else if (pendingCore()) followCore(pendingCore());
+      else resumeGateway();
     });
     return destroy;
   }

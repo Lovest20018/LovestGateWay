@@ -137,6 +137,22 @@ class WebSettingsTests(unittest.TestCase):
         with call('/api/status',token='a'*64) as response:
             self.assertEqual(response.status,200)
             self.assertNotIn('settings',json.load(response))
+        self.admin.gateway_update.start = lambda identifier: None
+        for path in ('/api/gateway-update/check', '/api/gateway-update/update'):
+            with self.assertRaises(HTTPError) as denied: call(path, {'id':'9'*32})
+            self.assertEqual(denied.exception.code, 401); denied.exception.close()
+            with self.assertRaises(HTTPError) as denied: call(path, {'id':'9'*32}, 'a'*64, 'https://foreign.test')
+            self.assertEqual(denied.exception.code, 403); denied.exception.close()
+            with self.assertRaises(HTTPError) as denied: call(path, token='a'*64)
+            self.assertEqual(denied.exception.code, 404); denied.exception.close()
+        with call('/api/gateway-update/check', {'id':'9'*32}, 'a'*64) as response:
+            self.assertEqual(response.status, 202)
+            self.assertEqual(json.load(response)['status'], 'queued')
+        with call('/api/gateway-update/jobs/'+'9'*32, token='a'*64) as response:
+            self.assertEqual(json.load(response)['operation']['id'], '9'*32)
+        with call('/api/gateway-update', token='a'*64) as response:
+            self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            self.assertNotIn('request',json.load(response)['operation'])
         with self.assertRaises(HTTPError) as denied: call('/api/recheck', {})
         self.assertEqual(denied.exception.code, 401); denied.exception.close()
         with self.assertRaises(HTTPError) as denied: call('/api/recheck', {}, 'a'*64, 'https://foreign.test')

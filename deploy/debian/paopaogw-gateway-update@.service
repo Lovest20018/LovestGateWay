@@ -1,0 +1,12 @@
+[Unit]
+Description=LovestGateWay confirmed release update (%i)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -B /usr/local/lib/paopaogw/manage_gateway_update.py %i
+Environment=TZ=Asia/Shanghai
+UMask=0077
+PrivateTmp=yes
+ProtectHome=yes
+TimeoutStartSec=900

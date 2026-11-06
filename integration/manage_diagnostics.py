@@ -23,13 +23,16 @@ HEX = re.compile(r'^[0-9a-f]{64}$')
 BACKUP_ID = re.compile(r'^[0-9]{14}-[0-9a-f]{12}$')
 KINDS = {'manual', 'config', 'deploy', 'restore-rescue', 'asset', 'policy', 'policy-reset', 'subscription'}
 OP_KINDS = {'config', 'policy', 'policy_reset', 'asset', 'backup', 'restore', 'recover',
-            'check', 'update', 'rollback', 'install-local', 'scheduled', 'apply'}
+            'check', 'update', 'rollback', 'install-local', 'scheduled', 'apply', 'gateway_check', 'gateway_update'}
 STATUSES = {'queued', 'running', 'applying', 'succeeded', 'failed', 'interrupted',
             'applied', 'unchanged', 'complete'}
-PHASES = {'queued', 'prepared', 'validating', 'saving', 'applying', 'verifying', 'rolling_back',
+PHASES = {'checking', 'downloading', 'queued', 'prepared', 'validating', 'saving', 'applying', 'verifying', 'rolling_back',
           'stopping', 'restoring', 'installing', 'complete', 'rolled_back', 'conflict',
           'rollback_verifying', 'rollback_unconfirmed', 'interrupted'}
-CODES = {'OPERATION_FAILED', 'APPLY_FAILED_ROLLED_BACK', 'ROLLBACK_UNCONFIRMED',
+CODES = {'GATEWAY_RELEASE_CHECK_FAILED', 'GATEWAY_DOWNLOAD_FAILED', 'GATEWAY_RELEASE_INVALID',
+         'GATEWAY_UPDATE_CHECK_REQUIRED', 'GATEWAY_UPDATE_START_FAILED', 'GATEWAY_INSTALL_FAILED',
+         'GATEWAY_INSTALLED_VERSION_MISMATCH', 'GATEWAY_UPDATE_FAILED',
+         'OPERATION_FAILED', 'APPLY_FAILED_ROLLED_BACK', 'ROLLBACK_UNCONFIRMED',
          'EXTERNAL_CONFIG_CONFLICT', 'RECOVERY_REQUIRED', 'INTERRUPTED_CHECK_RECOVERY',
          'READINESS_TIMEOUT', 'API_READINESS_TIMEOUT', 'SERVICE_STATE_MISMATCH',
          'CONFIG_REVISION_CONFLICT', 'MANAGEMENT_BUSY', 'BACKUP_CHECKSUM_MISMATCH',
@@ -191,7 +194,7 @@ class Diagnostics:
                 if not isinstance(value, dict): continue
                 status = value.get('status')
                 interrupted = status in {'queued', 'running', 'applying'} and alive(value.get('execution')) is False
-                row = {'source': value.get('source') if value.get('source') in {'settings', 'subscription', 'mihomo'} else 'unknown',
+                row = {'source': value.get('source') if value.get('source') in {'settings', 'subscription', 'mihomo', 'gateway'} else 'unknown',
                        'kind': value.get('kind') if value.get('kind') in OP_KINDS else 'unknown',
                        'status': 'interrupted' if interrupted else status if status in STATUSES else 'unknown',
                        'phase': 'interrupted' if interrupted else value.get('phase') if value.get('phase') in PHASES else 'unknown',

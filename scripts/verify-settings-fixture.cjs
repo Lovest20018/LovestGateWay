@@ -75,6 +75,7 @@ async function main() {
       if (target === '/sniffbox/subscription/config') return route.fulfill({contentType: 'application/json', body: JSON.stringify({config: editorConfig, edit_kind: 'clash_patch', snapshot_id: 'fixture-snapshot', base_revision: model.revision, settings_revision: model.revision, write_allowed: true, node_choices: ['N1'], notice: 'Synthetic editor'})});
       if (target.startsWith('/sniffbox/settings/')) {
         assert.equal(sessions.authorized(req),true);
+        if (target === '/sniffbox/settings/gateway-update') return route.fulfill({contentType:'application/json',body:JSON.stringify({installed:{version:'0.2.1'},candidate:null,available:false,operation:null})});
         const body = req.method() === 'POST' ? req.postDataJSON() : undefined;
         let data, status = 200;
         if (target.endsWith('/recheck')) {
