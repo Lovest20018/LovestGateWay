@@ -19,6 +19,13 @@ pub async fn send<W: AsyncWrite + Unpin>(
     body: &[u8],
     keep_alive: bool,
 ) -> io::Result<()> {
+    send_representation(w, status, reason, extra, body, false, keep_alive).await
+}
+
+async fn send_representation<W: AsyncWrite + Unpin>(
+    w: &mut W, status: u16, reason: &str, extra: &[(&str, &str)], body: &[u8],
+    head_only: bool, keep_alive: bool,
+) -> io::Result<()> {
     let mut head = format!("HTTP/1.1 {status} {reason}\r\n");
     head.push_str(&format!("Content-Length: {}\r\n", body.len()));
     head.push_str(if keep_alive {
@@ -35,7 +42,7 @@ pub async fn send<W: AsyncWrite + Unpin>(
     head.push_str(SECURITY_HEADERS);
     head.push_str("\r\n");
     w.write_all(head.as_bytes()).await?;
-    w.write_all(body).await?;
+    if !head_only { w.write_all(body).await?; }
     w.flush().await
 }
 
@@ -125,9 +132,32 @@ pub async fn file<W: AsyncWrite + Unpin>(
     .await
 }
 
+pub async fn encoded_file<W: AsyncWrite + Unpin>(
+    w: &mut W, content_type: &str, cache_control: &str, body: &[u8],
+    gzip: bool, head_only: bool, keep_alive: bool,
+) -> io::Result<()> {
+    let mut headers = vec![("Content-Type", content_type), ("Cache-Control", cache_control), ("Vary", "Accept-Encoding")];
+    if gzip { headers.push(("Content-Encoding", "gzip")); }
+    send_representation(w, 200, "OK", &headers, body, head_only, keep_alive).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn encoded_get_and_head_have_matching_representation_metadata() {
+        for head_only in [false, true] {
+            let mut out = Vec::new();
+            encoded_file(&mut out, "text/css", "no-cache", b"fixture-gzip", true, head_only, true).await.unwrap();
+            let wire = String::from_utf8(out).unwrap();
+            assert!(wire.contains("Content-Length: 12\r\n"));
+            assert!(wire.contains("Content-Encoding: gzip\r\n"));
+            assert!(wire.contains("Vary: Accept-Encoding\r\n"));
+            assert!(wire.contains("Content-Type: text/css\r\n"));
+            assert_eq!(wire.ends_with("\r\n\r\n"), head_only);
+        }
+    }
 
     #[tokio::test]
     async fn static_assets_and_entry_keep_security_headers_and_framing() {
