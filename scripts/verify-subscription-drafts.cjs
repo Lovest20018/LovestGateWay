@@ -67,9 +67,14 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
       try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
     await page.goto(origin+'/ui/#/subscriptions');
-    const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);
+    const ready=()=>page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded');
     await ready();
     const health=page.locator('.monitor [data-field="enable"]').first();
+    const save=page.locator('[data-ppsub-apply]');assert.equal(await save.isDisabled(),true);
+    const groupName=page.locator('.groups .item [data-field="name"]').first(),originalName=await groupName.inputValue();
+    await groupName.fill(originalName+' edited');assert.equal(await save.isEnabled(),true);
+    await groupName.fill(originalName);assert.equal(await save.isDisabled(),true);
+
     await page.locator('.editor-schedule > summary').click();
     const interval=page.getByLabel('订阅更新间隔',{exact:true});
     const navigation=page.locator('#shell-nav');
@@ -172,5 +177,5 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
       structuredPreview:true,sourceOverridesVisible:true,safeTextNames:true,applicationPlans:true,mobilePreviewFits:true,pageErrors:errors};
     await fs.writeFile(path.join(root,'dist/subscription-drafts-browser-evidence.json'),JSON.stringify(result,null,2)+'\n');
     console.log(JSON.stringify(result));
-  }finally{await browser.close();}
-})().catch(error=>{console.error(error);process.exitCode=1;});
+  }finally{for(const context of browser.contexts())for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await browser.close();}
+})().then(()=>process.stdout.write('',()=>process.exit(0)),error=>{console.error(error);process.stderr.write('',()=>process.exit(1));});

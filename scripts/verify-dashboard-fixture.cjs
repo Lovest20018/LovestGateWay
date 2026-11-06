@@ -118,7 +118,7 @@ async function exercise(browser, kind) {
       await reload.click();
     }
     await page.locator('.groups').getByRole('button', {name:'删除',exact:true}).last().waitFor();
-    await page.waitForFunction(() => !document.querySelector('[data-ppsub-apply]').disabled);
+    await page.waitForFunction(() => document.querySelector('.source-editor')?.dataset.editorState==='loaded');
     const pageTabs=page.getByRole('tablist',{name:'订阅与策略分栏',exact:true});
     assert.deepEqual(await pageTabs.getByRole('tab').allTextContents(),['策略编辑','配置来源','最近操作']);
     const groupName=page.locator('.groups > .item [data-field=name]').first(),savedName=await groupName.inputValue();
@@ -151,7 +151,7 @@ async function exercise(browser, kind) {
     await layoutCheck();
     await page.evaluate(()=>localStorage.setItem('ppgw-theme','light'));
     await page.reload();await page.evaluate(()=>{window.fixtureDocument='unchanged';});
-    await page.waitForFunction(()=>!document.querySelector('[data-ppsub-apply]')?.disabled&&document.querySelector('.source-editor .groups'));
+    await page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded'&&document.querySelector('.source-editor .groups'));
     await page.setViewportSize({width:1863,height:878});await layoutCheck();
     await page.screenshot({path:path.join(root,'dist/subscription-unified-'+kind+'-desktop.png'),animations:'disabled'});
     for(const [tab,name]of [['配置来源','source'],['最近操作','recent']]){
@@ -188,7 +188,7 @@ async function exercise(browser, kind) {
       page.once('dialog', dialog => dialog.accept());
       const reread = page.waitForResponse(origin + '/sniffbox/subscription/config');
       await reload.click(); await reread;
-      await page.waitForFunction(() => !document.querySelector('[data-ppsub-apply]').disabled);
+      await page.waitForFunction(() => document.querySelector('.source-editor')?.dataset.editorState==='loaded');
       assert.equal(await name.inputValue(), native.subs[0].name);
       const choosing = page.waitForEvent('filechooser');
       await page.getByRole('button', {name:'导入 PPsub',exact:true}).click();

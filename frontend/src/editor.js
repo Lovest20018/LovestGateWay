@@ -30,7 +30,7 @@ export function mountEditor(host) {
     finally{if(!stopped&&sequence===importSequence)upload.value='';}
   };
   header.append(menu('导出编辑内容',download),menu('导入 PPsub',()=>upload.click()),button('重新读取',()=>window.ppgwPpsub.loadCurrent(importConfig)),upload);
-  root.append(header,importStatus,body);host.append(root);
+  const skeleton=el('div',{class:'editor-skeleton',role:'status',text:'正在读取配置…'});body.hidden=true;root.append(header,importStatus,skeleton,body);host.append(root);
   function field(row,key,label,type='text',options={}) {
     const id='editor-field-'+(++serial),wrap=el('label',{class:'editor-field'+(type==='checkbox'?' editor-check':''),for:id}),input=el(type==='lines'||type==='textarea'?'textarea':type==='select'?'select':'input',{id,'data-field':key});
     wrap.append(el('span',{text:label}),input);input.className='input';
@@ -109,6 +109,6 @@ export function mountEditor(host) {
     if(!full)body.append(advanced(doc,'完整配置与扩展字段（JSON）'));
   }
   function importConfig(value){doc=documentModel(value);render();}
-  render();destroy=window.ppgwPpsub.mount({header,exportConfig:()=>exported(doc),importConfig,providers:()=>doc.subs});
+  destroy=window.ppgwPpsub.mount({header,setLoading:(loading,loaded)=>{root.dataset.editorState=loading?'loading':loaded?'loaded':'error';root.setAttribute('aria-busy',String(loading));body.hidden=loading||!loaded;skeleton.hidden=!loading&&loaded;skeleton.textContent=loading?'正在读取配置…':'当前配置尚未读取，请重新读取。';},exportConfig:()=>exported(doc),importConfig,providers:()=>doc.subs});
   return ()=>{stopped=true;++importSequence;destroy();root.remove();};
 }

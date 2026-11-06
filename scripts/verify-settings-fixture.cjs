@@ -400,11 +400,11 @@ async function main() {
     await page.locator('.ppgw-gateway').waitFor({state: 'detached'});
     await page.waitForTimeout(600);
     assert.deepEqual(errors, []);
-    await context.close();
+    for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await context.close();
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
       sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, appearanceSelection: true, mobileMenu: true,
       unmountDuringFetch: true, observerApiSettings: true, recheckPreservesDraft:true, staleCheckDistinguished:true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
-  } finally { await browser.close(); }
+  } finally { for(const context of browser.contexts())for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await browser.close(); }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; });
+main().then(()=>process.stdout.write('',()=>process.exit(0)),error=>{console.error(error);process.stderr.write('',()=>process.exit(1));});

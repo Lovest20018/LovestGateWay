@@ -65,7 +65,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
       try{return route.fulfill({body:await fs.readFile(path.join(output,target==='/ui/'?'index.html':path.basename(target))),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
     await page.goto(origin+'/ui/#/subscriptions');
-    const ready=()=>page.waitForFunction(()=>document.querySelector('[data-ppsub-apply]')&&!document.querySelector('[data-ppsub-apply]').disabled);
+    const ready=()=>page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded');
     await ready();
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();
     assert.equal(await page.getByLabel('订阅更新间隔',{exact:true}).count(),0);
