@@ -1,4 +1,5 @@
 import {clone,documentModel,exported,move,groupMode,setGroupMode,ruleType,setRuleType} from './model.js';
+import {guardUrlInput} from './url-privacy.js';
 
 export function mountEditor(host) {
   let doc=documentModel(),destroy,serial=0,editRevision=0,importSequence=0,stopped=false;
@@ -57,7 +58,7 @@ export function mountEditor(host) {
       item.append(tools,...fields(row,full));if(!full)item.append(advanced(row));area.append(item);
     });area.append(el('div',{class:'editor-section-footer'},[add]));return area;
   }
-  function subscription(row,full){return [el('div',{class:'row editor-grid'},[field(row,'name','名称','text',{readOnly:full}),field(row,'url','订阅链接','url')]),...(!full?[field(row,'isforced','强制覆盖节点名称','checkbox')]:[])];}
+  function subscription(row,full){const url=field(row,'url','订阅链接','url');guardUrlInput(url.querySelector('input'),()=>row.url);return [el('div',{class:'row editor-grid'},[field(row,'name','名称','text',{readOnly:full}),url]),...(!full?[field(row,'isforced','强制覆盖节点名称','checkbox')]:[])];}
   function chips(row,key,label,{choices=[],placeholder='添加',display=value=>value}={}) {
     const wrap=el('div',{class:'editor-token-row',role:'group','aria-label':label}),tokens=el('div',{class:'editor-tokens'}),entry=el('div',{class:'editor-token-entry',hidden:''}),input=el('input',{class:'input','aria-label':'新增'+label,'data-field':key,placeholder}),add=button('＋ '+placeholder,()=>{entry.hidden=false;add.hidden=true;input.focus();});
     const values=()=>Array.isArray(row[key])?row[key]:[];

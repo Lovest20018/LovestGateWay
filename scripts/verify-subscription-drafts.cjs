@@ -146,9 +146,9 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await subscriptions();await reload(true);await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
     await subscriptions();await ready();
-    await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.locator('#source-url').fill('https://example.com/pending-source');
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.locator('.source-switch').getByRole('button',{name:'修改地址',exact:true}).click();await page.locator('#source-url').fill('https://example.com/pending-source');
     await settings();assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),true);
-    await subscriptions();await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.equal(await page.locator('#source-url').inputValue(),'https://example.com/pending-source');await page.getByRole('button',{name:'取消切换',exact:true}).click();await settings();
+    await subscriptions();await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.equal(await page.locator('#source-url').inputValue(),'');await page.locator('.source-switch').getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await page.locator('#source-url').inputValue(),'https://example.com/pending-source');await page.getByRole('button',{name:'取消切换',exact:true}).click();await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
     // A browser left open receives another browser/scheduler's provider result,
     // while preserving its unsaved source and provider schedule drafts.

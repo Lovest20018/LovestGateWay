@@ -510,7 +510,7 @@
         kind === 'remote' ? '“策略编辑”中的修改叠加为本地策略，主订阅继续按计划更新。提供商链接属于配置内部资源。' :
         kind === 'ppsub' ? '在“策略编辑”中维护 PPsub 配置，可添加、删除或重命名订阅提供商。' : '当前使用其他出站模式。';
       const section = card('当前配置来源', description, '', [el('div', {class:'source-summary'}, [
-        el('strong', {class:'source-kind', text:names[kind]}), el('code', {class:'source-location', text:locationText})])]);
+        el('strong', {class:'source-kind', text:names[kind]}), kind==='remote'||kind==='ppsub'&&!model.source.native_ppsub?window.ppgwUrlPrivacy.urlSummary(locationText,copyValue):el('code', {class:'source-location', text:locationText})])]);
       section.classList.add('source-card');
       const explanation = sourceExplanation(sourceDetails);
       if (explanation) section.append(explanation);
@@ -525,6 +525,7 @@
         url.oninput = () => { draft.url=url.value; draft.changed=true; sourceDraft=draft; };
         form.append(el('div',{class:'field wide'},[el('label',{htmlFor:url.id,text:'主配置订阅地址'}),url,
           el('small',{text:'下载整份 Clash / Mihomo 配置的地址；配置内的提供商链接在“策略编辑”中维护。'})]));
+        window.ppgwUrlPrivacy.guardUrlInput(url,()=>draft.url);
       } else if (draft.kind === 'yaml') {
         const file = el('select',{id:'source-yaml'},model.assets.filter(name=>/\.ya?ml$/.test(name)).map(value=>el('option',{value,text:value,selected:value===draft.yaml})));
         if (!file.options.length) file.append(el('option',{value:'',text:'请先导入 YAML 文件'}));
@@ -554,7 +555,7 @@
             if ([...form.querySelectorAll('input,select')].some(node=>!node.reportValidity())) return;
             const target = {mode:draft.kind==='yaml'?'yaml':'suburl',fast_node:'no'};
             if (draft.kind==='yaml') { if (!$('source-yaml').value) throw Error('请先导入 YAML 文件。'); target.yamlfile=$('source-yaml').value; }
-            else if (draft.kind==='remote') target.suburl=$('source-url').value;
+            else if (draft.kind==='remote') target.suburl=draft.url;
             else { if (!draft.ppsub && !model.source.native_ppsub) throw Error('请先选择 PPsub JSON 文件。'); target.suburl='ppsub@http://127.0.0.1/ppsub.json'; }
             const body={base_revision:model.revision,patch:{ini:target},reset_source:draft.reset,
               ...(draft.kind==='ppsub'&&draft.ppsub?{source_ppsub:draft.ppsub}:{})};

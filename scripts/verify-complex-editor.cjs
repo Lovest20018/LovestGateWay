@@ -110,7 +110,7 @@ async function exercise(browser, kind, width) {
     await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
     assert.equal(await groups.last().locator('[data-field=name]').inputValue(),editedName);
     const provider=page.locator('.subs > .item').nth(7);
-    await provider.locator('[data-field=url]').fill('https://example.com/edited-provider');
+    await provider.getByRole('button',{name:'修改地址',exact:true}).click();await provider.locator('[data-field=url]').fill('https://example.com/edited-provider');
     if(kind==='ppsub') {
       await provider.locator('[data-provider-mode]').selectOption('auto');
       await provider.locator('[data-provider-interval]').fill('7h');

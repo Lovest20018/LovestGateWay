@@ -1,4 +1,5 @@
 import {icon} from './icons.js';
+import * as urlPrivacy from './url-privacy.js';
 import {mountEditor} from './editor.js';
 import {sha256,storedSecret,storeSecret} from './auth.js';
 import {mountDiagnostics,pendingRecoveryJob} from './diagnostics.js';
@@ -11,6 +12,7 @@ import {mountDistribution} from './distribution.js';
 import {mountLogs} from './logs.js';
 import {mountRegion} from './region.js';
 const monitors={connections:mountConnections,traffic:mountTraffic,distribution:mountDistribution,logs:mountLogs,region:mountRegion};
+window.ppgwUrlPrivacy=urlPrivacy;
 let monitor=null,monitorHost=null,monitorRoute='';
 const app=document.getElementById('app'),routes=[['overview','概览'],['proxies','代理'],['rules','规则'],['connections','连接'],['traffic','流量'],['distribution','分布'],['logs','日志'],['region','区域'],['subscriptions','订阅与策略'],['settings','网关设置'],['diagnostics','诊断与恢复']];
 let info=null,gateway=null,editor=null,workspace=null,diagnostics=null,diagnosticHost=null,overview=null,overviewHost=null,proxies=null,proxyHost=null,rules=null,rulesHost=null,route='',timer=null,authenticated=false;
