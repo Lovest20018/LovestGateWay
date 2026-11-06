@@ -74,6 +74,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     });
     async function capture(name){await page.evaluate(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(evidence,name),fullPage:true,animations:'disabled'});}
     await page.goto(origin+'/ui/#/proxies');
+    if(!baseline){await page.locator('.proxy-current').first().waitFor();assert.match(await page.locator('.proxy-current').first().evaluate(node=>getComputedStyle(node).fontFamily),/^"Twemoji Country Flags"/);}
     if(baseline){await page.locator('#runtime-panel').getByText(main,{exact:true}).first().waitFor();await capture('proxies-baseline-desktop.png');await page.setViewportSize({width:320,height:900});await capture('proxies-baseline-mobile-320.png');console.log('Saved unchanged compatibility baseline');return;}
     const proxies=page.locator('#proxies-page'),group=name=>proxies.locator('.proxy-group').filter({has:page.locator('summary>strong').filter({hasText:new RegExp('^'+name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'$')})});
     const exactCard=(groupName,name)=>group(groupName).locator('.proxy-node').filter({has:page.locator('.proxy-node-name').and(page.locator('[title='+JSON.stringify(name)+']'))});
