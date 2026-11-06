@@ -94,7 +94,7 @@ def record(layout, source, value):
 
 def _record(layout, source, value):
     identifier = str(value.get('id', ''))
-    if not IDENTIFIER.fullmatch(identifier) or source not in {'settings', 'subscription', 'mihomo'}:
+    if not IDENTIFIER.fullmatch(identifier) or source not in {'settings', 'subscription', 'mihomo', 'gateway'}:
         raise ValueError('INVALID_OPERATION_ID')
     safe = public(value)
     safe['source'] = source

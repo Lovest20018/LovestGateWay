@@ -10,6 +10,9 @@ fn target(method: &str, path: &str) -> Option<String> {
         ("GET", "/sniffbox/settings/policy") => Some("/api/policy"),
         ("GET", "/sniffbox/settings/diagnostics") => Some("/api/diagnostics"),
         ("GET", "/sniffbox/settings/backups") => Some("/api/backups"),
+        ("GET", "/sniffbox/settings/gateway-update") => Some("/api/gateway-update"),
+        ("POST", "/sniffbox/settings/gateway-update/check") => Some("/api/gateway-update/check"),
+        ("POST", "/sniffbox/settings/gateway-update/update") => Some("/api/gateway-update/update"),
         ("POST", "/sniffbox/settings/preview") => Some("/api/preview"),
         ("POST", "/sniffbox/settings/policy/preview") => Some("/api/policy/preview"),
         ("POST", "/sniffbox/settings/apply") => Some("/api/apply"),
@@ -22,9 +25,11 @@ fn target(method: &str, path: &str) -> Option<String> {
     };
     if let Some(path) = fixed { return Some(path.to_string()); }
     if method == "GET" {
-        let identifier = path.strip_prefix("/sniffbox/settings/jobs/")?;
+        let (prefix, identifier) = if let Some(id) = path.strip_prefix("/sniffbox/settings/gateway-update/jobs/") {
+            ("/api/gateway-update/jobs/", id)
+        } else { ("/api/jobs/", path.strip_prefix("/sniffbox/settings/jobs/")?) };
         if identifier.len() == 32 && identifier.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
-            return Some(format!("/api/jobs/{identifier}"));
+            return Some(format!("{prefix}{identifier}"));
         }
     }
     None
@@ -66,6 +71,13 @@ mod tests {
     }
     #[test]
     fn settings_routes_never_forward_arbitrary_paths_or_queries() {
+        for (method, suffix) in [("GET", "gateway-update"), ("POST", "gateway-update/check"),
+                                ("POST", "gateway-update/update"), ("GET", "gateway-update/jobs/0123456789abcdef0123456789abcdef")] {
+            assert_eq!(target(method, &format!("/sniffbox/settings/{suffix}")).as_deref(), Some(format!("/api/{suffix}").as_str()));
+            assert!(target(if method == "GET" { "POST" } else { "GET" }, &format!("/sniffbox/settings/{suffix}")).is_none());
+            assert!(target(method, &format!("/sniffbox/settings/{suffix}?url=https://foreign.invalid")).is_none());
+        }
+        assert!(target("GET", "/sniffbox/settings/gateway-update/jobs/../../config").is_none());
         assert_eq!(target("POST", "/sniffbox/settings/apply").as_deref(), Some("/api/apply"));
         assert_eq!(target("GET", "/sniffbox/settings/status").as_deref(), Some("/api/status"));
         assert!(target("POST", "/sniffbox/settings/status").is_none());

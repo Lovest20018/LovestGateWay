@@ -54,6 +54,8 @@ class SettingsAdmin:
         self.manager = ConfigManager(self.layout, self.system)
         self.policy = PolicyManager(self.layout, self.system, policy_reader)
         self.diagnostics = Diagnostics(self.layout, self.system)
+        from manage_gateway_update import GatewayUpdate
+        self.gateway_update = GatewayUpdate(self.layout)
         self.lock = threading.Lock()
         self.active = None
         self.revision_sample = RevisionSample()
@@ -317,6 +319,9 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/api/policy': value = self.server.admin.policy.show()
             elif self.path == '/api/diagnostics': value = self.server.admin.diagnostics.report()
             elif self.path == '/api/backups': value = self.server.admin.diagnostics.backups({})
+            elif self.path == '/api/gateway-update': value = self.server.admin.gateway_update.status()
+            elif self.path.startswith('/api/gateway-update/jobs/'):
+                value = self.server.admin.gateway_update.status(self.path[len('/api/gateway-update/jobs/'):])
             elif self.path.startswith('/api/jobs/'): value = self.server.admin.job(self.path[len('/api/jobs/'):])
             else: return self.respond(404, {'error': 'NOT_FOUND'})
             self.respond(200, value)
@@ -346,6 +351,8 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/api/backups/list': value = self.server.admin.diagnostics.backups(body)
             elif self.path == '/api/restore/preview': value = self.server.admin.diagnostics.preview_restore(body)
             elif self.path == '/api/recover/preview': value = self.server.admin.diagnostics.preview_recover(body)
+            elif self.path in {'/api/gateway-update/check', '/api/gateway-update/update'}:
+                return self.respond(202, self.server.admin.gateway_update.submit(self.path.rsplit('/', 1)[1], body))
             else: return self.respond(404, {'error': 'NOT_FOUND'})
             self.respond(200, value)
         except Exception as error:

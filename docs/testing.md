@@ -39,6 +39,7 @@ cargo build --release --locked -p sniffbox
 ```sh
 python3 scripts/prepare_dashboard.py --output dist/test-ui
 node scripts/verify-settings-fixture.cjs dist/test-ui
+node scripts/verify-gateway-update-fixture.cjs dist/test-ui
 node scripts/verify-dashboard-fixture.cjs dist/test-ui
 node scripts/verify-runtime-navigation.cjs dist/test-ui
 node scripts/verify-unified-runtime.cjs dist/test-ui
