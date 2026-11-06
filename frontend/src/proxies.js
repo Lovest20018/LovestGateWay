@@ -14,7 +14,7 @@ const time=value=>{const date=new Date(typeof value==='number'?value*1000:value)
 export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   let prefs;try{prefs=preferences(JSON.parse(localStorage.getItem('ppgw-proxy-settings')||'{}'));}catch{prefs=preferences({});}
   const save=()=>{try{localStorage.setItem('ppgw-proxy-settings',JSON.stringify(prefs));}catch{}};
-  let data=snapshot({}),disposed=false,paused=false,busy=false,reading=false,resumeRequested=false,timer=null,readController=null,sequence=0,etag='',detailsVersion=0,detailName='',detailGroup='',loaded=false;
+  let data=snapshot({}),disposed=false,paused=false,busy=false,testing=false,testController=null,reading=false,resumeRequested=false,timer=null,readController=null,sequence=0,etag='',detailsVersion=0,detailName='',detailGroup='',loaded=false;
   const controllers=new Set(),views=new Map(),providerViews=new Map();
   const page=make('section',undefined,'proxies-page');page.id='proxies-page';
   const heading=make('header',undefined,'proxies-head'),title=make('h1','代理'),summary=make('span','正在读取…','proxies-summary');
@@ -30,7 +30,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const globalSort=make('select');for(const [value,text]of sorts.filter(([key])=>key!=='scoreAsc')){const option=make('option',text);option.value=value;globalSort.append(option);}globalSort.value=prefs.sort;globalSort.addEventListener('change',()=>{prefs.sort=globalSort.value;save();render();});settings.append(label('组内排序',globalSort));
   for(const [key,text]of [['optimize','优化节点名标签显示'],['hideUnavail','隐藏不可用代理'],['hideInfoNodes','隐藏疑似订阅说明节点（仅影响展示）'],['autoClose','切换后关闭旧连接'],['showUdp','显示 UDP 标记']]){const check=make('input');check.type='checkbox';check.checked=prefs[key];check.dataset.preference=key;check.addEventListener('change',()=>{prefs[key]=check.checked;save();render();});settings.append(label(text,check));}
   const curve=make('input');curve.type='range';curve.min='0';curve.max='100';curve.value=String(prefs.curve);curve.addEventListener('input',()=>{prefs.curve=Number(curve.value);save();render();});settings.append(label('延迟曲线背景（100 为关闭）',curve));
-  const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>perform('全部测速',async()=>runTests(testPlan(data,prefs)))),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
+  const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>{if(testing)testController?.abort();else runTests(()=>testPlan(data,prefs),'全部测速');}),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
   testAll.dataset.action='test-all';updateAll.dataset.action='update-all';toolbar.append(testAll,updateAll);
   const information=make('p',undefined,'proxies-notice');information.hidden=true;
   const groupHost=make('div',undefined,'proxy-groups'),providerHost=make('section',undefined,'proxy-providers'),usageHost=make('section',undefined,'proxy-usages');
@@ -52,7 +52,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   }
   page.append(heading,status,modeNotice,settings,toolbar,information,groupHost,empty,providerHost,usageHost,dialog,lockMenu);host.replaceChildren(page);
   function message(text){if(disposed)return;status.textContent=text;status.hidden=!text;}
-  function authorized(){paused=true;if(!disposed)onUnauthorized();}
+  function authorized(){paused=true;testController?.abort();if(!disposed)onUnauthorized();}
   async function request(url,{method='GET',body,signal,tag,allowNotModified=false}={}){
     if(disposed)throw new DOMException('页面已离开。','AbortError');
     const controller=new AbortController();controllers.add(controller);const cancel=()=>controller.abort();signal?.addEventListener('abort',cancel,{once:true});if(signal?.aborted)controller.abort();
@@ -67,10 +67,11 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     }finally{clearTimeout(timeout);signal?.removeEventListener('abort',cancel);controllers.delete(controller);}
   }
   function actionState(){
-    for(const control of page.querySelectorAll('[data-action]'))control.disabled=busy||!loaded||paused||control.dataset.unavailable==='true';
+    for(const control of page.querySelectorAll('[data-action]'))control.disabled=busy||!loaded||paused||control.dataset.unavailable==='true'||testing&&/test/.test(control.dataset.action);
     modeButton.disabled||=!['global','rule','direct'].includes(data.mode);
     updateAll.disabled||=!externalProviders().length;refreshButton.disabled=busy||reading;
-    testAll.disabled||=!groups(data,false).length&&!Object.keys(data.providers).length;
+    testAll.textContent=testing?'停止测速':'全部测速';
+    testAll.disabled=testing?false:testAll.disabled||!groups(data,false).length&&!Object.keys(data.providers).length;
   }
   function schedule(ms=5000){clearTimeout(timer);if(!disposed&&!paused&&!document.hidden)timer=setTimeout(()=>refresh(false),ms);}
   async function refresh(explicit=true){
@@ -131,31 +132,52 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
       if(disposed)return;target.fixed=unlock?'':node;if(!unlock){target.now=node;const result=await closeOld(group,node);return '锁定节点完成。'+result;}
     });
   }
-  async function runTests(plans){
-    let index=0,finished=0,failures=0,firstError=null;
-    await Promise.all(Array.from({length:Math.min(plans.length,8)},async()=>{
-      while(index<plans.length&&!disposed&&!paused){
-        const {name,url}=plans[index++];
-        try{const result=await request(testPath(data,name,url)),latency=result.value?.delay;if(typeof latency!=='number'||!Number.isFinite(latency)||latency<=0)throw Error('测速超时。');
-          if(!disposed&&data.proxies[name]){const node=data.proxies[name];node.delay=latency;node.alive=true;node.extra={...node.extra,[url]:latency};node.hist=[...(node.hist||[]).slice(-7),latency];}
-        }catch(error){if(error.unauthorized){firstError=error;return;}failures++;firstError ||=error;if(!disposed&&data.proxies[name]){const node=data.proxies[name];node.delay=0;node.alive=false;node.extra={...node.extra,[url]:0};}}
-        finished++;message('正在测速 '+finished+' / '+plans.length+'，失败 '+failures+'。');
-      }
-    }));
-    if(paused)throw firstError||Error('登录已失效。');
-    if(failures)throw Error(finished+' 项已完成，'+failures+' 项测速失败。');
+  async function runTests(source,description='节点测速'){
+    if(testing||busy||paused||disposed||!loaded)return false;
+    let plans;try{plans=typeof source==='function'?source():source;}catch(error){message(description+'未完成：'+error.message);return false;}
+    if(!plans.length){message('当前筛选下没有可测速节点。');return false;}
+    const controller=new AbortController();testController=controller;testing=true;actionState();
+    let index=0,finished=0,failures=0,permission=false;
+    message('正在测速 0 / '+plans.length+'。');
+    try{
+      await Promise.all(Array.from({length:Math.min(plans.length,8)},async()=>{
+        while(index<plans.length&&!disposed&&!paused&&!controller.signal.aborted){
+          const {name,url}=plans[index++];
+          try{
+            const result=await request(testPath(data,name,url),{signal:controller.signal}),latency=result.value?.delay;
+            if(controller.signal.aborted||disposed)break;
+            if(typeof latency!=='number'||!Number.isFinite(latency)||latency<=0)throw Error('测速超时。');
+            if(data.proxies[name]){const node=data.proxies[name];node.delay=latency;node.alive=true;node.extra={...node.extra,[url]:latency};node.hist=[...(node.hist||[]).slice(-7),latency];}
+          }catch(error){
+            if(error.unauthorized||error.status===403){permission=true;controller.abort();break;}
+            if(controller.signal.aborted||disposed)break;
+            failures++;if(data.proxies[name]){const node=data.proxies[name];node.delay=0;node.alive=false;node.extra={...node.extra,[url]:0};}
+          }
+          finished++;message('正在测速 '+finished+' / '+plans.length+'，失败 '+failures+'。');
+        }
+      }));
+    }finally{
+      testing=false;if(testController===controller)testController=null;
+      if(!disposed){render();message(controller.signal.aborted?description+'已完成 '+finished+' / '+plans.length+'，已停止。'+(permission?'权限或登录状态需要核对。':''):failures?description+'未完成：'+finished+' 项已完成，'+failures+' 项测速失败。':description+'完成。');}
+    }
+    return !controller.signal.aborted;
   }
   async function testGroup(group){
-    await perform('组测速',async()=>{
+    if(testing||busy||paused||disposed)return;
+    try{
       const target=data.proxies[group],filter=filterFor(group),url=testUrl(data,group,prefs,filter.url),names=members(data,group,filter,prefs).filter(name=>!rejected(name));
-      if(!names.length)throw Error('当前筛选下没有可测速节点。');
+      if(!names.length){message('当前筛选下没有可测速节点。');return;}
       if(automatic(target)&&target.fixed){
-        if(target.smart)await request('/sniffbox/smart/fixed',{method:'POST',body:{group,node:null}});
-        else await request('/proxies/'+segment(group),{method:'DELETE'});
-        if(disposed)return;target.fixed='';
+        let unlocked=false;
+        await perform('解除锁定',async()=>{
+          if(target.smart)await request('/sniffbox/smart/fixed',{method:'POST',body:{group,node:null}});
+          else await request('/proxies/'+segment(group),{method:'DELETE'});
+          if(!disposed){target.fixed='';unlocked=true;}
+        });
+        if(!unlocked)return;
       }
-      await runTests(names.map(name=>({name,url})));
-    });
+      await runTests(names.map(name=>({name,url})),'组测速');
+    }catch(error){message('组测速未完成：'+error.message);}
   }
   function externalProviders(){return Object.keys(data.providers).filter(name=>name!=='default'&&data.providers[name].vehicleType!=='Compatible');}
   function fieldSelect(text,choices,value,change){const select=make('select');for(const [key,name]of choices){const option=make('option',name);option.value=key;select.append(option);}select.value=value;select.addEventListener('change',()=>change(select.value));return {control:select,node:label(text,select)};}
@@ -178,7 +200,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function cardFor(view,name){
     const row=make('article',undefined,'proxy-node');row.dataset.node=name;const choice=button('',event=>{if(!event.defaultPrevented)select(view.name,name);});choice.className='proxy-node-choice';choice.dataset.action='select';choice.setAttribute('aria-label','选择 '+name);
     const display=make('span',undefined,'proxy-node-name'),latency=make('span',undefined,'proxy-latency'),badges=make('span',undefined,'proxy-node-tags');choice.append(display,latency);
-    const footer=make('div',undefined,'proxy-node-footer'),details=button('详情',()=>openDetails(name,view.name)),test=button('测速',()=>perform('节点测速',async()=>runTests([{name,url:testUrl(data,view.name,prefs,filterFor(view.name).url)}]))),lock=button('锁定',()=>fixed(view.name,name));test.dataset.action='node-test';lock.dataset.action='lock';footer.append(badges,details,test,lock);
+    const footer=make('div',undefined,'proxy-node-footer'),details=button('详情',()=>openDetails(name,view.name)),test=button('测速',()=>runTests(()=>[{name,url:testUrl(data,view.name,prefs,filterFor(view.name).url)}])),lock=button('锁定',()=>fixed(view.name,name));test.dataset.action='node-test';lock.dataset.action='lock';footer.append(badges,details,test,lock);
     const curve=make('div',undefined,'proxy-sparkline');curve.setAttribute('aria-hidden','true');row.append(curve,choice,footer);
     let press=null,suppress=false;const clear=()=>{clearTimeout(press);press=null;};choice.addEventListener('pointerdown',event=>{if(event.button!==0||!lockable(data.proxies[view.name])||busy||paused)return;suppress=false;press=setTimeout(()=>{suppress=true;openLock(view.name,name,choice);},650);});
     for(const type of ['pointerup','pointercancel','pointerleave'])choice.addEventListener(type,clear);
@@ -229,7 +251,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     if(providers.length&&!providerHost.querySelector('h2'))providerHost.prepend(make('h2','代理集合'));
     for(const name of providers){const provider=data.providers[name];let view=providerViews.get(name);
       if(!view){const card=make('article',undefined,'glass proxy-provider'),kind=make('span'),count=make('span'),updated=make('small');card.dataset.provider=name;card.append(make('h3',name),kind,count,updated);
-        const update=button('更新订阅',()=>perform('更新订阅',async()=>request('/providers/proxies/'+segment(name),{method:'PUT'}))),health=button('批量测速',()=>perform('代理集合测速',async()=>{const url=testUrl(data,'',prefs);await runTests(data.providers[name].proxies.filter(node=>!rejected(node)).map(node=>({name:node,url})));}));update.dataset.action='provider-update';health.dataset.action='provider-test';card.append(update,health);providerHost.append(card);view={card,kind,count,updated};providerViews.set(name,view);}
+        const update=button('更新订阅',()=>perform('更新订阅',async()=>request('/providers/proxies/'+segment(name),{method:'PUT'}))),health=button('批量测速',()=>runTests(()=>{const url=testUrl(data,'',prefs);return data.providers[name].proxies.filter(node=>!rejected(node)).map(node=>({name:node,url}));},'代理集合测速'));update.dataset.action='provider-update';health.dataset.action='provider-test';card.append(update,health);providerHost.append(card);view={card,kind,count,updated};providerViews.set(name,view);}
       view.kind.textContent=provider.vehicleType||'代理集合';view.count.textContent=provider.proxies.length+' 个节点';view.updated.textContent=provider.updatedAt?'更新于 '+time(provider.updatedAt):'暂无更新时间';}
     usageHost.replaceChildren();const subscriptions=[...data.subs,...providers.filter(name=>data.providers[name].subscriptionInfo).map(name=>({name,...data.providers[name].subscriptionInfo}))];usageHost.hidden=!subscriptions.length;
     if(subscriptions.length){usageHost.append(make('h2','订阅用量'));for(const sub of subscriptions)usageHost.append(usageCard(sub.name,sub));}
@@ -245,12 +267,12 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
       const list=make('dl');for(const [key,value]of rows)list.append(make('dt',key),make('dd',value));
       const history=Array.isArray(node.history)?node.history.slice(-8).map(item=>item.delay):data.proxies[name]?.hist||[],historyNode=make('p','延迟历史：'+(history.length?history.map(value=>value>0?value+' ms':'超时').join(' → '):'暂无测速历史'));
       const scores=data.proxies[group]?.scores?.[name],scoreNode=make('p',scores?'智能测速打分：'+(scores.score??'—')+'；最近样本：'+(scores.samples||[]).map(value=>value===null?'失败':value+' ms').join(' → '):'');
-      const custom=make('input');custom.type='url';custom.value=testUrl(data,group,prefs,filterFor(group).url);custom.setAttribute('aria-label','节点详情测速 URL');const test=button('测速',()=>perform('节点测速',async()=>{const url=testUrl(data,'',{...prefs,testUrl:custom.value});await runTests([{name,url}]);if(dialog.open&&detailName===name)openDetails(name,detailGroup);}));test.dataset.action='detail-test';test.hidden=rejected(name);
+      const custom=make('input');custom.type='url';custom.value=testUrl(data,group,prefs,filterFor(group).url);custom.setAttribute('aria-label','节点详情测速 URL');const test=button('测速',async()=>{const completed=await runTests(()=>[{name,url:testUrl(data,'',{...prefs,testUrl:custom.value})}]);if(completed&&dialog.open&&detailName===name)openDetails(name,detailGroup);});test.dataset.action='detail-test';test.hidden=rejected(name);
       dialogBody.replaceChildren(list,historyNode,scoreNode,label('测速 URL',custom),test);actionState();
     }catch(error){if(!disposed&&current===detailsVersion)dialogBody.replaceChildren(make('p',error.message));}
   }
   const visibility=()=>{if(document.hidden){clearTimeout(timer);sequence++;readController?.abort();reading=false;}else if(!disposed&&!paused)refresh(false);};
   const focus=()=>{if(!disposed&&!paused&&!busy)refresh(false);};document.addEventListener('visibilitychange',visibility);window.addEventListener('focus',focus);
   if(initialInfo&&!['yaml','suburl'].includes(initialInfo.mode)){message('当前出站模式不使用 Mihomo 代理组，请在网关设置中选择配置来源。');summary.textContent='当前模式无代理组';toolbar.hidden=true;modeButton.hidden=true;refreshButton.hidden=true;}else if(!document.hidden)refresh();
-  return {refresh,dispose(){disposed=true;sequence++;detailsVersion++;clearTimeout(timer);for(const controller of controllers)controller.abort();for(const view of views.values())for(const card of view.cards.values())card.clear();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',focus);if(dialog.open)dialog.close();if(lockMenu.matches(':popover-open'))lockMenu.hidePopover();host.replaceChildren();}};
+  return {refresh,dispose(){disposed=true;testController?.abort();sequence++;detailsVersion++;clearTimeout(timer);for(const controller of controllers)controller.abort();for(const view of views.values())for(const card of view.cards.values())card.clear();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',focus);if(dialog.open)dialog.close();if(lockMenu.matches(':popover-open'))lockMenu.hidePopover();host.replaceChildren();}};
 }
