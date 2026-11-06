@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {formatBytes,trafficSample,poolWindow} from '../src/overview.js';
+import {formatBytes,trafficSample,poolWindow,modeLabel} from '../src/overview.js';
+
+test('mode badges distinguish native PPsub and retain unknown modes',()=>{
+ assert.equal(modeLabel({mode:'suburl'}),'订阅');assert.equal(modeLabel({mode:'suburl',ppsub:true}),'原生 PPsub');assert.equal(modeLabel({mode:'yaml'}),'本地 YAML');assert.equal(modeLabel({mode:'future'}),'future');
+});
 
 test('traffic rates require two valid monotonic samples and reset on core or counter changes',()=>{
   const first=trafficSample(null,{downloadTotal:1024,uploadTotal:512},1000,'first');

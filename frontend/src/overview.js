@@ -4,6 +4,7 @@ import {icon} from './icons.js';
 const number=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?value:null;
 const list=value=>Array.isArray(value)?value:[];
 const text=value=>typeof value==='string'?value:'—';
+export const modeLabel=data=>data?.ppsub?'原生 PPsub':({free:'直连',socks5:'SOCKS5',ovpn:'OpenVPN',yaml:'本地 YAML',suburl:'订阅'})[data?.mode]||text(data?.mode);
 export function formatBytes(value,rate=false){
   value=number(value);if(value===null)return '—';
   const units=['B','KB','MB','GB','TB','PB'],i=Math.min(units.length-1,Math.floor(Math.log(Math.max(1,value))/Math.log(1024)));
@@ -83,7 +84,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   }
   function render(){
     const m=data.memory||{},c=data.cpu||{},connections=data.connections||{},traffic=data.traffic||{},features=data.features||{},coreName=m.ovpn_rss!=null?'OpenVPN':data.clash_meta?'mihomo':'Clash';
-    put('version','LovestGateWay '+text(data.version));put('clash-version',data.clash_version?coreName+' '+text(data.clash_version):'');put('mode',text(data.mode));
+    put('version','LovestGateWay '+text(data.version));put('clash-version',data.clash_version?coreName+' '+text(data.clash_version):'');put('mode',modeLabel(data));
     const count=value=>number(value)===null?'—':String(value);
     put('traffic-down',formatBytes(traffic.downloadTotal));put('traffic-up',formatBytes(traffic.uploadTotal));put('traffic-total',formatBytes(number(traffic.downloadTotal)!==null&&number(traffic.uploadTotal)!==null?traffic.downloadTotal+traffic.uploadTotal:null));
     put('rate-down',formatBytes(previous?.downRate,true));put('rate-up',formatBytes(previous?.upRate,true));put('rate-total',formatBytes(previous?.downRate!=null&&previous?.upRate!=null?previous.downRate+previous.upRate:null,true));
