@@ -101,6 +101,8 @@ def main():
         connection_id = next(row['id'] for row in api('GET', '/connections')['connections']
                              if str(row['metadata']['sourcePort'])==str(port))
         passed('authenticated_static_proxy_and_long_lived_tcp_established')
+        api('PUT', '/proxies/url-test', {'name': 'Fixture'})
+        assert api('GET', '/proxies/url-test')['fixed']=='Fixture'
         before = deepcopy(config)
         for mode in ('rule', 'global', 'direct'):
             api('PATCH', '/configs', {'mode': mode})
@@ -121,6 +123,8 @@ def main():
             assert api('GET', '/configs')['mode']==mode
             assert api('GET', '/proxies')['proxies']['MAIN']['now']=='Fixture'
             assert api('GET', '/proxies')['proxies']['GLOBAL']['now']=='MAIN'
+            if any(row['name']=='url-test' for row in after['proxy-groups']):
+                assert api('GET', '/proxies/url-test')['fixed']=='Fixture'
             after['mode']=mode; before=after
             fresh=connect(); assert fresh; echoed(fresh, b'fresh-'+mode.encode()); fresh.close()
             passed(mode+'_reload_preserves_process_tcp_identity_mode_choices_and_new_connections')
