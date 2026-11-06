@@ -5,10 +5,97 @@ before spawning it distinguishes a real choice (including DIRECT) from an empty
 cache created by a config preflight. Unknown/corrupt formats return no choice.
 """
 from pathlib import Path
+import http.client
+import json
+import socket
 import struct
 import sys
+import time
 
 MAX_BYTES = 128 * 1024 * 1024
+MAX_RESPONSE = 1024 * 1024
+
+
+def static_choices(path):
+    """A static candidate can prove removal; dynamic providers cannot."""
+    try:
+        import yaml
+    except ImportError:
+        return None
+    try:
+        path = Path(path)
+        if path.stat().st_size > 8 * 1024 * 1024:
+            return None
+        document = yaml.safe_load(path.read_bytes())
+        if not isinstance(document, dict) or document.get('proxy-providers'):
+            return None
+        names = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS', 'COMPATIBLE'}
+        for section in ('proxies', 'proxy-groups'):
+            rows = document.get(section, [])
+            if not isinstance(rows, list):
+                return None
+            for row in rows:
+                if (not isinstance(row, dict) or not isinstance(row.get('name'), str)
+                        or row.get('use') or row.get('include-all-providers')):
+                    return None
+                names.add(row['name'])
+        return names
+    except (OSError, ValueError, yaml.YAMLError):
+        return None
+
+
+def selection_state(path, timeout):
+    """Read only the private controller; API availability is not startup completion."""
+    deadline = time.monotonic() + timeout
+    def get(endpoint):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError()
+        connection = http.client.HTTPConnection('localhost', timeout=min(1, remaining))
+        connection.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.sock.settimeout(min(1, remaining))
+        try:
+            connection.sock.connect(str(path))
+            connection.request('GET', endpoint)
+            response = connection.getresponse()
+            raw = response.read(MAX_RESPONSE + 1)
+            if response.status != 200 or len(raw) > MAX_RESPONSE:
+                raise ValueError('unconfirmed controller response')
+            return json.loads(raw)
+        finally:
+            connection.close()
+    return get('/configs'), get('/proxies/GLOBAL')
+
+
+def wait_restored(expected, read_state, timeout=15, *, candidate_choices=None,
+                  clock=time.monotonic, sleep=time.sleep):
+    """Return restored/removed/uncertain; never treat a transient default as removal.
+
+    An unavailable or still initializing controller must not trigger startup
+    speed selection. Only a populated GLOBAL selector in global mode can prove
+    that the cached choice has been removed from the candidate.
+    """
+    if not expected or not 0 < timeout <= 60:
+        return 'uncertain'
+    deadline = clock() + timeout
+    while (remaining := deadline - clock()) > 0:
+        try:
+            config, group = read_state(remaining)
+            if isinstance(config, dict) and config.get('mode') == 'global' and isinstance(group, dict):
+                members, now = group.get('all'), group.get('now')
+                if (group.get('type') == 'Selector' and isinstance(members, list) and members
+                        and all(isinstance(name, str) for name in members) and now in members):
+                    if (expected not in members and candidate_choices is not None
+                            and expected not in candidate_choices):
+                        return 'removed'
+                    if now == expected:
+                        return 'restored'
+        except (OSError, ValueError, TypeError, http.client.HTTPException):
+            pass
+        remaining = deadline - clock()
+        if remaining > 0:
+            sleep(min(.1, remaining))
+    return 'uncertain'
 
 
 def saved_global(path):
@@ -103,6 +190,17 @@ def saved_global(path):
 
 
 if __name__ == '__main__':
+    if len(sys.argv) == 4 and sys.argv[1] == '--wait-restored':
+        # The choice stays off argv and out of logs. Reads never change a group,
+        # mode, cache file or a concurrent administrator's selection.
+        expected = sys.stdin.buffer.read(16385)
+        try:
+            expected = expected.decode('utf-8') if len(expected) <= 16384 else ''
+        except UnicodeError:
+            expected = ''
+        result = wait_restored(expected, lambda timeout: selection_state(sys.argv[2], timeout),
+                               candidate_choices=static_choices(sys.argv[3]))
+        sys.exit({'restored': 0, 'removed': 3, 'uncertain': 4}[result])
     choice = saved_global(sys.argv[1])
     if not choice:
         sys.exit(1)
