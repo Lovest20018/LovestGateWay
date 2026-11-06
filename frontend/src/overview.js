@@ -45,7 +45,7 @@ function chart(label,series,format){
   const themeObserver=new MutationObserver(redraw);themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
   canvas.addEventListener('pointermove',event=>{if(!values.length)return;const width=canvas.getBoundingClientRect().width,index=Math.min(values.length-1,Math.max(0,Math.round(event.offsetX/width*39))),sample=values[index];tip.textContent=series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');tip.hidden=false;});
   canvas.addEventListener('pointerleave',()=>{tip.hidden=true;});
-  return {node:box,update(next,max){values=next;maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;canvas.setAttribute('aria-label',label+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
+  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;canvas.setAttribute('aria-label',label+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
 }
 
 export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInfo=()=>{}}={}){
@@ -65,11 +65,12 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   const fields=Object.fromEntries([...page.querySelectorAll('[data-field]')].map(node=>[node.dataset.field,node]));
   const put=(key,value)=>{fields[key].textContent=value??'—';};
   const trafficChart=chart('流量速率',[['total','总量','--brand'],['down','下载','--down'],['up','上传','--up']],value=>formatBytes(value,true));
-  const cpuChart=chart('CPU 占用',[['cpu','整机','--brand'],['cpuSb','LovestGateWay','--down'],['cpuCore','出站核心','--up'],['cpuCf','Cloudflared','--err']],percent);
-  const memoryChart=chart('内存占用',[['memOther','系统组件','--brand'],['memSb','LovestGateWay','--down'],['memCore','出站核心','--up'],['memCf','Cloudflared','--err']],formatBytes);
+  const cpuSeries=[['cpu','整机','--brand'],['cpuSb','LovestGateWay','--down'],['cpuCore','出站核心','--up']],cpuChart=chart('CPU 占用',cpuSeries,percent);
+  const memorySeries=[['memOther','系统组件','--brand'],['memSb','LovestGateWay','--down'],['memCore','出站核心','--up']],memoryChart=chart('内存占用',memorySeries,formatBytes);
   for(const [key,graphic]of [['traffic',trafficChart],['cpu',cpuChart],['memory',memoryChart]])page.querySelector('[data-chart="'+key+'"]').append(graphic.node);
   page.querySelector('.overview-traffic h2').prepend(icon('swap'));
   page.querySelector('.overview-interfaces-heading').prepend(icon('radio'));
+  let cloudflaredSeen=false;
   let data={},history=[],poolHistory=[],previous=null,disposed=false,paused=false,timer=null,controller=null,sequence=0,clockAt=performance.now(),lastFull=0;
   const button=page.querySelector('[data-refresh]'),status=page.querySelector('[role=status]');
   const currentBoot=()=>text(data.integration?.data?.boot_id??data.integration?.boot_id);
@@ -95,7 +96,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
     page.querySelector('[data-section=cpu]').hidden=!data.cpu;page.querySelector('[data-section=memory]').hidden=!data.memory;
     put('cpu-model',text(c.model));put('cores',number(c.cores)!==null?c.cores+' 核':'');put('cpu-usage',percent(c.usage));put('frequency',number(c.freq)!==null?c.freq+' MHz':'');fields.frequency.title=[['最低',c.freq_min],['最高',c.freq_max]].filter(([,v])=>number(v)!==null).map(([label,v])=>label+' '+v+' MHz').join(' · ');
     put('temperature',number(c.temp)!==null?c.temp.toFixed(1)+' °C':'');fields.temperature.title=text(c.temp_sensor);
-    const processes=[['LovestGateWay','sniffbox','--down'],[coreName,m.ovpn_rss!=null?'ovpn':'clash','--up'],['Cloudflared','cloudflared','--err']].filter(([,key])=>number(m[key+'_rss'])!==null);
+    const processes=[['LovestGateWay','sniffbox','--down'],[coreName,m.ovpn_rss!=null?'ovpn':'clash','--up'],['Cloudflared','cloudflared','--err']].filter(([,key])=>key==='cloudflared'?cloudflaredSeen:number(m[key+'_rss'])!==null);
     legend(page.querySelector('[data-cpu-legend]'),[['整机','--brand'],...processes.map(([label,,color])=>[label,color])]);legend(page.querySelector('[data-memory-legend]'),[['系统组件','--brand'],...processes.map(([label,,color])=>[label,color])]);
     const cores=page.querySelector('[data-cores]');cores.replaceChildren(...list(c.per_core).map((value,index)=>{const cell=make('span',percent(value),'overview-core');cell.title='核 '+index+'：'+percent(value)+(number(c.freq_per_core?.[index])!==null?' · '+c.freq_per_core[index]+' MHz':'');cell.style.setProperty('--usage',(number(value)===null?0:Math.min(100,value))+'%');return cell;}));
     const used=number(m.total)!==null&&number(m.available)!==null?Math.max(0,m.total-m.available):null;
@@ -115,6 +116,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
     clock();
   }
   function accept(value,sample=true){
+    if(number(value.cpu?.cloudflared)!==null||number(value.memory?.cloudflared_rss)!==null)cloudflaredSeen=true;
     const oldBoot=currentBoot();merge(value);const boot=currentBoot();if(oldBoot!==boot){history=[];poolHistory=[];previous=null;}
     if(number(value.timestamp)!==null)clockAt=performance.now();
     if(sample){
@@ -123,7 +125,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
       history=[...history.slice(-39),{total:previous?.downRate!=null?previous.downRate+previous.upRate:null,down:previous?.downRate,up:previous?.upRate,cpu:c.usage,cpuSb:c.sniffbox,cpuCore:c.ovpn??c.clash,cpuCf:c.cloudflared,memSb:m.sniffbox_rss,memCore:core,memCf:m.cloudflared_rss,memOther:total!==null&&free!==null?Math.max(0,total-free-(m.sniffbox_rss||0)-(core||0)-(m.cloudflared_rss||0)):null}];
       poolHistory=poolWindow(poolHistory,data.pool,performance.now());
     }
-    render();trafficChart.update(history);cpuChart.update(history,100);memoryChart.update(history,data.memory?.total||undefined);
+    render();trafficChart.update(history);cpuChart.update(history,100,cloudflaredSeen?[...cpuSeries,['cpuCf','Cloudflared','--err']]:cpuSeries);memoryChart.update(history,data.memory?.total||undefined,cloudflaredSeen?[...memorySeries,['memCf','Cloudflared','--err']]:memorySeries);
   }
   async function request(url,signal){const response=await fetch(url,{headers:{Authorization:'Bearer '+storedSecret()},cache:'no-store',signal});if(response.status===401){const error=new Error('登录已失效。');error.unauthorized=true;throw error;}if(!response.ok)throw Error('读取状态失败（HTTP '+response.status+'）。');const value=await response.json();if(!value||typeof value!=='object'||Array.isArray(value))throw Error('状态数据格式无效。');return value;}
   async function refresh(full=true){
