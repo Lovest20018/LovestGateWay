@@ -178,4 +178,4 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await fs.writeFile(path.join(root,'dist/subscription-drafts-browser-evidence.json'),JSON.stringify(result,null,2)+'\n');
     console.log(JSON.stringify(result));
   }finally{for(const context of browser.contexts())for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await browser.close();}
-})().then(()=>process.stdout.write('',()=>process.exit(0)),error=>{console.error(error);process.stderr.write('',()=>process.exit(1));});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

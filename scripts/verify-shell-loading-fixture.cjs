@@ -54,4 +54,4 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve('dist/ui-optimi
     const report={syntheticOnly:true,lazyInitialRoutes:true,obsoleteImportIgnored:true,backNavigation:true,mobileWidths:[375,320],themes:['light','dark'],backdrop:true,focusTrap:true,escapeRestoresFocus:true,closedEscapePreservesFocus:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));await context.close();
   }finally{release?.();for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'ignoreErrors'});await browser.close();}
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

@@ -113,4 +113,4 @@ const fixture = JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-
     await fs.writeFile(path.join(root,'dist/observer-api-browser-20261104.json'),JSON.stringify(report,null,2)+'\n');
     console.log(JSON.stringify(report));
   } finally { await browser.close(); }
-})().catch(error => {console.error(error);process.exitCode=1;});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

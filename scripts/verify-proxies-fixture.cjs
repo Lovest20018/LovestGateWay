@@ -145,4 +145,4 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
   }finally{releasePending();for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'ignoreErrors'});await browser.close();console.log('Browser cleanup complete');}
 // Held-route cancellation can retain Playwright driver handles after browser cleanup.
 // End this standalone fixture only after all assertions and the awaited cleanup finish.
-})().then(()=>process.stdout.write('',()=>process.exit(0)),error=>{console.error(error);process.stderr.write('',()=>process.exit(1));});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

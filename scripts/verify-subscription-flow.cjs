@@ -175,4 +175,4 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await fs.writeFile(path.join(root,'dist/subscription-flow-browser-evidence.json'),JSON.stringify(evidence,null,2)+'\n');console.log(JSON.stringify(evidence));
     await context.close();
   }finally{await browser.close();}
-})().catch(error=>{console.error(error);process.exitCode=1;});
+})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});
