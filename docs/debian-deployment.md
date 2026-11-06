@@ -23,7 +23,7 @@ sudo python3 install.py
 
 FakeIP DNS 默认在 `0.0.0.0:53` 同时监听 UDP 和 TCP，两个协议共用同一 FakeIP 地址池。安装预检同时检查两个协议的端口占用；任一监听失败时核心启动失败。与其他服务共用宿主时，可设置 `PPGW_DNS_LISTEN="192.0.2.10:53"`，将文档示例地址替换为实际网关 LAN 地址，避免接管宿主的 `127.0.0.1:53`。该字段可通过脚本配置管理修改，生效需要重启核心；原有宿主 resolver 配置保持不变。
 
-`free`、`socks5` 不需要 mihomo。`yaml`、`suburl` 模式先运行 `sudo python3 /usr/local/lib/paopaogw/mihomo_update.py install`，直接从 MetaCubeX/mihomo 官方 GitHub 稳定版下载 amd64-compatible 资产，验证官方 SHA256、ELF、版本和现有配置后安装。Geo 数据按规则需要放入 `/var/lib/paopaogw/clash/`，可用原生面板 Geo 更新入口维护。配置文件放 `/etc/paopaogw/files/custom.yaml` 或填订阅地址；依赖远端配置的模式需要目标可达。`ovpn` 的 openvpn/openssl 已列为安装依赖，配置和证书放同一 files 目录；优先使用内嵌证书的单个 .ovpn 文件。Cloudflared 已从 Debian 运行路径、API 和导航入口移除，旧 token 不再启用进程或 nft UID 规则。
+`free`、`socks5` 不需要 mihomo。`yaml`、`suburl` 模式先运行 `sudo python3 /usr/local/lib/paopaogw/mihomo_update.py install`，直接从 MetaCubeX/mihomo 官方 GitHub 稳定版按 CPU 与系统能力选择 amd64-v1/v2/v3 资产，v1 可使用旧 compatible 命名，验证官方 SHA256、ELF、版本和现有配置后安装。Geo 数据按规则需要放入 `/var/lib/paopaogw/clash/`，可用原生面板 Geo 更新入口维护。配置文件放 `/etc/paopaogw/files/custom.yaml` 或填订阅地址；依赖远端配置的模式需要目标可达。`ovpn` 的 openvpn/openssl 已列为安装依赖，配置和证书放同一 files 目录；优先使用内嵌证书的单个 .ovpn 文件。Cloudflared 已从 Debian 运行路径、API 和导航入口移除，旧 token 不再启用进程或 nft UID 规则。
 
 ```sh
 sudo systemctl enable --now paopaogw.service paopaogw-subscription.service paopaogw-settings.service
@@ -54,7 +54,9 @@ sudo systemctl enable --now paopaogw-subscription.service
 
 订阅 URL、更新周期和下载机制继续使用原配置。修改过的节点组、规则及规则订阅区块作为本地策略覆盖，每次订阅下载后重新合并；代理节点及未覆盖字段仍由新订阅更新。替换源订阅后旧策略不会套用到其他来源。完整 Clash 模式支持手动选择、测速、故障转移和智能测速组，关键词映射原生 filter/exclude-filter；前置代理通过独立 provider 的 override.dialer-proxy 应用到节点，保留原 provider 的刷新设置。全局健康监测和定时重启复用原生 PPsub 监督逻辑；Shadowsocks 入站使用单独认证并仅监听 127.0.0.1:8080。高级元数据不会覆盖源订阅的节点凭据。
 
-发布时 `scripts/prepare_dashboard.py` 将设置、来源与 PPsub 编辑器接入统一路由，并增加读取、保存及草稿保护钩子；PPsub 导入和导出 JSON 继续可用。上游 bundle 的钩子位置变化会使打包失败，需人工核对；生成资源使用内容摘要文件名，避免旧缓存。
+发布时 `scripts/prepare_dashboard.py` 从可维护源码构建统一路由、全部运行页面、设置、来源与 PPsub 编辑器；PPsub 导入和导出 JSON 继续可用。保留的上游 bundle 不参与运行页面加载，生成资源使用内容摘要文件名，避免旧缓存。
+
+静态规则和节点组修改在支持范围内使用经验证的 Mihomo 热加载，预览会显示实际应用方式。provider、凭据、监听、网络、高级功能和来源变化继续重启；无法确认加载结果时恢复原输入并重启验证。具体白名单、连接验收和失败边界见[热加载说明](mihomo-reload-assessment.md)。
 
 更新时同时停止正在运行的 `paopaogw-subscription`，安装后再启动。该服务独立于可选观测 API。
 

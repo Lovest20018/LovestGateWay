@@ -203,7 +203,7 @@ def application(preview, system, layout):
     possible = [name for name in dict.fromkeys(possible) if name not in services]
     return {'action': action if action != 'none' else 'auxiliary' if services else 'none',
             'core_action': action, 'core_active': active, 'runtime_state': state,
-            'pending_load': action in {'reload', 'restart'} and active is False,
+            'pending_load': action in {'reload', 'restart', 'mihomo_reload'} and active is False,
             'services': services, 'possible_services': possible, 'services_uncertain': bool(possible),
             'reload_fallback_possible': action == 'reload' and active is True}
 

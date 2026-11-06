@@ -1,6 +1,18 @@
 # Mihomo 局部加载评估
 
-2026-11-05 的合成实验没有证明通用配置 reload 可以安全替代重启，因此产品仍保留原有重启路径。无变化、安全 INI 字段和辅助服务修改继续使用已有分类；本次没有增加配置 reload 的产品入口。
+2026-11-05 的合成实验没有证明通用配置 reload 可以安全替代重启。2026-11-06 增加受限的静态策略热加载：只处理没有 provider、sub-rule 和托管辅助功能的配置中的规则与静态节点组修改；其他变更继续使用事务重启。无变化、安全 INI 字段和辅助服务修改沿用原有分类。
+
+## 产品支持范围
+
+统一编辑器和原生策略接口会在预览中选择 `mihomo_reload` 或 `restart`。只有 `rules`、`proxy-groups` 变化、节点凭据和其余顶层字段保持一致时才考虑热加载。支持 select、url-test、fallback、load-balance 的明确静态成员和有限选项；未知组选项、动态成员、provider、RULE-SET、GEO 与复合规则不进入热加载。支持的基础规则由 `integration/mihomo_reload.py` 的白名单定义。订阅更新、来源切换、策略重置、监听、DNS、路由、凭据和高级功能修改继续重启；同时修改更新计划也使用重启事务。
+
+加载通过核心私有 Unix socket 执行，不新增公开写配置接口。先核对运行规则、组与快照，再用实际 Mihomo 预检候选；保留运行模式和仍有效的 Selector 选择，包括 GLOBAL 的显式 DIRECT。每次 controller 请求核对进程 PID 和启动时间，加载后逐项回读规则、组类型与成员、模式和选择。HTTP 204 本身不构成验收。成功后同步持久策略摘要、最后成功配置和原生健康循环的规则基线。
+
+失败或无法确认时，现有事务恢复原持久输入并重启原配置，再验证服务就绪；向用户报告失败及回退，不能将回退后的服务可用描述为新配置成功。失败回退可能中断连接。成功的运行回执只记录实际核对范围，不以进程保持推断每条业务连接都保持。
+
+`scripts/verify-mihomo-reload.py` 在真实 Mihomo 上覆盖规则、全局、直连模式、长连接 echo 与 connection ID、新规则实际阻断、新连接、静态上游认证、显式 DIRECT、预检拒绝、超范围拒绝及丢失应答后的事务回退。`scripts/verify-mihomo-policy-linux.py` 在有 `/run/management-validation-only` 标记的 Debian 一次性网关上覆盖统一编辑器、原生策略接口、持久摘要、核心与 Mihomo 身份保持，以及真实 systemd 回退恢复。测试数据和凭据均为合成值，报告记录使用的二进制摘要；这些检查不代表真实客户端、UDP 或 QUIC 业务已经验收。
+
+## 早期实验记录
 
 实验使用公开离线 Mihomo Meta v1.19.33（linux amd64 with gvisor），二进制 SHA256：`817f50b3ac6a8b1c4360c5cf2961906057f3a883d970ebbcb0028a01632b620f`。在无生产挂载、无宿主端口映射、非 privileged 的独立容器中，所有目标均为回环地址的合成 HTTP provider、带认证 SOCKS 上游和 TCP echo。未向生产服务注入失败。
 

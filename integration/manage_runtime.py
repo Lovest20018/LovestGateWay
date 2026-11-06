@@ -136,7 +136,7 @@ class System:
             finally: candidate.unlink(missing_ok=True)
     def prepare(self, action, before):
         self._old_runtime = None
-        if self.layout.live and action in {'reload', 'restart'} and before.get('paopaogw', {}).get('active'):
+        if self.layout.live and action in {'reload', 'restart', 'mihomo_reload'} and before.get('paopaogw', {}).get('active'):
             try: self._old_runtime = self.runtime()
             except Exception: pass  # CLI can repair a saved listener that no longer matches the running core.
             if action == 'reload' and self._old_runtime:
@@ -267,7 +267,16 @@ class System:
     def apply(self, action, settings, changes, before):
         if not self.layout.live: return {'status': 'staged'}
         old = getattr(self, '_old_runtime', None)
-        if action in {'reload', 'restart'} and before.get('paopaogw', {}).get('active'):
+        if action == 'mihomo_reload' and before.get('paopaogw', {}).get('active'):
+            if not old: raise ManagementError('MIHOMO_RELOAD_IDENTITY_UNAVAILABLE')
+            from mihomo_reload import apply_policy
+            evidence = apply_policy(self, self._mihomo_update, settings)
+            result = self.wait(settings)
+            previous = old.get('data', old)
+            if result.get('boot_id') != previous.get('boot_id'):
+                raise ManagementError('MIHOMO_RELOAD_CORE_CHANGED')
+            result['application'] = evidence
+        elif action in {'reload', 'restart'} and before.get('paopaogw', {}).get('active'):
             if action == 'reload' and not old: action = 'restart'
             if action == 'reload': self.client().request('/sniffbox/reload/core', {})
             else: self.command('systemctl', 'restart', 'paopaogw')

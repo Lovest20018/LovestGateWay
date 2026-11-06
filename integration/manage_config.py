@@ -34,7 +34,17 @@ class ConfigManager:
         if changes.get('service'): action = 'restart'
         return updates, changes, action
     def apply(self, patch, base_revision, dry_run=False, reset_source=False, restart=False,
-              policy_update=None, verify=None, ppsub_update=None):
+              policy_update=None, verify=None, ppsub_update=None, mihomo_update=None):
+        def policy_action():
+            if mihomo_update is not None:
+                from mihomo_reload import plan
+                if (set(mihomo_update) != {'before', 'after'} or policy_update in (None, False)
+                        or not plan(mihomo_update['before'], mihomo_update['after'])['eligible']):
+                    raise ManagementError('MIHOMO_RELOAD_UNSUPPORTED')
+                if not changes and ppsub_update is None and not restart:
+                    self.system._mihomo_update = mihomo_update
+                    return 'mihomo_reload'
+            return 'restart'
         if ppsub_update is not None and (not isinstance(ppsub_update, bytes) or len(ppsub_update) > 1024*1024):
             raise ManagementError('INVALID_PPSUB_UPDATE')
         # Preview does not create a lock, journal or backup.
@@ -42,7 +52,7 @@ class ConfigManager:
         if policy_update is not None:
             if policy_update is not False and not isinstance(policy_update, bytes): raise ManagementError('INVALID_POLICY_UPDATE')
             updates['etc/paopaogw/files/clash-policy.json'] = None if policy_update is False else policy_update
-            action = 'restart'
+            action = policy_action()
         if ppsub_update is not None:
             updates['etc/paopaogw/files/ppsub.json'] = ppsub_update
             action = 'restart'
@@ -59,7 +69,7 @@ class ConfigManager:
             updates, changes, action = self.plan(patch, reset_source)
             if policy_update is not None:
                 updates['etc/paopaogw/files/clash-policy.json'] = None if policy_update is False else policy_update
-                action = 'restart'
+                action = policy_action()
             if ppsub_update is not None:
                 updates['etc/paopaogw/files/ppsub.json'] = ppsub_update
                 action = 'restart'

@@ -6,6 +6,7 @@
 
 ```sh
 python3 -m unittest discover -s tests -v
+node --test frontend/tests/*.test.mjs
 python3 scripts/check-public-source.py
 python3 scripts/export-api-contract.py
 python3 scripts/check-api-contract.py
@@ -15,6 +16,8 @@ node --check integration/ppsub_panel.js
 ```
 
 API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板构建和调用打包脚本的测试需要 Node.js 18+（Debian Bookworm 可安装 `nodejs`）；不需要安装 npm 依赖，Node 不属于生产运行依赖。`PPGW_NODE` 可指定构建解释器。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
+
+受限 Mihomo 热加载的真实连接与完整 Debian 服务验收分别使用 `scripts/verify-mihomo-reload.py` 和 `scripts/verify-mihomo-policy-linux.py`，运行条件与覆盖边界见[热加载说明](mihomo-reload-assessment.md)。只在一次性隔离环境运行失败注入，不对现用配置执行此类实验。
 
 ```sh
 node frontend/build.mjs
