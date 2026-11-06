@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'integration'))
-from mihomo_reload import plan, rule_rows, reload_verified
+from mihomo_reload import plan, policy_candidate, rule_rows, reload_verified
 from manage_common import ManagementError
 
 BASE = {'mode': 'rule', 'dns': {'enable': False},
@@ -31,6 +31,28 @@ class Controller:
 class ReloadTests(unittest.TestCase):
     def candidate(self):
         document=deepcopy(BASE);document['rules'].insert(0,'DOMAIN,blocked.example,REJECT');return document
+    def test_managed_rules_use_physical_snapshot_without_widening_other_changes(self):
+        from clash_ppsub import apply_features, feature_options
+        variants = [{}, {'global_monitor': {'enable': True}}, {'restart_cron': {'enable': True, 'hour': 4}},
+                    {'shadowsocks_in': {'enable': True, 'cipher': 'aes-128-gcm', 'password': 'fixture-listener-password'}},
+                    {'node-groups': [{'name': 'MAIN', 'smart': True}]}]
+        for config in variants:
+            features = feature_options(config)
+            before = apply_features(BASE, features)
+            after = apply_features(self.candidate(), features)
+            result, update = policy_candidate(BASE, after, features, features, before)
+            self.assertTrue(result['eligible'], config)
+            self.assertEqual(update['before'], before)
+            self.assertEqual(update['after'], after)
+            changed = deepcopy(before); changed['listeners'] = [{'name': 'outside-change'}]
+            self.assertFalse(policy_candidate(BASE, after, features, features, changed)[0]['eligible'])
+            self.assertFalse(policy_candidate(BASE, after, features, {}, before)[0]['eligible'])
+            if before.get('x-ppgw-features'):
+                changed = deepcopy(after); changed['proxy-groups'][0]['proxies'].reverse()
+                self.assertFalse(plan(before, changed)['eligible'])
+        features = feature_options({'node-groups': [{'name': 'MAIN', 'use_pre_proxy': True, 'pre_proxy_group': 'DIRECT'}]})
+        result, update = policy_candidate(BASE, apply_features(self.candidate(), features), features, features, apply_features(BASE, features))
+        self.assertFalse(result['eligible']); self.assertIsNone(update)
     def test_static_policy_allowlist_rejects_providers_credentials_network_and_unknown_rules(self):
         after=self.candidate();self.assertTrue(plan(BASE,after)['eligible'])
         for key,value in [('secret','new'),('proxies',[]),('dns',{'enable':True}),('listeners',[{}]),('x-ppgw-features',{})]:

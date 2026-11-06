@@ -50,6 +50,8 @@ def plan(before, after):
     if not changed: return {'eligible': False, 'reason': 'unchanged'}
     if changed - {'rules', 'proxy-groups'}:
         return {'eligible': False, 'reason': 'transport_credentials_or_features'}
+    if (before.get('x-ppgw-features') or after.get('x-ppgw-features')) and changed != {'rules'}:
+        return {'eligible': False, 'reason': 'managed_groups_require_restart'}
     if any(doc.get(key) for doc in (before, after) for key in ('proxy-providers', 'rule-providers', 'sub-rules')):
         return {'eligible': False, 'reason': 'provider_or_subrule_requires_restart'}
     try:
@@ -70,6 +72,19 @@ def plan(before, after):
     except (TypeError, ValueError, IndexError):
         return {'eligible': False, 'reason': 'unsupported_rule_or_group'}
     return {'eligible': True, 'reason': 'static_policy_only'}
+
+
+def policy_candidate(before, after, old_features, features, materialized=None):
+    """Use identical physical representations and never widen the runtime allowlist."""
+    from clash_ppsub import apply_features, logical_document
+    if features != old_features:
+        return {'eligible': False, 'reason': 'managed_features_changed'}, None
+    expected = apply_features(before, old_features)
+    raw = expected if materialized is None else materialized
+    if logical_document(raw) != before or raw != expected:
+        return {'eligible': False, 'reason': 'materialized_snapshot_changed'}, None
+    result = plan(raw, after)
+    return result, {'before': deepcopy(raw), 'after': deepcopy(after)} if result['eligible'] else None
 
 
 class UnixController:
@@ -163,7 +178,7 @@ def reload_verified(before, after, controller, validate, persist):
 
 def apply_policy(system, update, settings):
     import yaml
-    from clash_ppsub import logical_document, source_identity
+    from clash_ppsub import source_identity
     from clash_policy import protected_revision
     from manage_common import atomic_write, write_json, read_bytes
     pid = system.command('systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip()
@@ -171,7 +186,7 @@ def apply_policy(system, update, settings):
     target = Path('/proc')/pid/'root/tmp/clash.yaml'; original = target.read_bytes()
     if len(original) > 2*1024*1024: raise ManagementError('CONFIG_TOO_LARGE')
     raw = yaml.safe_load(original)
-    if logical_document(raw) != update['before']: raise ManagementError('STALE_POLICY_SNAPSHOT')
+    if raw != update['before']: raise ManagementError('STALE_POLICY_SNAPSHOT')
     policy = json.loads(read_bytes(system.layout, 'etc/paopaogw/files/clash-policy.json'))
     status = json.loads(read_bytes(system.layout, 'var/lib/paopaogw/admin/policy-status.json', b'{}'))
     key = read_bytes(system.layout, 'etc/paopaogw/revision-key', b'').strip()

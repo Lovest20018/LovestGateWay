@@ -9,7 +9,7 @@ import subprocess
 MAX_YAML_BYTES = 2 * 1024 * 1024
 
 
-def running_document():
+def running_materialized_document():
     result = subprocess.run(['systemctl', 'show', 'paopaogw.service', '--property=MainPID', '--value'],
                             capture_output=True, text=True, check=True, timeout=5)
     pid = result.stdout.strip()
@@ -25,7 +25,11 @@ def running_document():
     document = yaml.safe_load(raw)
     if not isinstance(document, dict):
         raise ValueError('INVALID_CLASH_DOCUMENT')
-    return logical_document(document)
+    return document
+
+
+def running_document():
+    return logical_document(running_materialized_document())
 
 
 def logical_document(document):

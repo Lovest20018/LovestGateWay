@@ -9,7 +9,7 @@ from manage_common import ManagementError, operation_lock, read_bytes
 from manage_config import ConfigManager
 from manage_model import load_settings, settings_revision
 from clash_policy import build_policy
-from clash_ppsub import fingerprint, running_document, source_identity, rename_rule, rename_references, apply_features
+from clash_ppsub import fingerprint, running_document, running_materialized_document, source_identity, rename_rule, rename_references, apply_features
 
 POLICY = 'etc/paopaogw/files/clash-policy.json'
 GROUP_FIELDS = ('name', 'type', 'proxies', 'use', 'url', 'interval')
@@ -188,6 +188,7 @@ class PolicyManager:
         merged, renames = merge_native(snapshot['document'], body['policy'])
         original = read_bytes(self.layout, POLICY)
         existing = json.loads(original) if original else None
+        snapshot['features'] = deepcopy((existing or {}).get('features') or {})
         identity = source_identity(load_settings(self.layout)['ini'])
         policy = build_policy(snapshot['document'], merged, existing, identity, renames)
         features = policy.get('features') or {}
@@ -203,8 +204,10 @@ class PolicyManager:
             snapshot, merged, policy, effective = self.candidate(body)
             changed = merged != snapshot['document']
             if changed: self.system.validate_policy(effective)
-            from mihomo_reload import plan
-            reload_plan = plan(snapshot['document'], effective)
+            from mihomo_reload import policy_candidate
+            features = policy.get('features', {})
+            reload_plan, _ = policy_candidate(snapshot['document'], effective, snapshot['features'], features,
+                running_materialized_document() if self.layout.live else None)
             return {'status': 'preview', 'action': ('mihomo_reload' if reload_plan['eligible'] else 'restart') if changed else 'none',
                     'mihomo_reload': reload_plan,
                     'base_revision': snapshot['revision'], 'changed': changed,
@@ -220,8 +223,11 @@ class PolicyManager:
                 current = self.reader()
                 if any(current.get(key) != merged.get(key) for key in policy['sections']):
                     raise ManagementError('POLICY_NOT_LOADED')
-            from mihomo_reload import plan
-            options = {'mihomo_update': {'before': snapshot['document'], 'after': effective}} if plan(snapshot['document'], effective)['eligible'] else {}
+            from mihomo_reload import policy_candidate
+            features = policy.get('features', {})
+            _, update = policy_candidate(snapshot['document'], effective, snapshot['features'], features,
+                running_materialized_document() if self.layout.live else None)
+            options = {'mihomo_update': update} if update else {}
             result = ConfigManager(self.layout, self.system).apply({}, snapshot['revision'],
                 policy_update=(json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode(), verify=verify, **options)
             with self.lock: self.snapshots.pop(body['snapshot_id'], None)

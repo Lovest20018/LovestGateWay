@@ -9,7 +9,7 @@ from manage_config import ConfigManager
 from manage_model import load_settings, settings_revision, validate
 from manage_runtime import System
 from clash_ppsub import (merge_editor, feature_options, apply_features, fingerprint,
-                         source_identity, logical_document)
+                         source_identity, logical_document, running_materialized_document)
 from clash_policy import build_policy
 from manage_preview import clash_summary, native_summary, complete_preview, source_details
 
@@ -125,10 +125,11 @@ def candidate(admin, body, preview=None):
     system = System(layout, preserve_units={'paopaogw-subscription'})
     if effective is not None:
         system.validate_policy(effective)
-        from mihomo_reload import plan
-        reload_plan = plan(snapshot['document'], effective)
-        if reload_plan['eligible'] and features == feature_options(snapshot['baseline']):
-            options['mihomo_update'] = {'before': snapshot['document'], 'after': effective}
+        from mihomo_reload import policy_candidate
+        reload_plan, update = policy_candidate(snapshot['document'], effective, feature_options(snapshot['baseline']), features,
+            running_materialized_document() if layout.live else None)
+        if update:
+            options['mihomo_update'] = update
         if preview is not None: preview['mihomo_reload'] = reload_plan
     return layout, system, patch, options, verify
 
