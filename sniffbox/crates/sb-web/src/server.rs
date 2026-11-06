@@ -263,12 +263,12 @@ async fn handle_conn(
             }
             router::Route::Static => {
                 let ui_root = cfg.webroot.join("ui");
-                serve_static(&mut stream, &ui_root, req.path_only(), "/ui", ka).await?;
+                serve_static(&mut stream, &ui_root, &req, "/ui", ka).await?;
             }
             router::Route::DataFiles => {
 
                 let root = cfg.webroot.join("data");
-                serve_static(&mut stream, &root, req.path_only(), "/data", ka).await?;
+                serve_static(&mut stream, &root, &req, "/data", ka).await?;
             }
             router::Route::Blocked => {
                 tracing::info!(%peer, method = %req.method, path = %req.path_only(), "blocked dangerous clash API");
@@ -426,20 +426,69 @@ async fn geo_update(stream: &mut TcpStream, cfg: &ServerConfig, ka: bool) -> io:
 async fn serve_static(
     stream: &mut TcpStream,
     webroot: &Path,
-    path: &str,
+    req: &http::ReqHead,
     prefix: &str,
     ka: bool,
 ) -> io::Result<()> {
-    let Some(file_path) = static_files::resolve_prefixed(webroot, path, prefix) else {
+    let Some(file_path) = static_files::resolve_prefixed(webroot, req.path_only(), prefix) else {
         return respond::forbidden(stream, "bad path\n", ka).await;
     };
     match tokio::fs::read(&file_path).await {
         Ok(bytes) => {
             let ct = static_files::content_type(&file_path);
             let cc = static_files::cache_control(&file_path);
-            respond::file(stream, ct, cc, &bytes, ka).await
+            let accepts = req.headers.iter().filter(|(name, _)| name.eq_ignore_ascii_case("accept-encoding"))
+                .map(|(_, value)| String::from_utf8_lossy(value)).collect::<Vec<_>>();
+            let accepted = accepts.join(",");
+            let accepted = if accepts.is_empty() { None } else { Some(accepted.as_str()) };
+            let compressed = if prefix == "/ui" && static_files::prefer_gzip(accepted, true) == Some(true) && matches!(file_path.extension().and_then(|v| v.to_str()), Some("html" | "js" | "css")) {
+                let mut name = file_path.as_os_str().to_owned(); name.push(".gz");
+                tokio::fs::read(Path::new(&name)).await.ok()
+            } else { None };
+            match static_files::prefer_gzip(accepted, compressed.is_some()) {
+                Some(gzip) => respond::encoded_file(stream, ct, cc, if gzip { compressed.as_deref().unwrap() } else { &bytes }, gzip, req.method == "HEAD", ka).await,
+                None => respond::send(stream, 406, "Not Acceptable", &[("Vary", "Accept-Encoding")], b"", ka).await,
+            }
         }
         Err(_) => respond::not_found(stream, ka).await,
+    }
+}
+
+#[cfg(test)]
+mod static_response_tests {
+    use super::*;
+
+    async fn exchange(method: &str, encoding: Option<&str>, with_gzip: bool) -> Vec<u8> {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("app.js"), b"fixture-raw").unwrap();
+        if with_gzip { std::fs::write(root.path().join("app.js.gz"), b"fixture-gzip").unwrap(); }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let req = http::ReqHead { method: method.into(), path: "/ui/app.js".into(), http11: true,
+            headers: encoding.map(|v| vec![("Accept-Encoding".into(), v.as_bytes().to_vec())]).unwrap_or_default() };
+        let serve = async { let (mut stream, _) = listener.accept().await.unwrap(); serve_static(&mut stream, root.path(), &req, "/ui", false).await.unwrap(); };
+        let read = async { let mut stream = TcpStream::connect(address).await.unwrap(); let mut bytes = Vec::new(); stream.read_to_end(&mut bytes).await.unwrap(); bytes };
+        let (_, bytes) = tokio::join!(serve, read); bytes
+    }
+
+    #[tokio::test]
+    async fn static_http_negotiates_encoding_and_preserves_head_metadata() {
+        let wire = String::from_utf8(exchange("GET", Some("gzip"), true).await).unwrap();
+        assert!(wire.contains("Content-Encoding: gzip\r\n"));
+        assert!(wire.contains("Content-Type: application/javascript; charset=utf-8\r\n"));
+        assert!(wire.contains("Content-Length: 12\r\n"));
+        assert!(wire.ends_with("\r\n\r\nfixture-gzip"));
+        let head = String::from_utf8(exchange("HEAD", Some("gzip"), true).await).unwrap();
+        assert!(head.contains("Content-Length: 12\r\n")); assert!(head.ends_with("\r\n\r\n"));
+        for encoding in [None, Some("gzip;q=0,*;q=1"), Some("gzip;q=0.5,identity;q=1")] {
+            let raw = String::from_utf8(exchange("GET", encoding, true).await).unwrap();
+            assert!(!raw.contains("Content-Encoding:")); assert!(raw.contains("Vary: Accept-Encoding\r\n"));
+            assert!(raw.ends_with("\r\n\r\nfixture-raw"));
+        }
+        for (encoding, available) in [("*;q=0", true), ("gzip,identity;q=0", false)] {
+            let wire = String::from_utf8(exchange("GET", Some(encoding), available).await).unwrap();
+            assert!(wire.starts_with("HTTP/1.1 406 "));
+        }
     }
 }
 

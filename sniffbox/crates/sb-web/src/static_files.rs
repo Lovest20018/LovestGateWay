@@ -2,6 +2,35 @@
 
 use std::path::{Component, Path, PathBuf};
 
+// None means that neither available representation is acceptable.
+pub fn prefer_gzip(accept: Option<&str>, available: bool) -> Option<bool> {
+    let mut gzip: Option<f32> = None;
+    let mut identity: Option<f32> = None;
+    let mut wildcard: Option<f32> = None;
+    for part in accept.unwrap_or("").split(',') {
+        let mut fields = part.trim().split(';');
+        let name = fields.next().unwrap_or("").trim().to_ascii_lowercase();
+        let mut quality = 1.0f32;
+        for field in fields {
+            if let Some((key, value)) = field.trim().split_once('=') {
+                if key.trim().eq_ignore_ascii_case("q") {
+                    quality = value.trim().parse::<f32>().ok()
+                        .filter(|q| q.is_finite() && (0.0..=1.0).contains(q)).unwrap_or(0.0);
+                }
+            }
+        }
+        let target = match name.as_str() {
+            "gzip" => &mut gzip, "identity" => &mut identity, "*" => &mut wildcard, _ => continue,
+        };
+        *target = Some(target.unwrap_or(quality).min(quality));
+    }
+    let gz = if available { gzip.or(wildcard).unwrap_or(0.0) } else { 0.0 };
+    let plain = identity.unwrap_or(if wildcard == Some(0.0) { 0.0 } else { 1.0 });
+    if gz > 0.0 && gz >= plain { Some(true) }
+    else if plain > 0.0 { Some(false) }
+    else { None }
+}
+
 pub fn resolve(webroot: &Path, url_path: &str) -> Option<PathBuf> {
     resolve_prefixed(webroot, url_path, "/ui")
 }
@@ -73,6 +102,21 @@ pub fn cache_control(path: &Path) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gzip_negotiation_respects_quality_and_explicit_exclusions() {
+        for (header, available, expected) in [
+            (None, true, Some(false)), (Some(""), true, Some(false)),
+            (Some("gzip"), true, Some(true)), (Some("GZip; q=1"), true, Some(true)),
+            (Some("gzip;q=0,*;q=1"), true, Some(false)),
+            (Some("gzip;q=0.8,identity;q=0.2"), true, Some(true)),
+            (Some("gzip;q=0.2,identity;q=0.8"), true, Some(false)),
+            (Some("*;q=0"), true, None), (Some("*;q=1,identity;q=0"), true, Some(true)),
+            (Some("gzip,identity;q=0"), false, None),
+            (Some("gzip;q=0,gzip;q=1"), true, Some(false)),
+            (Some("gzip;q=NaN,identity;q=0"), true, None),
+        ] { assert_eq!(prefer_gzip(header, available), expected, "{header:?}"); }
+    }
 
     #[test]
     fn root_maps_to_index() {

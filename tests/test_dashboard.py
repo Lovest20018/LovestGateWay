@@ -1,5 +1,6 @@
 from pathlib import Path
 import hashlib
+import gzip
 import json
 import re
 import sys
@@ -34,6 +35,8 @@ class DashboardTests(unittest.TestCase):
             self.assertNotRegex(theme,r'\.svelte-[a-z0-9]+')
             self.assertIn('@font-face',theme)
             self.assertIn(':root[data-theme=dark]',theme)
+            for original,compressed in manifest['precompressed'].items():
+                self.assertEqual(gzip.decompress((output/compressed).read_bytes()),(output/original).read_bytes())
             for label,name in manifest['assets'].items():
                 if label.endswith('.js'):
                     source=(output/name).read_text(encoding='utf-8')

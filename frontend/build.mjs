@@ -3,12 +3,13 @@ import {resolve,dirname,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
 import {pruneScopedStyles} from './css-prune.mjs';
+import {gzipSync} from 'node:zlib';
 const here=dirname(fileURLToPath(import.meta.url)), root=resolve(here,'..');
 const textFile=async path=>(await readFile(path,'utf8')).replaceAll('\r\n','\n');
 export async function build(output=join(here,'dist')) {
   await mkdir(output,{recursive:true});
   // Delete only prior manifest-owned basenames; never recursively remove a caller's path.
-  try {const previous=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));for(const name of Object.values(previous.assets||{}))if(typeof name==='string'&&/^[a-z_-]+\.[a-f0-9]{12}\.(js|css)$/.test(name))await unlink(join(output,name)).catch(()=>{});}catch{}
+  try {const previous=JSON.parse(await readFile(join(output,'manifest.json'),'utf8'));for(const name of Object.values(previous.assets||{}))if(typeof name==='string'&&/^[a-z_-]+\.[a-f0-9]{12}\.(js|css)$/.test(name)){await unlink(join(output,name)).catch(()=>{});await unlink(join(output,name+'.gz')).catch(()=>{});}}catch{}
   const original=join(root,'FILES/etc/config/clash/clash-dashboard/ui');
   const html=await textFile(join(original,'index.html'));
   const assets={};
@@ -41,7 +42,11 @@ export async function build(output=join(here,'dist')) {
   index=index.replace('@@gateway_view@@',await textFile(join(root,'integration/gateway_view.html')));
   await writeFile(join(output,'index.html'),index);
   await copyFile(join(root,'integration/gateway.html'),join(output,'gateway.html'));
-  await writeFile(join(output,'manifest.json'),JSON.stringify({schema:1,entry:'index.html',assets},null,2)+'\n');
+  const precompressed={};
+  for(const name of ['index.html','gateway.html','legacy.html',bundle,...Object.values(assets).filter(name=>/\.(js|css)$/.test(name))]){
+    const compressed=name+'.gz';await writeFile(join(output,compressed),gzipSync(await readFile(join(output,name)),{level:9}));precompressed[name]=compressed;
+  }
+  await writeFile(join(output,'manifest.json'),JSON.stringify({schema:1,entry:'index.html',assets,precompressed},null,2)+'\n');
   return assets['shell.js'];
 }
 if(process.argv[1]===fileURLToPath(import.meta.url)) console.log(await build(process.argv.includes('--output')?resolve(process.argv[process.argv.indexOf('--output')+1]):undefined));
