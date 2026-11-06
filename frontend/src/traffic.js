@@ -1,7 +1,7 @@
 import {monitorClient} from './monitor-client.js';
 import {bytes,date,csv,number,rateWindow} from './monitor-model.js';
 import {trafficSnapshot,filterTraffic,aggregateTraffic,sortTraffic,trafficValues,transport,sniff} from './traffic-model.js';
-import {el,button,input,select,field,page,table,pager,confirmation,download,metrics,sparkline,streamState} from './monitor-view.js';
+import {el,button,input,select,field,page,table,pager,confirmation,download,metrics,sparkline,streamState,actionMenu} from './monitor-view.js';
 
 export function mountTraffic(host,{initialInfo,onUnauthorized=()=>{}}={}) {
   const ui=page(host,'traffic-page','流量记录'),filters={},rates=rateWindow(),expanded=new Set(),dialog=confirmation(ui.root),supported=initialInfo?.features?.net_rec!==false;
@@ -11,7 +11,7 @@ export function mountTraffic(host,{initialInfo,onUnauthorized=()=>{}}={}) {
   const client=monitorClient({onUnauthorized,onPause:()=>{rates.reset();currentRate={down:null,up:null};dialog.dispose();render();},onResume:()=>{rates.reset();currentRate={down:null,up:null};}});
   const viewControl=select('流量视图',[['domain','按域名'],['client','按客户端'],['full','完整记录']],value=>{view=value;sort=value==='full'?'ts':'total';direction=-1;pageNumber=1;expanded.clear();list.columns(definitions());render();},view);
   const search=input('搜索流量记录',{onInput:value=>{query=value;pageNumber=1;render();}}),rangeControl=select('流量时间范围',[['300000','近 5 分钟'],['900000','近 15 分钟'],['1800000','近 30 分钟'],['3600000','近 1 小时'],['21600000','近 6 小时'],['43200000','近 12 小时'],['86400000','近 24 小时'],['all','全部']],value=>{range=value==='all'?Infinity:Number(value);pageNumber=1;render();},'all');
-  const pause=button('暂停刷新',()=>{auto=!auto;stream.setEnabled(auto);render();}),refresh=button('重新连接',()=>client.refresh()),clear=button('清空记录',()=>{if(!busy&&loaded&&!client.unauthorized)dialog.show('清空流量记录','将清空流量记录和累计统计，确认继续吗？',clearRecords);}),exports=select('导出流量记录',[['','导出…'],['csv-filtered','CSV · 当前筛选'],['csv-all','CSV · 全部'],['json-filtered','JSON · 当前筛选'],['json-all','JSON · 全部']],value=>{if(value)exportData(value);exports.value='';});
+  const pause=button('暂停刷新',()=>{auto=!auto;stream.setEnabled(auto);render();}),refresh=button('重新连接',()=>client.refresh()),clear=button('清空记录',()=>{if(!busy&&loaded&&!client.unauthorized)dialog.show('清空流量记录','将清空流量记录和累计统计，确认继续吗？',clearRecords);}),exports=actionMenu('导出流量记录',[['csv-filtered','CSV · 当前筛选'],['csv-all','CSV · 全部'],['json-filtered','JSON · 当前筛选'],['json-all','JSON · 全部']],exportData);clear.classList.add('monitor-danger');
   ui.head.append(viewControl,search,rangeControl,pause,refresh,exports,clear);
   const stats=el('div',undefined,'monitor-metrics'),graphs=el('div',undefined,'monitor-rate-graphs'),card=el('section',undefined,'glass monitor-card'),columnPanel=el('details',undefined,'monitor-columns');columnPanel.append(el('summary','完整记录列设置'));
   const labels={ts:'开始时间',last_seen:'最近活动',client:'客户端',transport:'传输/端口',domain:'域名',sniff:'嗅探',inbound:'入站',conns:'连接数',down:'下载',up:'上传',total:'总流量',clients:'客户端数'};

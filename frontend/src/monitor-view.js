@@ -3,6 +3,24 @@ export function el(tag,text,className) { const node=document.createElement(tag);
 export function button(text,callback,className='btn') {const node=el('button',text,className);node.type='button';node.addEventListener('click',callback);return node;}
 export function input(label,{type='search',placeholder=label,onInput=()=>{}}={}) {const node=el('input');node.type=type;node.placeholder=placeholder;node.setAttribute('aria-label',label);node.addEventListener('input',()=>onInput(node.value));return node;}
 export function select(label,options,onChange,value) {const node=el('select');node.setAttribute('aria-label',label);for(const [key,name]of options){const option=el('option',name);option.value=key;node.append(option);}if(value!==undefined)node.value=value;node.addEventListener('change',()=>onChange(node.value));return node;}
+export function actionMenu(label,items,onAction) {
+  const root=el('span',undefined,'monitor-action-menu'),menu=el('div',undefined,'monitor-action-popup');
+  menu.hidden=true;menu.setAttribute('role','menu');menu.setAttribute('aria-label',label);
+  const trigger=button(label,()=>{menu.hidden=!menu.hidden;trigger.setAttribute('aria-expanded',String(!menu.hidden));if(!menu.hidden)menu.firstElementChild?.focus();});
+  trigger.setAttribute('aria-haspopup','menu');trigger.setAttribute('aria-expanded','false');
+  const close=()=>{menu.hidden=true;trigger.setAttribute('aria-expanded','false');};
+  for(const [key,text]of items){const item=button(text,()=>{close();trigger.focus();onAction(key);});item.setAttribute('role','menuitem');menu.append(item);}
+  root.addEventListener('focusout',event=>{if(!root.contains(event.relatedTarget))close();});
+  root.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&!menu.hidden){event.preventDefault();event.stopPropagation();close();trigger.focus();}
+    if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+      event.preventDefault();menu.hidden=false;trigger.setAttribute('aria-expanded','true');
+      const items=[...menu.children],at=items.indexOf(document.activeElement);
+      items[event.key==='Home'?0:event.key==='End'?items.length-1:(at+(event.key==='ArrowUp'?-1:1)+items.length)%items.length]?.focus();
+    }
+  });
+  root.append(trigger,menu);return root;
+}
 export function field(label,control) {const node=el('label',undefined,'monitor-field');node.append(el('span',label),control);return node;}
 export function page(host,id,title) {const root=el('section',undefined,'monitor-page');root.id=id;const head=el('header',undefined,'monitor-head'),heading=el('h1',title),status=el('p',undefined,'monitor-status');status.hidden=true;status.setAttribute('role','status');head.append(heading);root.append(head,status);host.replaceChildren(root);return {root,head,status,message(text){status.textContent=text;status.hidden=!text;}};}
 export function download(text,name,type='text/plain;charset=utf-8') {const url=URL.createObjectURL(new Blob([text],{type})),link=el('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
