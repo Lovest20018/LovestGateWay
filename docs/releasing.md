@@ -5,9 +5,9 @@
 ## 维护者操作
 
 1. 在 `main` 合入通过 review 的源码、上游台账和 `docs/releases/VERSION.md` 发布说明。说明功能变化、验证范围和已知限制，不填写真实部署地址、登录信息、订阅或私人验收记录。
-2. 在 Actions 的 **Publish verified Debian release** 中选择 `main`，填写版本（不含 `v`）及已经进入主线的完整 40 位提交号。版本格式如 `0.2.0-management.20261106.3`，Git 标签使用 `v` 前缀。构建提交可以早于发布说明提交。
+2. 在 Actions 的 **Publish verified Debian release** 中选择 `main`，填写版本（不含 `v`）及已经进入主线的完整 40 位提交号。正式版本统一使用 `主.次.修订`，例如 `0.2.1`；Git 标签为 `v0.2.1`。日期、管理功能名称和提交号不再放进版本后缀，提交及上游信息保存在清单中。构建提交可以早于发布说明提交。
 3. 默认 `publish=false`：完整运行 Debian CI，再创建草稿 Release。确认运行结果、附件、清单和发布说明后，在 GitHub 发布草稿；已完成验收时也可显式选 `publish=true`，检查全部通过后直接公开。
-4. 安装包、对应源码包、两份 SHA256 文件及 `release-manifest.json` 必须齐全。清单记录版本、提交、架构、上游已审查基线、源码内容摘要和附件哈希。上传后验证服务器返回的大小与 SHA256，之后才公开。
+4. 安装包、对应源码包、两份 SHA256 文件、在线入口 `install.sh` 及 `release-manifest.json` 必须齐全。清单记录版本、提交、架构、上游已审查基线、源码内容摘要和附件哈希。上传后验证服务器返回的大小与 SHA256，之后才公开。
 5. 发布不升级任何服务器。部署前按 [Debian 部署](debian-deployment.md) 核对包摘要、备份与适用架构，部署后验收配置、服务和流量。
 
 工作流复用 [Debian CI](../.github/workflows/debian.yml)，执行公开源码路径检查、Python/前端/Rust 测试、API 契约检查、Linux 构建和打包。正式版本编入核心与包元数据；普通 CI 使用 `dev-提交号`。目前正式包仅支持 amd64，不发布 ISO，也不推送 Docker Hub。

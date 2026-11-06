@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version without v (must have docs/releases/VERSION.md)'
+        description: 'Short stable version, e.g. 0.2.1 (must have docs/releases/VERSION.md)'
         type: string
         required: true
       commit:
@@ -37,7 +37,7 @@ jobs:
           import os,re,subprocess
           from pathlib import Path
           version,commit=os.environ['VERSION'],os.environ['COMMIT']
-          assert re.fullmatch(r'\d+\.\d+\.\d+(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?',version)
+          assert re.fullmatch(r'\d+\.\d+\.\d+',version)
           assert re.fullmatch(r'[0-9a-f]{40}',commit)
           subprocess.run(['git','merge-base','--is-ancestor',commit,'HEAD'],check=True)
           assert Path('docs/releases',version+'.md').is_file()
