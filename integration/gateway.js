@@ -50,7 +50,7 @@
       openport: ['允许局域网显式代理', '启用后允许范围内的设备连接 HTTP / SOCKS5 代理，必须同时设置认证。'],
       openport_auth: ['代理认证', '格式为 用户名:密码；留空保留已保存的认证。'],
       admin_cidr: ['管理访问范围', '逗号分隔 CIDR；留空允许所有来源。请保留当前设备所在网段。'],
-      proxy_cidr: ['代理访问范围', '逗号分隔 CIDR；留空允许所有来源。'],
+      proxy_cidr: ['代理访问范围', '透明 TCP 转发与显式代理共用的客户端范围；逗号分隔 IPv4 / IPv6 CIDR，留空允许所有来源。'],
       net_rec: ['核心流量统计', '记录核心流量与分布；与 API 历史采集分别控制。'],
       max_rec: ['流量记录上限', '核心流量统计开启后可以热更新。'],
       net_cleanday: ['每月清理日', '1–31；留空关闭定期清理。'],
@@ -325,6 +325,11 @@
       });
       describeInput();
       wrap.append(title, input, help, ...(detail ? [detail] : []));
+      if (key === 'admin_cidr') {
+        const warning = el('small', {class: 'setting-warning', 'data-admin-acl-warning': '', text: '当前允许所有可到达网关的来源访问管理页面。建议填写可信网段，并保留当前设备的访问范围。'});
+        const update = () => { warning.hidden = Boolean(input.value.trim()); };
+        input.addEventListener('input', update); update(); wrap.append(warning);
+      }
       if (spec.secret && saved && !['secret', 'observer_token'].includes(spec.type)) {
         wrap.append(el('button', {class: 'button small secondary', type: 'button', text: '清空已保存的值', onclick: () => { input.value = ''; setValue(namespace, key, ''); }}));
       }

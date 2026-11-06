@@ -1,8 +1,8 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
-use ipnet::Ipv4Net;
+use ipnet::{IpNet, Ipv4Net};
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -184,53 +184,35 @@ impl Default for DnsCfg {
 
 #[derive(Debug, Clone, Default)]
 pub struct CidrAcl {
-    nets: Vec<Ipv4Net>,
+    nets: Vec<IpNet>,
 }
 
 impl CidrAcl {
-
     pub fn parse(raw: &str) -> Result<Self, String> {
-        let mut nets = Vec::new();
-        for item in raw.split(',') {
-            let item = item.trim();
-            if item.is_empty() {
-                continue;
-            }
-            nets.push(parse_acl_item(item)?);
-        }
+        let nets = raw.split(',').map(str::trim).filter(|item| !item.is_empty())
+            .map(parse_acl_item).collect::<Result<Vec<_>, _>>()?;
         Ok(Self { nets })
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.nets.is_empty()
-    }
+    pub fn is_empty(&self) -> bool { self.nets.is_empty() }
 
-    pub fn nets(&self) -> &[Ipv4Net] {
-        &self.nets
-    }
+    pub fn nets(&self) -> &[IpNet] { &self.nets }
 
     pub fn allows(&self, ip: IpAddr) -> bool {
-        if self.nets.is_empty() {
-            return true;
-        }
-        let v4 = match ip {
-            IpAddr::V4(a) => a,
-            IpAddr::V6(a) => match a.to_ipv4_mapped() {
-                Some(a) => a,
-                None => return false,
-            },
+        if self.nets.is_empty() { return true; }
+        let ip = match ip {
+            IpAddr::V6(addr) => addr.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+            _ => ip,
         };
-        self.nets.iter().any(|n| n.contains(&v4))
+        self.nets.iter().any(|net| net.contains(&ip))
     }
 }
 
-fn parse_acl_item(item: &str) -> Result<Ipv4Net, String> {
+fn parse_acl_item(item: &str) -> Result<IpNet, String> {
     if item.contains('/') {
-        item.parse::<Ipv4Net>()
-            .map_err(|e| format!("bad cidr {item:?}: {e}"))
+        item.parse::<IpNet>().map_err(|e| format!("bad cidr {item:?}: {e}"))
     } else {
-        let addr: Ipv4Addr = item.parse().map_err(|e| format!("bad ip {item:?}: {e}"))?;
-        Ok(Ipv4Net::new(addr, 32).expect("/32 always valid"))
+        item.parse::<IpAddr>().map(IpNet::from).map_err(|e| format!("bad ip {item:?}: {e}"))
     }
 }
 
@@ -1223,6 +1205,19 @@ mod tests {
         assert!(!acl.allows("10.10.10.124".parse().unwrap()));
         assert!(acl.allows("192.168.5.5".parse().unwrap()));
         assert!(!acl.allows("172.16.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn cidr_acl_mixed_families_keep_all_restrictions() {
+        let acl = CidrAcl::parse("127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,::1/128,fc00::/7,fe80::/10").unwrap();
+        assert_eq!(acl.nets().len(), 7);
+        for ip in ["10.1.2.3", "::ffff:10.1.2.3", "::1", "fd00::1", "fe80::1"] {
+            assert!(acl.allows(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["203.0.113.10", "2001:db8::1", "::ffff:203.0.113.10"] {
+            assert!(!acl.allows(ip.parse().unwrap()), "{ip}");
+        }
+        assert!(CidrAcl::parse("2001:db8::1").unwrap().allows("2001:db8::1".parse().unwrap()));
     }
 
     #[test]

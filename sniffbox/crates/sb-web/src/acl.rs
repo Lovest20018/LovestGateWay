@@ -1,7 +1,7 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
 use arc_swap::ArcSwap;
-use ipnet::Ipv4Net;
+use ipnet::IpNet;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -13,15 +13,15 @@ pub fn admin_handle(acl: AdminAcl) -> AdminHandle {
 
 #[derive(Debug, Clone, Default)]
 pub struct AdminAcl {
-    nets: Vec<Ipv4Net>,
+    nets: Vec<IpNet>,
 }
 
 impl AdminAcl {
-    pub fn new(nets: Vec<Ipv4Net>) -> Self {
+    pub fn new(nets: Vec<IpNet>) -> Self {
         Self { nets }
     }
 
-    pub fn nets(&self) -> &[Ipv4Net] {
+    pub fn nets(&self) -> &[IpNet] {
         &self.nets
     }
 
@@ -30,15 +30,11 @@ impl AdminAcl {
         if self.nets.is_empty() {
             return true;
         }
-        let v4 = match ip {
-            IpAddr::V4(a) => a,
-            IpAddr::V6(a) => match a.to_ipv4_mapped() {
-                Some(a) => a,
-
-                None => return a.is_loopback(),
-            },
+        let ip = match ip {
+            IpAddr::V6(addr) => addr.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(ip),
+            _ => ip,
         };
-        v4.is_loopback() || self.nets.iter().any(|n| n.contains(&v4))
+        ip.is_loopback() || self.nets.iter().any(|net| net.contains(&ip))
     }
 }
 
@@ -67,6 +63,14 @@ mod tests {
         assert!(!acl.allows("2001:db8::1".parse().unwrap()));
         assert!(acl.allows("::ffff:10.1.2.3".parse().unwrap()));
         assert!(!acl.allows("::ffff:192.168.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn mixed_acl_enforces_ipv6_ranges() {
+        let acl = AdminAcl::new(vec!["10.0.0.0/8".parse().unwrap(), "2001:db8::/64".parse().unwrap()]);
+        assert!(acl.allows("2001:db8::10".parse().unwrap()));
+        assert!(!acl.allows("2001:db8:1::10".parse().unwrap()));
+        assert!(!acl.allows("203.0.113.10".parse().unwrap()));
     }
 
     #[test]
