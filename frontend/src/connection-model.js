@@ -16,8 +16,8 @@ export function connectionTracker(limit=100) {
   return {
     resetRates(){for(const value of previous.values()){value.at=null;value.row.dlSpeed=null;value.row.ulSpeed=null;}},
     update(value,at=Date.now()) {
-      if(!Array.isArray(value?.connections))throw Error('连接状态响应无效，请稍后重试。');
-      const normalized=value.connections.map(connectionRow),ids=new Set();
+      if(!value||typeof value!=='object'||Array.isArray(value)||(value.connections!==null&&!Array.isArray(value.connections)))throw Error('连接状态响应无效，请稍后重试。');
+      const normalized=(value.connections||[]).map(connectionRow),ids=new Set();
       for(const row of normalized){if(!row.id||ids.has(row.id))throw Error('连接标识不完整或重复，已保留上次状态。');ids.add(row.id);}
       const active=normalized.map(row=>{
         const old=previous.get(row.id),seconds=old?.at!=null&&at>old.at?(at-old.at)/1000:null;
