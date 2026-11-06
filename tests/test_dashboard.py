@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / 'scripts'))
 import prepare_dashboard as dashboard
 
 class DashboardTests(unittest.TestCase):
-    def test_source_build_and_opaque_compatibility(self):
+    def test_source_build_without_retired_upstream_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:
             output=Path(temporary)
             entry=dashboard.prepare_dashboard(output)
@@ -24,7 +24,10 @@ class DashboardTests(unittest.TestCase):
             self.assertIn('ppgw-gateway-view',index)
             upstream=ROOT/'FILES/etc/config/clash/clash-dashboard/ui'
             bundle=next(upstream.glob('bundle.*.js'))
-            self.assertEqual((output/bundle.name).read_bytes(),bundle.read_bytes())
+            self.assertFalse((output/bundle.name).exists())
+            self.assertFalse((output/(bundle.name+'.gz')).exists())
+            self.assertNotIn(bundle.name,index)
+            self.assertIn('location.replace',(output/'legacy.html').read_text())
             shell=(output/entry).read_text(encoding='utf-8')
             self.assertNotIn('legacy-bridge',shell)
             self.assertNotIn('legacy-bridge.js',manifest['assets'])
