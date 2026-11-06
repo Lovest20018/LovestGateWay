@@ -340,7 +340,7 @@ async function main() {
     await page.locator('#apply').click(); await saved();
     assert.equal(submitted[1].kind, 'policy_reset');
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();
-    await page.locator('#source-type').selectOption('yaml');
+    await page.getByRole('button',{name:'切换配置来源',exact:true}).click();await page.locator('#source-type').selectOption('yaml');
     await page.locator('#asset-file').setInputFiles({name: 'fixture.yaml', mimeType: 'text/yaml', buffer: Buffer.from('proxies: []\nproxy-groups: []\nrules: [MATCH,DIRECT]\n')});
     await page.locator('.source-card').getByRole('button', {name: '导入文件', exact: true}).click();
     await page.getByText('文件已保存。请预览并确认切换到导入的配置；同名资源也可通过“重启应用资源”生效。', {exact: true}).waitFor();

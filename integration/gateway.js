@@ -11,7 +11,7 @@
     function pause(ms) { return new Promise(resolve => { const finish = () => { clearTimeout(id); lifetime.signal.removeEventListener('abort', finish); resolve(); }; const id = setTimeout(finish, ms); lifetime.signal.addEventListener('abort', finish, {once: true}); }); }
     const dirty = new Map();
     const openHelp = new Set();
-    let model, category = 'access', subscriptionPage = 'editor', subscriptionControls = null, sourceDraft = null, sourceDetails = null;
+    let model, category = 'access', subscriptionPage = 'editor', subscriptionControls = null, sourceDraft = null, sourceDetails = null, sourceExpanded = false;
     let passwordConfirmation = '';
     let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0, corePolling = null;
     const bridge = {setEditorBusy: busy => { if(editorBusy!==busy){editorBusy=busy;updateDirty();} },
@@ -36,7 +36,7 @@
           data.save_target === 'local_policy' ? '全局选项、提供商、节点组、规则与更新计划将统一保存。本地覆盖策略不会改写源 YAML。' : 'PPsub 配置与更新计划将统一保存。加载失败时整批恢复。'}));
         openPreview();
       },
-      editorApplied: async () => { dirty.clear(); sourceDraft = null; await refreshRuntime(); await load(); },
+      editorApplied: async () => { dirty.clear(); sourceDraft = null; sourceExpanded = false; await refreshRuntime(); await load(); },
       attachOptions: host => {
         subscriptionControls = host; renderSubscriptionGlobals(); updateDirty();
         return () => { if (subscriptionControls === host) subscriptionControls = null; };
@@ -519,7 +519,9 @@
       section.classList.add('source-card');
       const explanation = sourceExplanation(sourceDetails);
       if (explanation) section.append(explanation);
-      const details = el('section', {class:'source-switch'});
+      const expanded=sourceExpanded||sourceDraft?.changed;
+      if(!expanded)section.append(el('button',{class:'btn',type:'button',text:'切换配置来源',onclick:()=>{sourceExpanded=true;render();}}));
+      const details = el('section', {class:'source-switch',hidden:!expanded});
       details.append(el('h3', {text:sourceDraft?.changed ? '切换配置来源 · 尚未应用' : '切换配置来源'}));
       const draft = sourceDraft || {kind:kind === 'other' ? 'remote' : kind, url:kind === 'remote' ? ini.suburl : '', yaml:ini.yamlfile, changed:false, reset:false, ppsub:null};
       const type = el('select', {id:'source-type'}, [['remote','远程完整配置'],['yaml','本地 YAML'],['ppsub','原生 PPsub']].map(([value,text]) => el('option',{value,text,selected:draft.kind===value})));
@@ -553,7 +555,7 @@
         form.append(el('label',{class:'checkline wide'},[reset,document.createTextNode('允许切换时备份并清除冲突的旧本地 PPsub / 覆盖策略')]));
       }
       form.append(el('div',{class:'button-row wide'},[
-        el('button',{class:'btn',type:'button',text:'取消切换',onclick:()=>{sourceDraft=null;notice('');render();}}),
+        el('button',{class:'btn',type:'button',text:'取消切换',onclick:()=>{sourceDraft=null;sourceExpanded=false;notice('');render();}}),
         el('button',{class:'btn btn-brand',type:'button',text:'预览来源切换',onclick:async()=>{
           try {
             if (dirty.size || window.ppgwPpsub?.hasChanges()) throw Error('请先保存或放弃当前编辑，再切换配置来源。');
@@ -803,7 +805,7 @@
             if (job.status === 'failed') {
               postUpload = null; await load(); notice(message(job.error), 'error'); updateDirty(); return;
             }
-            const uploaded = postUpload; postUpload = null; sourceDraft = null;
+            const uploaded = postUpload; postUpload = null; sourceDraft = null; sourceExpanded = false;
             dirty.clear();
             window.ppgwPpsub?.invalidate();
             await refreshRuntime();

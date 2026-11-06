@@ -56,6 +56,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.locator('.source-kind').waitFor();
     const nav = page.locator('#shell-nav');
     assert.equal(await nav.locator('a[href="#/proxies"]').isVisible(), false);
+    assert.equal(await page.locator('#source-type').isVisible(),false);await page.getByRole('button',{name:'切换配置来源',exact:true}).click();
     await page.locator('#source-type').selectOption('ppsub');
     await page.locator('#source-ppsub').setInputFiles({name: 'import.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(native))});
     await page.getByText('PPsub 文件已选中，预览并确认后才会切换来源。', {exact: true}).waitFor();
