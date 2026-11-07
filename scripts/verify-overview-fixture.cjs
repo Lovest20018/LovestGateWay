@@ -1,3 +1,4 @@
+const {setAppearance}=require('./browser-appearance-fixture.cjs');
 const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Maintained overview acceptance. All requests use intercepted synthetic origins. */
 const assert=require('node:assert/strict');
@@ -74,7 +75,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     await page.locator('#reauth-panel').getByLabel('管理密码',{exact:true}).fill(password);await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();
     await page.locator('#reauth-panel').waitFor({state:'detached'});await overview.locator('.overview-status').waitFor({state:'hidden'});
     assert.equal(await page.evaluate(()=>window.documentIdentity),'overview-source');
-    await page.getByRole('group',{name:'外观',exact:true}).getByRole('button',{name:'暗色',exact:true}).click();
+    await setAppearance(page,'dark');
     await capture('overview-source-dark.png');
     await page.locator('#shell-nav [data-route=proxies]').click();
     await page.locator('#proxies-page').getByRole('heading',{name:'代理',exact:true}).waitFor();

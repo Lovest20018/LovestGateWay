@@ -21,10 +21,21 @@ const button=(text,onclick)=>el('button',{type:'button',class:'btn',text,onclick
 const routeIcons={overview:'gauge',proxies:'globe',rules:'filter',connections:'swap',traffic:'history',distribution:'pie',logs:'terminal',region:'radio',subscriptions:'package',settings:'settings',diagnostics:'activity'};
 function expired(){monitor?.expire();if(document.getElementById('reauth-panel'))return;const status=document.getElementById('shell-status');if(status){status.hidden=false;status.replaceChildren(document.createTextNode('登录已失效，任务与未保存的编辑仍保留。 '),button('重新登录',()=>login(true)));}}
 const systemTheme=matchMedia('(prefers-color-scheme: dark)');
+const themeChoices=[['system','系统','跟随系统','monitor'],['light','亮色','亮色','sun'],['dark','暗色','暗色','moon']];
 function selectedTheme(){const saved=localStorage.getItem('ppgw-theme');return ['system','light','dark'].includes(saved)?saved:'system';}
-function applyTheme(){const selected=selectedTheme(),resolved=selected==='system'?(systemTheme.matches?'dark':'light'):selected;document.documentElement.dataset.theme=resolved;document.documentElement.style.colorScheme=resolved;for(const key of ['--bg','--bg-elev','--text','--nav-bg','--nav-text','--brand','--brand-deep','--brand-text','--brand-soft','--brand-grad'])document.documentElement.style.removeProperty(key);document.querySelectorAll('#shell-appearance button').forEach(choice=>choice.setAttribute('aria-pressed',String(choice.dataset.themeChoice===selected)));
+function updateThemeControl(choice=document.getElementById('shell-theme')){
+  if(!choice)return;
+  const index=themeChoices.findIndex(([value])=>value===selectedTheme()),[value,label,name,graphic]=themeChoices[index],next=themeChoices[(index+1)%themeChoices.length][2];
+  choice.dataset.themeChoice=value;choice.setAttribute('aria-label',`外观：${name}，点击切换为${next}`);choice.title=`外观：${name}；切换为${next}`;
+  choice.replaceChildren(icon(graphic),el('span',{text:label}));
 }
-function themeControl(){const choices=el('div',{id:'shell-appearance',class:'shell-appearance',role:'group','aria-label':'外观'});for(const[value,label,name,graphic]of [['system','系统','跟随系统','monitor'],['light','亮色','亮色','sun'],['dark','暗色','暗色','moon']]){const choice=button('',()=>{localStorage.setItem('ppgw-theme',value);applyTheme();});choice.setAttribute('aria-label',name);choice.setAttribute('title',name);choice.setAttribute('aria-pressed',String(selectedTheme()===value));choice.dataset.themeChoice=value;choice.append(icon(graphic),el('span',{text:label}));choices.append(choice);}return choices;}
+function applyTheme(){const selected=selectedTheme(),resolved=selected==='system'?(systemTheme.matches?'dark':'light'):selected;document.documentElement.dataset.theme=resolved;document.documentElement.style.colorScheme=resolved;for(const key of ['--bg','--bg-elev','--text','--nav-bg','--nav-text','--brand','--brand-deep','--brand-text','--brand-soft','--brand-grad'])document.documentElement.style.removeProperty(key);updateThemeControl();}
+function themeControl(){
+  const choices=el('div',{id:'shell-appearance',class:'shell-appearance',role:'group','aria-label':'外观'}),choice=button('',()=>{
+    const index=themeChoices.findIndex(([value])=>value===selectedTheme());localStorage.setItem('ppgw-theme',themeChoices[(index+1)%themeChoices.length][0]);applyTheme();
+  });
+  choice.id='shell-theme';updateThemeControl(choice);choices.append(choice);return choices;
+}
 async function runtime(){try{const response=await fetch('/sniffbox/info',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(10000)});if(response.ok){info=await response.json();runtimePaused=false;updateNav();return true;}if(response.status===401){runtimePaused=true;expired();}return false;}catch{return false;}}
 function scheduleRuntime(){
   clearTimeout(timer);
@@ -105,7 +116,7 @@ function shell(){
   app.replaceChildren();
   const nav=el('nav',{id:'shell-nav','aria-label':'主导航'});
   const brand=el('a',{href:'#/overview',class:'shell-brand','aria-label':'LovestGateWay 概览',title:'LovestGateWay',onclick:e=>{e.preventDefault();navigate('#/overview');}});
-  brand.append(el('img',{src:'/ui/lovestgateway.svg',width:'30',height:'30',alt:''}),el('span',{class:'shell-wordmark'},[document.createTextNode('Lovest'),el('b',{text:'GateWay'})]));
+  brand.append(el('img',{src:'/ui/lovestgateway.svg',width:'30',height:'30',alt:''}),el('span',{class:'shell-wordmark'},[el('span',{text:'Lovest'}),el('b',{text:'GateWay'})]));
   const collapse=button('',()=>{localStorage.setItem('ppgw-nav-collapsed',String(!app.classList.contains('shell-sidebar-collapsed')));syncSidebar();});
   collapse.id='shell-collapse';collapse.setAttribute('aria-controls','shell-nav-links');collapse.append(icon('panel-left'));
   nav.append(el('div',{class:'shell-nav-head'},[brand,collapse]));
@@ -120,7 +131,7 @@ function shell(){
     links.append(group);
   }
   const logout=button('',async()=>{if(!allowed('#/logout'))return;try{await logoutSession();authenticated=false;location.reload();}catch{const status=document.getElementById('shell-status');status.hidden=false;status.textContent='退出未确认，请重试以撤销服务器会话。';}});
-  logout.id='shell-logout';logout.setAttribute('aria-label','退出登录');logout.title='退出登录';logout.append(icon('logout'),el('span',{class:'shell-nav-label',text:'退出登录'}));
+  logout.id='shell-logout';logout.setAttribute('aria-label','退出登录');logout.title='退出登录';logout.append(icon('logout'),el('span',{class:'shell-nav-label',text:'退出'}));
   nav.append(links,el('div',{class:'shell-nav-footer'},[themeControl(),logout]));
   const menu=button('',()=>setNavigation(!nav.classList.contains('open')));menu.append(icon('menu'));menu.id='shell-menu';menu.setAttribute('aria-label','打开导航');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-controls','shell-nav');
   const main=el('main',{id:'shell-content'}),backdrop=button('',()=>setNavigation(false));backdrop.id='shell-backdrop';backdrop.hidden=true;backdrop.setAttribute('aria-label','关闭导航');

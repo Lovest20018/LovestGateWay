@@ -1,3 +1,4 @@
+const {setAppearance}=require('./browser-appearance-fixture.cjs');
 const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Five maintained pages against a loopback fixture; no external API is contacted. */
 const assert=require('node:assert/strict'),http=require('node:http'),fs=require('node:fs/promises'),path=require('node:path');
@@ -77,11 +78,11 @@ const routes=['connections','traffic','distribution','logs','region'];
     for(const width of [1440,375,320]){
       await page.setViewportSize({width,height:width===1440?1000:900});
       for(const [theme,label]of [['light','亮色'],['dark','暗色']]){
-        if(width<761)await page.locator('#shell-menu').click();await page.getByRole('button',{name:label,exact:true}).click();if(width<761)await page.keyboard.press('Escape');
+        if(width<761)await page.locator('#shell-menu').click();await setAppearance(page,theme);if(width<761)await page.keyboard.press('Escape');
         await capture(key,'source-'+width+'-'+theme);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,key+' must fit '+width+'px');
       }
     }
-    await page.setViewportSize({width:1440,height:1000});await page.getByRole('button',{name:'亮色',exact:true}).click();
+    await page.setViewportSize({width:1440,height:1000});await setAppearance(page,'light');
   }
   await go('traffic');traffic=Array.from({length:10000},(_,i)=>({...traffic[0],client:'192.0.2.1',domain:'scale-'+i+'.example.com',down:i,up:1,conns:1,ts:Date.now()-60000,last_seen:Date.now()}));broadcast('/sniffbox/traffic/sse',traffic);await page.waitForTimeout(250);await flow.getByLabel('搜索流量记录',{exact:true}).fill('scale-9999.');await flow.getByText('scale-9999.example.com',{exact:true}).first().waitFor();assert.equal(await flow.locator('tbody tr').count(),1);await flow.getByLabel('搜索流量记录',{exact:true}).fill('');assert.ok(await flow.locator('tbody tr').count()<=100);checks.push('traffic: 10000-record snapshot remains paginated and final record is searchable');await flow.getByRole('button',{name:'清空记录',exact:true}).click();await flow.getByRole('button',{name:'确认',exact:true}).click();await page.waitForTimeout(200);assert.equal(requests.filter(row=>row.target==='/sniffbox/traffic/clear').length,1);checks.push('traffic: confirmed clear');
   await go('connections');expected=require('node:crypto').createHash('sha256').update('ChangedFixturePassword8').digest('hex');await conn.getByRole('button',{name:'刷新',exact:true}).click();await page.locator('#shell-status').getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill('ChangedFixturePassword8');await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});await page.waitForTimeout(200);assert.equal(writes().filter(row=>row.target.startsWith('/connections')).length,1);assert.equal(requests.filter(row=>row.target==='/connections').at(-1).authorized,true);checks.push('auth: native page stops on 401, shared reauth restores reads, no write replay');

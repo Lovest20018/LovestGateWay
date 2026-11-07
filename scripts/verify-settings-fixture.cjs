@@ -1,3 +1,4 @@
+const {setAppearance}=require('./browser-appearance-fixture.cjs');
 const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Browser acceptance against synthetic APIs; never connects to a live gateway. */
 const assert = require('node:assert/strict');
@@ -313,12 +314,12 @@ async function main() {
     const appearance = navigation.getByRole('group', {name:'外观',exact:true});
     const themeSettled = color => page.waitForFunction(expected =>
       getComputedStyle(document.querySelector('.toggle-field input:checked')).backgroundColor === expected, color);
-    await appearance.getByRole('button',{name:'暗色',exact:true}).click();
+    await setAppearance(page,'dark');
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
     assert.equal(await page.locator('.ppgw-gateway').evaluate(node => getComputedStyle(node).color === getComputedStyle(document.body).color), true);
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-dark.png'), fullPage: true});
-    await appearance.getByRole('button',{name:'亮色',exact:true}).click();
+    await setAppearance(page,'light');
     await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
     await themeSettled('rgb(249, 131, 42)');
     await page.screenshot({path: path.join(root, 'dist/settings-unified-light.png'), fullPage: true});

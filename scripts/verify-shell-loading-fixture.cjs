@@ -1,3 +1,4 @@
+const {setAppearance}=require('./browser-appearance-fixture.cjs');
 const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Synthetic route loading and mobile keyboard checks; no live gateway access. */
 const assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path');
@@ -35,6 +36,13 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
     hold=false;release();await page.waitForTimeout(200);assert.equal(await page.locator('#proxies-page').count(),0,'late imports cannot mount an obsolete route');
     await page.goBack();await page.locator('#proxies-page').waitFor();await page.locator('#shell-nav [data-route=overview]').click();await page.locator('#overview-page').waitFor();
     const nav=page.locator('#shell-nav'),collapse=page.locator('#shell-collapse');
+    const appearance=page.locator('#shell-theme');
+    assert.equal(await nav.locator('#shell-appearance button').count(),1);
+    assert.equal(await appearance.getAttribute('data-theme-choice'),'system');
+    for(const theme of ['light','dark','system']){
+      await appearance.click();assert.equal(await appearance.getAttribute('data-theme-choice'),theme);
+      assert.equal(await appearance.evaluate(node=>node===document.activeElement),true,'theme switching retains keyboard focus');
+    }
     assert.deepEqual(await nav.locator('[data-route] .shell-nav-label').allTextContents(),['概览','代理','规则','连接','流量','分布','日志','区域','订阅','设置','诊断']);
     assert.deepEqual(await nav.locator('.shell-nav-group-label').allTextContents(),['网络','观测','管理']);
     for(const width of [1440,1024,761]){
@@ -42,13 +50,15 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
       const layout=await nav.evaluate(node=>{
         const rect=node.getBoundingClientRect(),brandNode=node.querySelector('.shell-brand'),brand=brandNode.getBoundingClientRect(),toggle=node.querySelector('#shell-collapse').getBoundingClientRect();
         const group=node.querySelector('.shell-nav-group-label').getBoundingClientRect(),text=node.querySelector('.shell-nav-label').getBoundingClientRect(),footer=node.querySelector('.shell-nav-footer').getBoundingClientRect();
-        return{width:rect.width,footerBottom:footer.bottom,brandRight:brand.right,brandClipped:brandNode.scrollWidth>brandNode.clientWidth,toggleLeft:toggle.left,toggleWidth:toggle.width,indent:text.left-group.left,footerClipped:[...node.querySelectorAll('.shell-nav-footer button')].some(button=>button.scrollWidth>button.clientWidth),overflow:document.documentElement.scrollWidth>innerWidth};
+        const words=[...node.querySelector('.shell-wordmark').children].map(word=>word.getBoundingClientRect()),links=node.querySelector('.shell-nav-links').getBoundingClientRect();
+        return{width:rect.width,footerBottom:footer.bottom,footerGap:footer.top-links.bottom,stackedBrand:words.length===2&&words[1].top>=words[0].bottom,brandRight:brand.right,brandClipped:brandNode.scrollWidth>brandNode.clientWidth,toggleLeft:toggle.left,toggleWidth:toggle.width,indent:text.left-group.left,footerClipped:[...node.querySelectorAll('.shell-nav-footer button')].some(button=>button.scrollWidth>button.clientWidth),overflow:document.documentElement.scrollWidth>innerWidth};
       });
-      assert.equal(layout.width,216);assert.ok(layout.footerBottom<=743);assert.ok(layout.brandRight<=layout.toggleLeft);assert.equal(layout.brandClipped,false);assert.equal(layout.toggleWidth,32);assert.ok(layout.indent>=24);assert.equal(layout.footerClipped,false);assert.equal(layout.overflow,false);
+      assert.equal(layout.width,176);assert.ok(layout.footerBottom<=743);assert.ok(layout.footerGap<=16,'appearance follows the menu without stretching a blank gap');assert.equal(layout.stackedBrand,true);assert.ok(layout.brandRight<=layout.toggleLeft);assert.equal(layout.brandClipped,false);assert.equal(layout.toggleWidth,28);assert.ok(layout.indent>=24);assert.equal(layout.footerClipped,false);assert.equal(layout.overflow,false);
     }
     await page.setViewportSize({width:1440,height:743});
+    assert.equal(await page.locator('#shell-logout .shell-nav-label').textContent(),'退出');
     for(const theme of ['light','dark']){
-      await page.getByRole('button',{name:theme==='light'?'亮色':'暗色',exact:true}).click();
+      await setAppearance(page,theme);
       await nav.screenshot({path:path.join(evidence,`sidebar-expanded-${theme}.png`),animations:'disabled'});
     }
     await collapse.click();assert.equal(await collapse.getAttribute('aria-expanded'),'false');
@@ -62,7 +72,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
     assert.equal(await nav.locator('[data-route=connections] .shell-nav-label').isVisible(),false);
     assert.equal(await nav.getByRole('link',{name:'诊断',exact:true}).getAttribute('title'),'诊断');
     for(const theme of ['light','dark']){
-      await page.getByRole('button',{name:theme==='light'?'亮色':'暗色',exact:true}).click();
+      await setAppearance(page,theme);
       await page.screenshot({path:path.join(evidence,`sidebar-collapsed-${theme}.png`),animations:'disabled'});
     }
     await nav.getByRole('link',{name:'概览',exact:true}).click();await page.locator('#overview-page').waitFor();
@@ -76,7 +86,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
         await mobileLabel.waitFor({state:'visible'});
         assert.equal(await mobileLabel.isVisible(),true,'mobile drawer stays expanded despite desktop preference');
         assert.equal(await collapse.isVisible(),false);
-        await page.getByRole('group',{name:'外观',exact:true}).getByRole('button',{name:theme==='light'?'亮色':'暗色',exact:true}).click();
+        await setAppearance(page,theme);
         const focusable=nav.locator('a[href],button').filter({visible:true});
         await focusable.last().focus();await page.keyboard.press('Tab');assert.equal(await focusable.first().evaluate(node=>node===document.activeElement),true);
         await page.keyboard.press('Shift+Tab');assert.equal(await focusable.last().evaluate(node=>node===document.activeElement),true);
@@ -98,7 +108,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
     await page.screenshot({path:path.join(evidence,'sidebar-short-window.png')});
     const connectionOnly=await context.newPage(),before=modules.length;await connectionOnly.goto(origin+'/ui/#/connections');await connectionOnly.locator('#connections-page').waitFor();assert.equal(modules.slice(before).some(name=>name.startsWith('overview.')),false,'shared formatting cannot pull in the overview route');await connectionOnly.close();
     assert.deepEqual(errors,[]);
-    const report={syntheticOnly:true,lazyInitialRoutes:true,obsoleteImportIgnored:true,backNavigation:true,desktopWidths:[1440,1024,761],sidebarWidth:216,brandAndFooterUnclipped:true,groupedShortLabels:true,indentedLinks:true,persistentDesktopCollapse:true,collapsedNavigation:true,mobileIgnoresDesktopCollapse:true,shortWindowFooter:true,mobileWidths:[375,320],themes:['light','dark'],backdrop:true,focusTrap:true,escapeRestoresFocus:true,closedEscapePreservesFocus:true,pageErrors:errors};
+    const report={syntheticOnly:true,lazyInitialRoutes:true,obsoleteImportIgnored:true,backNavigation:true,desktopWidths:[1440,1024,761],sidebarWidth:176,twoLineBrand:true,footerFollowsLinks:true,shortLogoutLabel:true,singleAppearanceCycle:true,brandAndFooterUnclipped:true,groupedShortLabels:true,indentedLinks:true,persistentDesktopCollapse:true,collapsedNavigation:true,mobileIgnoresDesktopCollapse:true,shortWindowFooter:true,mobileWidths:[375,320],themes:['light','dark'],backdrop:true,focusTrap:true,escapeRestoresFocus:true,closedEscapePreservesFocus:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));await context.close();
   }finally{release?.();for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'ignoreErrors'});await browser.close();}
 })().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

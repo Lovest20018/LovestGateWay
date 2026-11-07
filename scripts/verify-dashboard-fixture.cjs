@@ -1,3 +1,4 @@
+const {setAppearance}=require('./browser-appearance-fixture.cjs');
 const {sessionFixture}=require('./browser-session-fixture.cjs');
 /* Exercise the source editor and opaque compatibility dashboard with synthetic data; no live Gateway. */
 const assert = require('node:assert/strict');
@@ -173,7 +174,7 @@ async function exercise(browser, kind) {
     const compact=await added.evaluate(item=>({height:item.getBoundingClientRect().height,groupTextareas:item.querySelectorAll('.editor-group-body textarea').length,width:item.getBoundingClientRect().width}));
     assert.ok(compact.height<=340,'a new desktop group must remain compact: '+JSON.stringify(compact));assert.equal(compact.groupTextareas,0);
     await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-desktop.png')});
-    const appearance=page.getByRole('group',{name:'外观',exact:true});await appearance.getByRole('button',{name:'暗色',exact:true}).click();await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-dark.png')});await appearance.screenshot({path:path.join(root,'dist/appearance-segments-dark.png')});await appearance.getByRole('button',{name:'亮色',exact:true}).click();await appearance.screenshot({path:path.join(root,'dist/appearance-segments-light.png')});
+    const appearance=page.getByRole('group',{name:'外观',exact:true});await setAppearance(page,'dark');await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-dark.png')});await appearance.screenshot({path:path.join(root,'dist/appearance-segments-dark.png')});await setAppearance(page,'light');await appearance.screenshot({path:path.join(root,'dist/appearance-segments-light.png')});
     await page.setViewportSize({width:375,height:844});
     await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('.source-editor *')].map(n=>({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right})).filter(n=>n.right>innerWidth+1&&n.width>0).slice(0,20))));
