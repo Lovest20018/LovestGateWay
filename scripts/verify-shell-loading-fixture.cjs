@@ -40,11 +40,11 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
     for(const width of [1440,1024,761]){
       await page.setViewportSize({width,height:743});
       const layout=await nav.evaluate(node=>{
-        const rect=node.getBoundingClientRect(),brand=node.querySelector('.shell-brand').getBoundingClientRect(),toggle=node.querySelector('#shell-collapse').getBoundingClientRect();
+        const rect=node.getBoundingClientRect(),brandNode=node.querySelector('.shell-brand'),brand=brandNode.getBoundingClientRect(),toggle=node.querySelector('#shell-collapse').getBoundingClientRect();
         const group=node.querySelector('.shell-nav-group-label').getBoundingClientRect(),text=node.querySelector('.shell-nav-label').getBoundingClientRect(),footer=node.querySelector('.shell-nav-footer').getBoundingClientRect();
-        return{width:rect.width,footerBottom:footer.bottom,brandRight:brand.right,toggleLeft:toggle.left,indent:text.left-group.left,overflow:document.documentElement.scrollWidth>innerWidth};
+        return{width:rect.width,footerBottom:footer.bottom,brandRight:brand.right,brandClipped:brandNode.scrollWidth>brandNode.clientWidth,toggleLeft:toggle.left,toggleWidth:toggle.width,indent:text.left-group.left,footerClipped:[...node.querySelectorAll('.shell-nav-footer button')].some(button=>button.scrollWidth>button.clientWidth),overflow:document.documentElement.scrollWidth>innerWidth};
       });
-      assert.equal(layout.width,244);assert.ok(layout.footerBottom<=743);assert.ok(layout.brandRight<=layout.toggleLeft);assert.ok(layout.indent>=24);assert.equal(layout.overflow,false);
+      assert.equal(layout.width,216);assert.ok(layout.footerBottom<=743);assert.ok(layout.brandRight<=layout.toggleLeft);assert.equal(layout.brandClipped,false);assert.equal(layout.toggleWidth,32);assert.ok(layout.indent>=24);assert.equal(layout.footerClipped,false);assert.equal(layout.overflow,false);
     }
     await page.setViewportSize({width:1440,height:743});
     for(const theme of ['light','dark']){
@@ -98,7 +98,7 @@ const output=path.resolve(process.argv[2]),evidence=path.resolve(process.argv.fi
     await page.screenshot({path:path.join(evidence,'sidebar-short-window.png')});
     const connectionOnly=await context.newPage(),before=modules.length;await connectionOnly.goto(origin+'/ui/#/connections');await connectionOnly.locator('#connections-page').waitFor();assert.equal(modules.slice(before).some(name=>name.startsWith('overview.')),false,'shared formatting cannot pull in the overview route');await connectionOnly.close();
     assert.deepEqual(errors,[]);
-    const report={syntheticOnly:true,lazyInitialRoutes:true,obsoleteImportIgnored:true,backNavigation:true,desktopWidths:[1440,1024,761],groupedShortLabels:true,indentedLinks:true,persistentDesktopCollapse:true,collapsedNavigation:true,mobileIgnoresDesktopCollapse:true,shortWindowFooter:true,mobileWidths:[375,320],themes:['light','dark'],backdrop:true,focusTrap:true,escapeRestoresFocus:true,closedEscapePreservesFocus:true,pageErrors:errors};
+    const report={syntheticOnly:true,lazyInitialRoutes:true,obsoleteImportIgnored:true,backNavigation:true,desktopWidths:[1440,1024,761],sidebarWidth:216,brandAndFooterUnclipped:true,groupedShortLabels:true,indentedLinks:true,persistentDesktopCollapse:true,collapsedNavigation:true,mobileIgnoresDesktopCollapse:true,shortWindowFooter:true,mobileWidths:[375,320],themes:['light','dark'],backdrop:true,focusTrap:true,escapeRestoresFocus:true,closedEscapePreservesFocus:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));await context.close();
   }finally{release?.();for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'ignoreErrors'});await browser.close();}
 })().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

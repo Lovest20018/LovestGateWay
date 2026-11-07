@@ -1,19 +1,19 @@
 :root{--font-normal:"Twemoji Country Flags", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Droid Sans", "Noto Sans", "Ubuntu", "Cantarell", "DejaVu Sans", "FreeSans", "Arimo", "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "微软雅黑", "WenQuanYi Micro Hei", "Noto Sans CJK SC", "Source Han Sans SC", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", sans-serif}
 html,body,#app{min-height:100%;margin:0}
-#app{display:flex;--shell-nav-width:244px}
+#app{display:flex;--shell-nav-width:216px}
 .shell-main{margin-left:var(--shell-nav-width);min-width:0;width:calc(100% - var(--shell-nav-width))}
 #shell-nav{position:fixed;inset:0 auto 0 0;width:var(--shell-nav-width);padding:16px 12px 12px;background:var(--nav-bg);border-right:1px solid var(--edge);display:flex;flex-direction:column;gap:16px;z-index:90;overflow:hidden}
 .shell-nav-head{display:flex;align-items:center;gap:6px;min-height:36px;flex:none}
-#shell-collapse{display:flex;align-items:center;justify-content:center;flex:none;width:28px;min-height:28px;padding:4px;border:0;background:transparent;box-shadow:none;color:var(--text-2);border-radius:7px}
+#shell-collapse{display:flex;align-items:center;justify-content:center;flex:none;width:32px;min-height:32px;padding:6px;border:1px solid var(--edge);background:var(--row-hover);box-shadow:none;color:var(--text-2);border-radius:8px}
 #shell-collapse:hover{background:var(--row-hover);color:var(--text)}
 .shell-nav-links{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:thin;scrollbar-color:var(--edge) transparent}
-.shell-nav-group+.shell-nav-group{margin-top:16px}
-.shell-nav-group-label{margin:0 0 6px;padding:0 10px;color:var(--text-3);font-size:11px;font-weight:500;letter-spacing:1.5px;line-height:18px}
+.shell-nav-group+.shell-nav-group{margin-top:14px}
+.shell-nav-group-label{margin:0 0 6px;padding:0 10px;color:var(--text-2);font-size:11px;font-weight:600;letter-spacing:1px;line-height:18px}
 #shell-nav .shell-nav-link{position:relative;display:flex;align-items:center;gap:12px;min-height:38px;padding:8px 16px;border-radius:9px;color:var(--nav-text);font-size:13px;font-weight:500;line-height:20px;white-space:nowrap}
 .shell-nav-link+.shell-nav-link{margin-top:3px}
 #shell-nav .shell-nav-link:hover{background:var(--row-hover);color:var(--text)}
-#shell-nav .shell-nav-link.active{background:var(--brand-soft);color:var(--brand-text);font-weight:600}
-.shell-nav-link.active::before{content:"";position:absolute;left:3px;top:50%;width:3px;height:16px;border-radius:3px;background:var(--brand);transform:translateY(-50%)}
+#shell-nav .shell-nav-link.active{background:color-mix(in srgb,var(--brand) 10%,transparent);color:var(--brand-text)}
+.shell-nav-link.active>.shell-icon{color:var(--nav-text)}
 #shell-nav a:focus-visible,#shell-nav button:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .shell-nav-footer{display:flex;flex-direction:column;gap:8px;flex:none;padding-top:12px;border-top:1px solid var(--edge)}
 #shell-logout{display:flex;align-items:center;gap:12px;width:100%;min-height:36px;margin:0;padding:8px 16px;border:0;box-shadow:none;background:transparent;color:var(--nav-text);font-size:12px;font-weight:500}
@@ -33,9 +33,10 @@ html,body,#app{min-height:100%;margin:0}
 .shell-sidebar-collapsed #shell-collapse .shell-icon{transform:rotate(180deg)}
 .shell-sidebar-collapsed .shell-wordmark,.shell-sidebar-collapsed .shell-nav-label,.shell-sidebar-collapsed .shell-nav-group-label,.shell-sidebar-collapsed .shell-appearance span{display:none}
 .shell-sidebar-collapsed #shell-nav .shell-nav-link,.shell-sidebar-collapsed #shell-logout{justify-content:center;padding-inline:0}
+.shell-sidebar-collapsed .shell-nav-link.active>.shell-icon{color:var(--brand-text)}
 .shell-sidebar-collapsed .shell-nav-group+.shell-nav-group{margin-top:10px;padding-top:10px;border-top:1px solid var(--edge)}
 .shell-sidebar-collapsed .shell-appearance{flex-direction:column}
-.shell-sidebar-collapsed .shell-appearance button{flex:none}
+.shell-sidebar-collapsed #shell-nav .shell-appearance button{flex:none;min-height:32px;padding-block:6px}
 }
 @media(max-width:760px){.shell-main{margin-left:0;width:100%}
 #shell-nav{transform:translateX(-100%);transition:transform .18s;width:245px;max-width:calc(100vw - 40px);box-shadow:var(--shadow-pop);background:var(--panel-solid);visibility:hidden;pointer-events:none}
@@ -55,10 +56,10 @@ html,body,#app{min-height:100%;margin:0}
 .shell-wordmark b{font-weight:750;color:var(--brand-text)}
 .shell-icon{flex:none;vertical-align:middle}
 .shell-bar>img{object-fit:contain;margin-right:-6px}
-.shell-appearance{display:flex;gap:3px;padding:3px;border:1px solid var(--edge);border-radius:10px;background:var(--row-hover)}
-#shell-nav .shell-appearance button{display:flex;align-items:center;justify-content:center;gap:4px;flex:1;min-width:0;min-height:30px;margin:0;padding:5px 6px;border:0;border-radius:7px;background:transparent;box-shadow:none;color:var(--nav-text);font-size:11px;font-weight:500}
+.shell-appearance{display:flex;gap:3px}
+#shell-nav .shell-appearance button{display:flex;align-items:center;justify-content:center;gap:4px;flex:1;min-width:0;min-height:36px;margin:0;padding:8px 4px;border:0;border-radius:8px;background:transparent;box-shadow:none;color:var(--nav-text);font-size:11px;font-weight:500;line-height:20px}
 #shell-nav .shell-appearance button:hover{background:var(--panel-hover);color:var(--text)}
-#shell-nav .shell-appearance button[aria-pressed=true]{background:var(--panel-solid);color:var(--brand-text);box-shadow:0 1px 4px #0000000a}
+#shell-nav .shell-appearance button[aria-pressed=true]{background:var(--brand-soft);color:var(--brand-text)}
 .shell-appearance .shell-icon{width:14px;height:14px}
 .page-tabs{display:flex;gap:4px;padding:4px;background:var(--panel);border:1px solid var(--edge);border-radius:12px;overflow-x:auto;align-self:flex-start;max-width:100%;width:fit-content}
 .page-tabs button{flex-shrink:0;border:0;border-radius:8px;background:transparent;color:var(--text-2);font:inherit;font-size:13px;padding:7px 13px;cursor:pointer;white-space:nowrap}
