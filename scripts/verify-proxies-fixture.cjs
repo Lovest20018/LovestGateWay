@@ -23,7 +23,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
   try{
     const context=await browser.newContext({viewport:{width:1440,height:1050},reducedMotion:'reduce'}),page=await context.newPage(),errors=[],requests=[],unexpected=[];
     page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));
-    await page.addInitScript(()=>{localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token',name:'saved-profile'}],unrelatedPreference:17}));localStorage.setItem('ppgw-proxy-settings',JSON.stringify({sort:'natural',showUdp:true,optimize:true,curve:50,unrelated:'retained',gcollapse:{'Fixture Auto':true,'Fixture Smart':true,'Fixture Balance':true,GLOBAL:true}}));});
+    await page.addInitScript(()=>{localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token',name:'saved-profile'}],unrelatedPreference:17}));if(!localStorage.getItem('ppgw-proxy-settings'))localStorage.setItem('ppgw-proxy-settings',JSON.stringify({sort:'natural',showUdp:true,optimize:true,curve:50,unrelated:'retained',gcollapse:{'Fixture Auto':true,'Fixture Smart':true,'Fixture Balance':true,GLOBAL:true}}));});
     let data=structuredClone(fixture),expectedSecret='fixture-token',version=1,readStatus=200,notModified=0,holdSelect=false,releaseSelect,failSelect=false,denyMutation=false,holdRead=false,releaseRead,heldReads=[],holdTests=false,heldTests=[],activeTests=0,maxTests=0,testFailures=false,closeFailures=false,failedProvider='',infoMode='suburl';
     releasePending=()=>{holdSelect=holdRead=holdTests=false;releaseSelect?.();for(const release of [...heldReads,...heldTests])release();};
     const writes=()=>requests.filter(row=>!['GET','HEAD'].includes(row.method));
@@ -87,6 +87,41 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     await capture('proxies-source-desktop.png');
     await proxies.getByRole('button',{name:'页面设置',exact:true}).click();await proxies.getByLabel('代理页面设置').getByText('显示 UDP 标记',{exact:true}).waitFor();
     await proxies.locator('[data-preference=hideUnavail]').check();assert.equal(await exactCard(main,offline).count(),0);await proxies.locator('[data-preference=hideUnavail]').uncheck();
+    const beforeInformation=structuredClone(data),informationAt=writes().length;
+    const notices=['Traffic Reset: 18 Days Left','Traffic Reset: 18 Days Left@196','6.53 GB | 200 GB','6.53 GB | 200 GB@196','Expire Date: 2027/05/25','Expire Date: 2027/05/25@196'];
+    data.proxies[main].all.push(...notices);for(const name of notices)data.proxies[name]={type:'AnyTLS'};version++;
+    await proxies.getByRole('button',{name:'刷新',exact:true}).click();await exactCard(main,notices[0]).waitFor();
+    for(const name of notices)assert.equal(await exactCard(main,name).count(),1,name);
+    await proxies.locator('[data-preference=hideInfoNodes]').check();
+    for(const name of notices)assert.equal(await exactCard(main,name).count(),0,name);
+    assert.match(await proxies.getByLabel('节点隐藏提示',{exact:true}).textContent(),/已隐藏疑似订阅说明节点 6 个/);
+    assert.equal(await exactCard(main,alpha).count(),1);assert.equal(data.proxies[main].now,alpha);
+    assert.equal(writes().length,informationAt,'hiding is a local display preference, never a gateway mutation');
+    const hiddenForm=proxies.getByRole('form',{name:'添加隐藏规则'});
+    await exactCard(main,alpha).getByRole('button',{name:'详情',exact:true}).click();
+    await proxies.getByRole('dialog').getByRole('button',{name:'隐藏此节点',exact:true}).click();await proxies.getByRole('dialog').waitFor({state:'hidden'});
+    assert.equal(await exactCard(main,alpha).count(),0);assert.equal(data.proxies[main].now,alpha,'hiding the selected node never changes the selection');
+    await hiddenForm.getByLabel('隐藏内容',{exact:true}).fill('TIMEOUT');await hiddenForm.getByRole('button',{name:'添加',exact:true}).click();
+    assert.equal(await exactCard(main,offline).count(),0);
+    await hiddenForm.getByLabel('隐藏内容',{exact:true}).fill('timeout');await hiddenForm.getByRole('button',{name:'添加',exact:true}).click();
+    assert.equal(await proxies.getByRole('button',{name:'删除关键词 timeout',exact:true}).count(),1,'duplicate keyword rules are merged');
+    await hiddenForm.getByLabel('匹配方式',{exact:true}).selectOption('hiddenNames');await hiddenForm.getByLabel('隐藏内容',{exact:true}).fill(evil);await hiddenForm.getByRole('button',{name:'添加',exact:true}).click();
+    assert.equal(await exactCard(main,evil).count(),0);assert.equal(await proxies.locator('.proxy-hidden-list img').count(),0);assert.equal(await page.evaluate(()=>window.untrustedRan),undefined);
+    assert.deepEqual(data.proxies[main].all,beforeInformation.proxies[main].all.concat(notices));assert.equal(writes().length,informationAt);
+    await capture('proxies-information-hidden-desktop.png');await page.setViewportSize({width:320,height:900});
+    await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth);await capture('proxies-information-hidden-mobile-320.png');
+    await page.setViewportSize({width:1440,height:1050});await page.locator('#shell-nav [data-route=connections]').click();await page.locator('#connections-page h1').waitFor();
+    await page.locator('#shell-nav [data-route=proxies]').click();await exactCard(main,beta).waitFor();
+    await page.reload();await exactCard(main,beta).waitFor();await page.evaluate(()=>window.documentIdentity='proxies-source');
+    await proxies.getByRole('button',{name:'页面设置',exact:true}).click();assert.equal(await proxies.locator('[data-preference=hideInfoNodes]').isChecked(),true);
+    for(const name of notices)assert.equal(await exactCard(main,name).count(),0,name);
+    for(const name of [alpha,offline,evil])assert.equal(await exactCard(main,name).count(),0,'custom hidden rules persist across remount and full reload');
+    await proxies.getByRole('button',{name:'恢复显示 '+alpha,exact:true}).click();await exactCard(main,alpha).waitFor();
+    await proxies.getByRole('button',{name:'删除关键词 timeout',exact:true}).click();await exactCard(main,offline).waitFor();
+    await proxies.getByRole('button',{name:'清空自定义隐藏',exact:true}).click();await exactCard(main,evil).waitFor();
+    await proxies.locator('[data-preference=hideInfoNodes]').uncheck();for(const name of notices)assert.equal(await exactCard(main,name).count(),1,name);
+    assert.equal(writes().length,informationAt);data=beforeInformation;version++;
+    await proxies.getByRole('button',{name:'刷新',exact:true}).click();await exactCard(main,notices[0]).waitFor({state:'detached'});
     await group(main).getByRole('combobox',{name:'区域',exact:true}).selectOption('JP');assert.equal(await group(main).locator('.proxy-node').count(),1);await group(main).getByRole('combobox',{name:'区域',exact:true}).selectOption('');
     await group(main).getByRole('combobox',{name:'状态',exact:true}).selectOption('offline');assert.equal(await group(main).locator('.proxy-node').count(),1);await group(main).getByRole('combobox',{name:'状态',exact:true}).selectOption('');
     await group(main).getByRole('combobox',{name:'排序',exact:true}).selectOption('latDesc');assert.equal(await group(main).locator('.proxy-node-name').first().getAttribute('title'),beta);await group(main).getByRole('combobox',{name:'排序',exact:true}).selectOption('latAsc');assert.equal(await group(main).locator('.proxy-node-name').first().getAttribute('title'),'DIRECT');await group(main).getByRole('combobox',{name:'排序',exact:true}).selectOption('');
@@ -143,7 +178,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>true});document.dispatchEvent(new Event('visibilitychange'));});const hiddenAt=requests.filter(row=>row.target==='/sniffbox/proxies').length;await page.waitForTimeout(5300);assert.equal(requests.filter(row=>row.target==='/sniffbox/proxies').length,hiddenAt,'hidden pages must stop polling');await page.evaluate(()=>{delete document.hidden;document.dispatchEvent(new Event('visibilitychange'));});await page.waitForFunction(()=>!document.querySelector('#proxies-page .proxies-head .btn:nth-last-child(2)')?.disabled);
     holdTests=true;const batchAt=requests.filter(row=>row.target.endsWith('/delay')||row.target.endsWith('/healthcheck')).length;await page.locator('#proxies-page').getByRole('button',{name:'全部测速',exact:true}).click();for(let i=0;i<100&&heldTests.length<8;i++)await page.waitForTimeout(20);assert.equal(heldTests.length,8);await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route=overview]').click();await page.locator('#overview-page').waitFor();holdTests=false;for(const release of heldTests)release();await page.waitForTimeout(400);assert.equal(requests.filter(row=>row.target.endsWith('/delay')||row.target.endsWith('/healthcheck')).length,batchAt+8,'leaving stops all queued batch tests');
     assert.ok(notModified>0);assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);
-    const report={syntheticOnly:true,sourceWithoutCompatibilityBundle:true,initialReadsOnly:true,selectorSwitchAndDefiniteFailure:true,duplicateSubmitBlocked:true,autoGroupsRequireLock:true,longPressLock:true,smartFixAndRelease:true,groupTestReleasesLock:true,providerEncodedPaths:true,providerUpdateAndHealthcheck:true,scopedOldConnections:true,globalModeOnlyPatch:true,filtersSortingPreferences:true,focusRetainedDuringRefresh:true,detailsAllowlistedTextOnly:true,customUrlAndInvalidProtocol:true,latencyFailureAndBoundedBatch:true,maxConcurrentTests:maxTests,reauthWithoutMutationReplay:true,etagAndReadFailureRecovery:true,notModifiedResponses:notModified,backForwardWithSourceRoutes:true,hiddenPollingPaused:true,disposedPollingAndLateResponse:true,batchQueueStoppedOnDispose:true,mobileWidths:[375,320],intermediateWidths:[1440,1120,750],scale:{groups:60,candidates:1000,initialMainCards:120,lastCandidateReachable:true},pageErrors:errors};
+    const report={syntheticOnly:true,sourceWithoutCompatibilityBundle:true,initialReadsOnly:true,selectorSwitchAndDefiniteFailure:true,duplicateSubmitBlocked:true,autoGroupsRequireLock:true,longPressLock:true,smartFixAndRelease:true,groupTestReleasesLock:true,providerEncodedPaths:true,providerUpdateAndHealthcheck:true,scopedOldConnections:true,globalModeOnlyPatch:true,filtersSortingPreferences:true,informationNoticesHiddenAndRestored:true,informationPreferenceSurvivesRemount:true,informationHidingNeverMutates:true,customNameAndKeywordRules:true,customHidingSurvivesReload:true,customRulesRestoredAndCleared:true,customRulesRenderedAsText:true,focusRetainedDuringRefresh:true,detailsAllowlistedTextOnly:true,customUrlAndInvalidProtocol:true,latencyFailureAndBoundedBatch:true,maxConcurrentTests:maxTests,reauthWithoutMutationReplay:true,etagAndReadFailureRecovery:true,notModifiedResponses:notModified,backForwardWithSourceRoutes:true,hiddenPollingPaused:true,disposedPollingAndLateResponse:true,batchQueueStoppedOnDispose:true,mobileWidths:[375,320],intermediateWidths:[1440,1120,750],scale:{groups:60,candidates:1000,initialMainCards:120,lastCandidateReachable:true},pageErrors:errors};
     await fs.writeFile(path.join(evidence,'proxies-browser-evidence.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
   }finally{releasePending();for(const context of browser.contexts())for(const page of context.pages())await page.unrouteAll({behavior:'ignoreErrors'});await browser.close();console.log('Browser cleanup complete');}
 // Held-route cancellation can retain Playwright driver handles after browser cleanup.
