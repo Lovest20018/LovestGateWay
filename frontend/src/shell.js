@@ -11,7 +11,8 @@ const loaders={
 const monitorMount={connections:'mountConnections',traffic:'mountTraffic',distribution:'mountDistribution',logs:'mountLogs',region:'mountRegion'};
 window.ppgwUrlPrivacy=urlPrivacy;
 let monitor=null,monitorHost=null,monitorRoute='';
-const app=document.getElementById('app'),routes=[['overview','概览'],['proxies','代理'],['rules','规则'],['connections','连接'],['traffic','流量'],['distribution','分布'],['logs','日志'],['region','区域'],['subscriptions','订阅与策略'],['settings','网关设置'],['diagnostics','诊断与恢复']];
+const app=document.getElementById('app'),routes=[['overview','概览'],['proxies','代理'],['rules','规则'],['connections','连接'],['traffic','流量'],['distribution','分布'],['logs','日志'],['region','区域'],['subscriptions','订阅'],['settings','设置'],['diagnostics','诊断']];
+const navigationGroups=[['网络',['overview','proxies','rules']],['观测',['connections','traffic','distribution','logs','region']],['管理',['subscriptions','settings','diagnostics']]];
 let info=null,gateway=null,editor=null,workspace=null,diagnostics=null,diagnosticHost=null,overview=null,overviewHost=null,proxies=null,proxyHost=null,rules=null,rulesHost=null,route='',timer=null,authenticated=false,runtimePaused=false,routeSequence=0;
 let navigationIndex=history.state?.ppgwIndex||0,recoveringHistory=false;
 history.replaceState({...history.state,ppgwIndex:navigationIndex},'');
@@ -36,18 +37,24 @@ document.addEventListener('visibilitychange',()=>{
 });
 function updateNav(){document.querySelectorAll('[data-route]').forEach(a=>{const key=a.dataset.route;a.hidden=['proxies','rules'].includes(key)&&!['yaml','suburl'].includes(info?.mode);a.classList.toggle('active',route===key);if(route===key)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});}
 const mobileNavigation=matchMedia('(max-width:760px)');
+function syncSidebar(){
+  const collapsed=!mobileNavigation.matches&&localStorage.getItem('ppgw-nav-collapsed')==='true';
+  app.classList.toggle('shell-sidebar-collapsed',collapsed);
+  const toggle=document.getElementById('shell-collapse');
+  if(toggle){const label=collapsed?'展开侧边栏':'收起侧边栏';toggle.setAttribute('aria-expanded',String(!collapsed));toggle.setAttribute('aria-label',label);toggle.title=label;}
+}
 function setNavigation(open,restoreFocus=true){
   const nav=document.getElementById('shell-nav'),menu=document.getElementById('shell-menu');
   if(!nav||!menu)return;
   const wasOpen=nav.classList.contains('open');open=Boolean(open&&mobileNavigation.matches);
-  nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));
+  nav.classList.toggle('open',open);menu.setAttribute('aria-expanded',String(open));menu.setAttribute('aria-label',open?'收起导航':'打开导航');
   nav.inert=mobileNavigation.matches&&!open;
   document.getElementById('shell-backdrop').hidden=!open;
   document.querySelector('.shell-main').inert=open;
   document.body.classList.toggle('shell-nav-open',open);
   if(open)nav.querySelector('a')?.focus();else if(wasOpen&&restoreFocus)menu.focus();
 }
-mobileNavigation.addEventListener('change',()=>setNavigation(false,false));
+mobileNavigation.addEventListener('change',()=>{syncSidebar();setNavigation(false,false);});
 window.addEventListener('keydown',event=>{
   const nav=document.getElementById('shell-nav');
   if(!mobileNavigation.matches||!nav?.classList.contains('open'))return;
@@ -93,8 +100,32 @@ async function show(guarded=false){if(!authenticated)return;const next=currentHa
   else if(monitorMount[next]){if(!monitor){monitorRoute=next;monitorHost=el('div');document.getElementById('shell-content').append(monitorHost);monitor=loadedRoute[monitorMount[next]](monitorHost,{initialInfo:info,onUnauthorized:expired});}}
   document.title=(routes.find(r=>r[0]===next)?.[1]||'概览')+' · LovestGateWay';updateNav();
 }
-function shell(){if(pendingRecoveryJob())history.replaceState({...history.state,ppgwIndex:navigationIndex},'','#/diagnostics');app.replaceChildren();const nav=el('nav',{id:'shell-nav','aria-label':'主导航'}),brand=el('a',{href:'#/overview',class:'shell-brand',onclick:e=>{e.preventDefault();navigate('#/overview');}});brand.append(el('img',{src:'/ui/lovestgateway.svg',width:'34',height:'34',alt:''}),el('span',{class:'shell-wordmark'},[document.createTextNode('Lovest'),el('b',{text:'GateWay'})]));nav.append(brand);for(const[key,label]of routes){const link=el('a',{href:'#/'+key,'data-route':key,text:label,onclick:e=>{if(e.ctrlKey||e.metaKey||e.shiftKey)return;e.preventDefault();navigate('#/'+key);}});link.prepend(icon(routeIcons[key]));nav.append(link);}nav.append(themeControl(),button('退出登录',async()=>{if(!allowed('#/logout'))return;try{await logoutSession();authenticated=false;location.reload();}catch{const status=document.getElementById('shell-status');status.hidden=false;status.textContent='退出未确认，请重试以撤销服务器会话。';}}));nav.lastElementChild.prepend(icon('logout'));
-  const menu=button('',()=>setNavigation(!nav.classList.contains('open')));menu.append(icon('menu'));menu.id='shell-menu';menu.setAttribute('aria-label','打开导航');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-controls','shell-nav');const main=el('main',{id:'shell-content'});const backdrop=button('',()=>setNavigation(false));backdrop.id='shell-backdrop';backdrop.hidden=true;backdrop.setAttribute('aria-label','关闭导航');app.append(backdrop,nav,el('div',{class:'shell-main'},[el('header',{class:'shell-bar'},[menu,el('img',{src:'/ui/lovestgateway.svg',width:'26',height:'26',alt:''}),el('strong',{text:'LovestGateWay'})]),el('p',{id:'shell-status',role:'status',hidden:''}),el('p',{id:'shell-loading',role:'status',hidden:''}),main]));setNavigation(false,false);show();scheduleRuntime();
+function shell(){
+  if(pendingRecoveryJob())history.replaceState({...history.state,ppgwIndex:navigationIndex},'','#/diagnostics');
+  app.replaceChildren();
+  const nav=el('nav',{id:'shell-nav','aria-label':'主导航'});
+  const brand=el('a',{href:'#/overview',class:'shell-brand','aria-label':'LovestGateWay 概览',title:'LovestGateWay',onclick:e=>{e.preventDefault();navigate('#/overview');}});
+  brand.append(el('img',{src:'/ui/lovestgateway.svg',width:'30',height:'30',alt:''}),el('span',{class:'shell-wordmark'},[document.createTextNode('Lovest'),el('b',{text:'GateWay'})]));
+  const collapse=button('',()=>{localStorage.setItem('ppgw-nav-collapsed',String(!app.classList.contains('shell-sidebar-collapsed')));syncSidebar();});
+  collapse.id='shell-collapse';collapse.setAttribute('aria-controls','shell-nav-links');collapse.append(icon('panel-left'));
+  nav.append(el('div',{class:'shell-nav-head'},[brand,collapse]));
+  const links=el('div',{id:'shell-nav-links',class:'shell-nav-links'});
+  for(const[label,keys]of navigationGroups){
+    const group=el('div',{class:'shell-nav-group',role:'group','aria-label':label},[el('p',{class:'shell-nav-group-label',text:label,'aria-hidden':'true'})]);
+    for(const key of keys){
+      const name=routes.find(row=>row[0]===key)[1];
+      const link=el('a',{href:'#/'+key,'data-route':key,class:'shell-nav-link','aria-label':name,title:name,onclick:e=>{if(e.ctrlKey||e.metaKey||e.shiftKey)return;e.preventDefault();navigate('#/'+key);}});
+      link.append(icon(routeIcons[key]),el('span',{class:'shell-nav-label',text:name}));group.append(link);
+    }
+    links.append(group);
+  }
+  const logout=button('',async()=>{if(!allowed('#/logout'))return;try{await logoutSession();authenticated=false;location.reload();}catch{const status=document.getElementById('shell-status');status.hidden=false;status.textContent='退出未确认，请重试以撤销服务器会话。';}});
+  logout.id='shell-logout';logout.setAttribute('aria-label','退出登录');logout.title='退出登录';logout.append(icon('logout'),el('span',{class:'shell-nav-label',text:'退出登录'}));
+  nav.append(links,el('div',{class:'shell-nav-footer'},[themeControl(),logout]));
+  const menu=button('',()=>setNavigation(!nav.classList.contains('open')));menu.append(icon('menu'));menu.id='shell-menu';menu.setAttribute('aria-label','打开导航');menu.setAttribute('aria-expanded','false');menu.setAttribute('aria-controls','shell-nav');
+  const main=el('main',{id:'shell-content'}),backdrop=button('',()=>setNavigation(false));backdrop.id='shell-backdrop';backdrop.hidden=true;backdrop.setAttribute('aria-label','关闭导航');
+  app.append(backdrop,nav,el('div',{class:'shell-main'},[el('header',{class:'shell-bar'},[menu,el('img',{src:'/ui/lovestgateway.svg',width:'26',height:'26',alt:''}),el('strong',{text:'LovestGateWay'})]),el('p',{id:'shell-status',role:'status',hidden:''}),el('p',{id:'shell-loading',role:'status',hidden:''}),main]));
+  syncSidebar();setNavigation(false,false);show();scheduleRuntime();
 }
 function login(reauth=false){if(reauth&&document.getElementById('reauth-panel'))return;let panel;const password=el('input',{type:'password',autocomplete:'current-password',required:'',placeholder:'管理密码','aria-label':'管理密码'}),status=el('p',{role:'status'}),submit=el('button',{class:'btn btn-brand',type:'submit',text:'登录'}),form=el('form',{class:'shell-login glass'},[el('img',{src:'/ui/lovestgateway.svg',width:'54',height:'54',alt:''}),el('h1',{text:'LovestGateWay'}),el('label',{},[el('span',{text:'管理密码'}),password]),submit,status]);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;status.textContent='正在验证…';try{await loginSession(password.value);password.value='';if(!await runtime())throw Error('登录后读取网关状态失败，请重试。');authenticated=true;if(reauth){panel.remove();document.getElementById('shell-status').hidden=true;await runtime();scheduleRuntime();diagnostics?.refresh();overview?.refresh();proxies?.refresh();rules?.refresh();monitor?.refresh();}else shell();password.value='';}catch(error){status.textContent=error.name==='TimeoutError'?'连接超时，请重试。':error.message;}finally{submit.disabled=false;}};if(reauth){panel=el('section',{id:'reauth-panel','aria-label':'重新登录',class:'shell-reauth'},[form,button('返回编辑',()=>{panel.remove();expired();})]);const region=document.getElementById('shell-status');region.hidden=false;region.replaceChildren(panel);}else app.replaceChildren(form);password.focus();}
 window.addEventListener('hashchange',()=>{if(!recoveringHistory&&currentHash()!==route)show();});
@@ -111,7 +142,7 @@ window.addEventListener('popstate',event=>{
   event.stopImmediatePropagation();
   show(true);
 });
-window.addEventListener('storage',event=>{if(event.key?.startsWith('ppgw-'))applyTheme();if(event.key==='PaoPaoGateWay')runtime();});window.addEventListener('beforeunload',event=>{if((gateway||diagnostics)&&!allowed(null,'leave')){event.preventDefault();event.returnValue='';}});
+window.addEventListener('storage',event=>{if(event.key?.startsWith('ppgw-'))applyTheme();if(event.key==='ppgw-nav-collapsed'||event.key===null)syncSidebar();if(event.key==='PaoPaoGateWay')runtime();});window.addEventListener('beforeunload',event=>{if((gateway||diagnostics)&&!allowed(null,'leave')){event.preventDefault();event.returnValue='';}});
 if(localStorage.getItem('ppgw-theme')==='custom')localStorage.setItem('ppgw-theme','system');
 localStorage.removeItem('ppgw-theme-base');localStorage.removeItem('ppgw-custom-colors');
 systemTheme.addEventListener('change',applyTheme);

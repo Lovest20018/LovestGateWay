@@ -71,7 +71,7 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await nav.locator('a[href="#/proxies"]').click();
     await page.locator('#proxies-page').getByText('Fixture Main', {exact: true}).first().waitFor();
     await page.locator('#proxies-page').getByText('Fixture Node', {exact: true}).first().waitFor();
-    await nav.getByRole('link', {name: '网关设置', exact: true}).click();
+    await nav.getByRole('link', {name: '设置', exact: true}).click();
     await page.getByRole('tab', {name: '网络与出站', exact: true}).click();
     await page.getByLabel('网关出站模式', {exact: true}).selectOption('free');
     await page.locator('#preview').click();

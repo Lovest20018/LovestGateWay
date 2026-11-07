@@ -259,12 +259,12 @@ async function main() {
     await page.waitForTimeout(400);
     await page.getByRole('tab', {name: '访问与统计', exact: true}).click();
     await blur(page.getByLabel('流量记录上限', {exact: true}), '8999');
-    await navigation.getByRole('link', {name: '订阅与策略', exact: true}).click();
+    await navigation.getByRole('link', {name: '订阅', exact: true}).click();
     await page.getByRole('button', {name: '保存并应用', exact: true}).waitFor();
     assert.equal(await page.locator('#setting-ini-suburl').count(), 0);
     assert.equal(await shell.evaluate(node => node === document.querySelector('#shell-nav')), true);
     assert.equal(await navigation.locator('a[href="#/subscriptions"].active').count(), 1);
-    await navigation.getByRole('link', {name: '网关设置', exact: true}).click();
+    await navigation.getByRole('link', {name: '设置', exact: true}).click();
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).inputValue(), '8999');
     page.once('dialog', dialog => dialog.dismiss());
     await navigation.getByRole('link', {name: '概览', exact: true}).click();
@@ -327,12 +327,12 @@ async function main() {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await page.screenshot({path: path.join(root, 'dist/settings-unified-mobile.png'), fullPage: true});
     await page.locator('#shell-menu').click();
-    await navigation.getByRole('link', {name: '订阅与策略', exact: true}).click();
+    await navigation.getByRole('link', {name: '订阅', exact: true}).click();
     await page.getByRole('button', {name: '保存并应用', exact: true}).waitFor();
     assert.equal(await page.locator('#setting-ini-suburl').count(), 0);
     await page.waitForFunction(() => document.querySelector('#shell-nav').getBoundingClientRect().right <= 0);
     await page.locator('#shell-menu').click();
-    await navigation.getByRole('link', {name: '网关设置', exact: true}).click();
+    await navigation.getByRole('link', {name: '设置', exact: true}).click();
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     await page.setViewportSize({width: 320, height: 740});
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -341,7 +341,7 @@ async function main() {
     assert.equal(await page.locator('#savebar').evaluate(node => {const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= innerHeight;}), true);
     await page.locator('#discard').click();
     await page.setViewportSize({width: 1440, height: 1000});
-    await page.getByRole('link', {name: '订阅与策略', exact: true}).click();
+    await page.getByRole('link', {name: '订阅', exact: true}).click();
     await page.getByRole('button', {name: '保存并应用', exact: true}).waitFor();
     await page.getByRole('button', {name: '恢复订阅原策略', exact: true}).click();
     await page.locator('#preview-dialog').waitFor({state: 'visible'});
@@ -361,7 +361,7 @@ async function main() {
     assert.equal(submitted[3].payload.patch.ini.mode, 'yaml');
     assert.equal(await page.getByLabel('订阅更新间隔',{exact:true}).count(),0);
     assert.equal(await page.locator('.source-kind').textContent(),'本地 YAML');
-    await page.getByRole('link', {name: '网关设置', exact: true}).click();
+    await page.getByRole('link', {name: '设置', exact: true}).click();
     fail = true;
     await blur(page.getByLabel('流量记录上限', {exact: true}), '9002');
     await apply(); await page.getByText('应用验收失败，已恢复原配置。请检查网卡、监听端口和资源。', {exact: true}).waitFor();
@@ -389,7 +389,7 @@ async function main() {
     assert.equal(new URL(page.url()).searchParams.has('job'), false);
     await navigation.getByRole('link', {name: '概览', exact: true}).click();
     await page.locator('.ppgw-gateway').waitFor({state: 'detached'});
-    await navigation.getByRole('link', {name: '网关设置', exact: true}).click();
+    await navigation.getByRole('link', {name: '设置', exact: true}).click();
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     await blur(page.getByLabel('流量记录上限', {exact: true}), '9010');
     page.once('dialog', dialog => dialog.dismiss());
@@ -402,7 +402,7 @@ async function main() {
     await page.locator('.ppgw-gateway').waitFor({state: 'detached'});
     // Aborting an in-flight config read must not write into the next route.
     configDelay = 500;
-    await navigation.getByRole('link', {name: '网关设置', exact: true}).click();
+    await navigation.getByRole('link', {name: '设置', exact: true}).click();
     await page.locator('.ppgw-gateway').waitFor();
     await navigation.getByRole('link', {name: '概览', exact: true}).click();
     await page.locator('.ppgw-gateway').waitFor({state: 'detached'});
