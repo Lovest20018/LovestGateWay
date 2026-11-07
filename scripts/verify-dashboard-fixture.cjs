@@ -108,8 +108,10 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator(' #shell-nav a[href="#/ppsub"]').count(), 0);
     assert.equal(await page.locator(' #shell-nav a[href="#/subscriptions"]').count(), 1);
     await page.getByRole('heading', {name: '订阅与策略', exact: true}).waitFor();
-    const apply = page.getByRole('button', {name: '保存并应用', exact: true});
-    await apply.waitFor();
+    const apply = page.getByRole('button', {name: '保存并应用', exact: true, includeHidden:true});
+    await apply.waitFor({state:'attached'});
+    await page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loading');
+    assert.equal(await page.locator('.editor-commitbar').isVisible(),false,'save bar appears only after the configuration loads');
     for (const label of ['网关维护', '检查官方核心', '在线更新 Mihomo', '回退上一核心', '恢复订阅原策略']) {
       assert.equal(await page.locator('.ppgw-subscription-editor').getByText(label, {exact: true}).count(), 0);
     }
@@ -227,7 +229,8 @@ async function exercise(browser, kind) {
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.getByRole('heading',{name:'当前配置来源',exact:true}).waitFor();await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
     if(kind==='clash_patch'){
       assert.equal(await apply.isDisabled(),true,'an unchanged editor cannot save');
-      const retries=page.locator('.groups [data-field=retries]').first();
+      const fallbackRow=page.locator('.groups > .item').filter({has:page.locator('[data-field=retries]')}).first();if(!await fallbackRow.evaluate(node=>node.open))await fallbackRow.locator(':scope > summary').click();
+      const retries=fallbackRow.locator('[data-field=retries]');
       await retries.fill('4');await retries.press('Tab');
     }
     assert.equal(await apply.isDisabled(), false);

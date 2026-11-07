@@ -62,7 +62,7 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
   try{
     await sessions.install(page);
     await page.goto(origin+'/ui/#/settings');await page.getByLabel('流量记录上限',{exact:true}).waitFor();await page.locator('#shell-nav [data-route="diagnostics"]').click();
-    const rootView=page.locator('.diagnostic-page'),status=rootView.locator('> [role="status"]'),preview=page.locator('.diagnostic-preview');
+    const rootView=page.locator('.diagnostic-page'),status=rootView.locator('.layout-feedback > [role="status"]'),preview=page.locator('.diagnostic-preview');
     const diagnosticTabs=rootView.getByRole('tablist',{name:'诊断与恢复分栏',exact:true});
     await diagnosticTabs.waitFor({state:'visible'});
     assert.deepEqual(await diagnosticTabs.getByRole('tab').allTextContents(),['运行诊断','备份与恢复','最近操作']);

@@ -82,8 +82,14 @@ async function exercise(browser, kind, width) {
     assert.equal(await page.locator('.subs > .item').count(),counts.providers);
     assert.equal(await page.locator('.rules > .item').count(),kind==='ppsub'?counts.rules:1);
     assert.equal(await page.locator('.source-editor img').count(),0,'long names must remain text');
+    assert.equal(await page.locator('.editor-section > .item[open]').count(),3,'only the first row of each section starts expanded');
+    const save=page.locator('[data-ppsub-apply]');assert.equal(await save.isDisabled(),true);
+    await groups.last().getByRole('button',{name:'复制',exact:true}).click();assert.equal(await groups.count(),counts.groups+1);assert.equal(await save.isEnabled(),true,'copying a clean row enables saving');
+    page.once('dialog',dialog=>dialog.accept());await groups.last().getByRole('button',{name:'删除',exact:true}).click();assert.equal(await groups.count(),counts.groups);assert.equal(await save.isDisabled(),true,'deleting the unchanged copy restores the clean document');
+    await groups.last().getByRole('button',{name:'上移',exact:true}).click();assert.equal(await save.isEnabled(),true,'moving a clean row enables saving');await groups.nth(counts.groups-2).getByRole('button',{name:'下移',exact:true}).click();assert.equal(await save.isDisabled(),true,'moving the row back restores the clean document');
     await noOverflow();
     const target=groups.nth(counts.groups-1), editedName=`Edited ${kind} ${width} ${suffix}`;
+    await target.locator(':scope > summary').click();
     await measure('editLastGroup',()=>target.locator('[data-field=name]').fill(editedName));
     const pollBefore=providerPolls;
     await page.waitForFunction(()=>document.querySelectorAll('[data-provider-status]').length===12);
@@ -97,6 +103,7 @@ async function exercise(browser, kind, width) {
     await target.scrollIntoViewIfNeeded();
     await page.screenshot({path:path.join(evidenceDir,`${kind}-${width}-groups.png`),animations:'disabled'});
     await measure('copyLastGroup',async()=>{await target.getByRole('button',{name:'复制',exact:true}).click();await page.waitForFunction(()=>document.querySelectorAll('.groups > .item').length===61);});
+    assert.equal(await target.evaluate(node=>node.open),true,'summary row actions must not collapse the edited row');assert.equal(await groups.last().evaluate(node=>node.open),true,'copied rows open for editing');
     assert.equal(await groups.last().locator('[data-field=name]').inputValue(),editedName+' 副本');
     await measure('moveCopiedGroup',async()=>{await groups.last().getByRole('button',{name:'上移',exact:true}).click();assert.equal(await groups.nth(59).locator('[data-field=name]').inputValue(),editedName+' 副本');});
     page.once('dialog',dialog=>dialog.accept());
@@ -113,6 +120,7 @@ async function exercise(browser, kind, width) {
     await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
     assert.equal(await groups.last().locator('[data-field=name]').inputValue(),editedName);
     const provider=page.locator('.subs > .item').nth(7);
+    await provider.locator(':scope > summary').click();
     await provider.getByRole('button',{name:'修改地址',exact:true}).click();await provider.locator('[data-field=url]').fill('https://example.com/edited-provider');
     if(kind==='ppsub') {
       await provider.locator('[data-provider-mode]').selectOption('auto');

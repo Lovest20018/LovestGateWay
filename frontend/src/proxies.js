@@ -18,15 +18,16 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   let data=snapshot({}),disposed=false,paused=false,busy=false,testing=false,testController=null,reading=false,resumeRequested=false,timer=null,readController=null,sequence=0,etag='',detailsVersion=0,detailName='',detailGroup='',loaded=false;
   const controllers=new Set(),views=new Map(),providerViews=new Map(),labels=new Map();let usageSignature='';
   const labelFor=(name,optimize=true)=>{if(!optimize)return nodeLabel(name,false);if(!labels.has(name))labels.set(name,nodeLabel(name));return labels.get(name);};
-  const page=make('section',undefined,'proxies-page');page.id='proxies-page';
-  const heading=make('header',undefined,'proxies-head'),title=make('h1','代理'),summary=make('span','正在读取…','proxies-summary');
+  const page=make('section',undefined,'proxies-page layout-page');page.id='proxies-page';
+  const heading=make('header',undefined,'proxies-head layout-heading'),title=make('h1','代理'),summary=make('span','正在读取…','proxies-summary'),titles=make('div',undefined,'layout-title'),actions=make('div',undefined,'layout-actions');
   const modes=modeControl(next=>perform('切换模式',async()=>{await request('/configs',{method:'PATCH',body:{mode:next}});data.mode=next;if(next==='global')prefs.gcollapse.GLOBAL=false;save();})),modeButton=modes.root;
   const refreshButton=button('刷新',()=>refresh()),settingsButton=button('页面设置',()=>{settings.hidden=!settings.hidden;settingsButton.setAttribute('aria-expanded',String(!settings.hidden));});
   refreshButton.prepend(icon('history'));settingsButton.prepend(icon('settings'));settingsButton.setAttribute('aria-expanded','false');settingsButton.setAttribute('aria-controls','proxy-preferences');
-  heading.append(title,summary,modeButton,refreshButton,settingsButton);
+  titles.append(title,summary);actions.append(modeButton,refreshButton,settingsButton);heading.append(titles,actions);
   const status=make('p',undefined,'proxies-status');status.setAttribute('role','status');status.hidden=true;
   const modeNotice=make('p','当前为 GLOBAL 全局模式，仅 GLOBAL 组生效。','proxies-notice');modeNotice.hidden=true;
   const settings=make('section',undefined,'glass proxy-preferences');settings.id='proxy-preferences';settings.hidden=true;settings.setAttribute('aria-label','代理页面设置');
+  settings.append(make('p','以下显示偏好与默认测速地址适用于全部节点组；组内筛选与测速地址在各组单独设置。','proxy-preferences-hint'));
   const input=make('input');input.type='url';input.placeholder='留空使用网关默认 test_node_url';input.value=prefs.testUrl;input.addEventListener('input',()=>{prefs.testUrl=input.value;save();updateUrls();});settings.append(label('测速 URL',input));
   const globalSort=make('select');for(const [value,text]of sorts.filter(([key])=>key!=='scoreAsc')){const option=make('option',text);option.value=value;globalSort.append(option);}globalSort.value=prefs.sort;globalSort.addEventListener('change',()=>{prefs.sort=globalSort.value;save();render();});settings.append(label('组内排序',globalSort));
   for(const [key,text]of [['optimize','优化节点名标签显示'],['hideUnavail','隐藏不可用代理'],['hideInfoNodes','隐藏疑似订阅说明节点（仅影响展示）'],['autoClose','切换后关闭旧连接'],['showUdp','显示 UDP 标记']]){const check=make('input');check.type='checkbox';check.checked=prefs[key];check.dataset.preference=key;check.addEventListener('change',()=>{prefs[key]=check.checked;save();render();});settings.append(label(text,check));}
@@ -39,7 +40,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   hiddenForm.addEventListener('submit',event=>{event.preventDefault();if(!hiddenInput.value.trim()){hiddenInput.focus();return;}addHiddenRule(hiddenType.value,hiddenInput.value);hiddenInput.value='';hiddenInput.focus();});
   const hiddenList=make('ul',undefined,'proxy-hidden-list'),clearHidden=button('清空自定义隐藏',()=>{prefs.hiddenNames=[];prefs.hiddenKeywords=[];save();renderHiddenRules();render();message('已清空自定义隐藏规则。');});
   hiddenSettings.append(hiddenHeading,hiddenHelp,hiddenForm,hiddenList,clearHidden);settings.append(hiddenSettings);renderHiddenRules();
-  const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>{if(testing)testController?.abort();else runTests(()=>testPlan(data,prefs),'全部测速');}),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
+  const toolbar=make('div',undefined,'proxies-actions layout-toolbar layout-toolbar--panel'),testAll=button('全部测速',()=>{if(testing)testController?.abort();else runTests(()=>testPlan(data,prefs),'全部测速');}),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
   testAll.dataset.action='test-all';updateAll.dataset.action='update-all';toolbar.append(testAll,updateAll);
   const information=make('p',undefined,'proxies-notice');information.hidden=true;information.setAttribute('aria-label','节点隐藏提示');
   const groupHost=make('div',undefined,'proxy-groups'),providerHost=make('section',undefined,'proxy-providers'),usageHost=make('section',undefined,'proxy-usages');
@@ -59,7 +60,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     lockTarget={group,name};lockText.textContent=group+' · '+name;lockConfirm.textContent=unlocking?'解锁此节点':'锁定此节点';
     const bounds=anchor.getBoundingClientRect();lockMenu.style.left=Math.max(12,Math.min(bounds.left,innerWidth-280))+'px';lockMenu.style.top=Math.max(12,Math.min(bounds.bottom,innerHeight-160))+'px';lockMenu.showPopover();lockConfirm.focus();
   }
-  page.append(heading,status,modeNotice,settings,toolbar,information,groupHost,empty,providerHost,usageHost,dialog,lockMenu);host.replaceChildren(page);
+  const feedback=make('div',undefined,'layout-feedback');feedback.append(status,modeNotice,information);page.append(heading,toolbar,feedback,settings,groupHost,empty,providerHost,usageHost,dialog,lockMenu);host.replaceChildren(page);
   function renderHiddenRules(){
     hiddenList.replaceChildren();const count=prefs.hiddenNames.length+prefs.hiddenKeywords.length;hiddenHeading.textContent='自定义隐藏（'+count+' 条）';clearHidden.hidden=!count;
     for(const key of ['hiddenNames','hiddenKeywords'])for(const value of prefs[key]){
@@ -210,14 +211,14 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     const node=data.proxies[name],filter=filterFor(name),section=make('details',undefined,'glass proxy-group');section.dataset.group=name;
     section.open=Object.hasOwn(prefs.gcollapse,name)?!prefs.gcollapse[name]:node.type==='Selector'&&name!=='GLOBAL'||data.mode==='global'&&name==='GLOBAL';
     const head=make('summary'),nameNode=make('strong',name),kind=make('span',undefined,'proxy-type'),now=make('span',undefined,'proxy-current'),count=make('small');head.append(nameNode,kind,now,count);
-    const body=make('div',undefined,'proxy-group-body'),tools=make('div',undefined,'proxy-group-tools'),search=make('input');search.type='search';search.placeholder='搜索节点';search.value=filter.query;search.setAttribute('aria-label',name+' 搜索节点');
+    const body=make('div',undefined,'proxy-group-body'),tools=make('div',undefined,'proxy-group-tools layout-toolbar'),search=make('input'),advanced=make('details',undefined,'proxy-group-options'),advancedTitle=make('summary','组内筛选与测速设置'),advancedBody=make('div',undefined,'proxy-group-option-fields');advanced.open=filter.advanced??!!(filter.status||filter.region||filter.sort||filter.url);advanced.append(advancedTitle,advancedBody);advanced.addEventListener('toggle',()=>{filter.advanced=advanced.open;});search.type='search';search.placeholder='搜索本组节点';search.value=filter.query;search.setAttribute('aria-label',name+' 搜索节点');
     search.addEventListener('input',()=>{filter.query=search.value;renderGroup(view);});tools.append(search);
-    const statusSelect=fieldSelect('状态',[['','全部状态'],['online','在线'],['offline','离线'],['unknown','未测速']],filter.status,value=>{filter.status=value;renderGroup(view);});tools.append(statusSelect.node);
-    const region=fieldSelect('区域',[['','全部区域']],filter.region,value=>{filter.region=value;renderGroup(view);});tools.append(region.node);
-    const order=fieldSelect('排序',[['','跟随页面'],...sorts],prefs.gsort[name]||filter.sort,value=>{filter.sort=value;prefs.gsort[name]=value;save();renderGroup(view);});tools.append(order.node);
+    const statusSelect=fieldSelect('状态',[['','全部状态'],['online','在线'],['offline','离线'],['unknown','未测速']],filter.status,value=>{filter.status=value;renderGroup(view);});advancedBody.append(statusSelect.node);
+    const region=fieldSelect('区域',[['','全部区域']],filter.region,value=>{filter.region=value;renderGroup(view);});advancedBody.append(region.node);
+    const order=fieldSelect('排序',[['','跟随页面'],...sorts],prefs.gsort[name]||filter.sort,value=>{filter.sort=value;prefs.gsort[name]=value;save();renderGroup(view);});advancedBody.append(order.node);
     const url=make('input');url.type='url';url.placeholder='使用页面测速 URL';url.value=filter.url;url.addEventListener('input',()=>filter.url=url.value);url.setAttribute('aria-label',name+' 测速 URL');
-    const test=button('组测速',()=>testGroup(name));test.dataset.action='group-test';const unlock=button('解除锁定',()=>fixed(name,data.proxies[name].fixed));unlock.dataset.action='unlock';
-    const info=make('p',undefined,'proxy-group-info'),grid=make('div',undefined,'proxy-node-grid'),more=button('显示更多',()=>{view.limit+=120;renderGroup(view);});tools.append(label('测速 URL',url),test,unlock);body.append(tools,info,grid,more);section.append(head,body);
+    const test=button('组测速',event=>{event.preventDefault();event.stopPropagation();testGroup(name);});test.dataset.action='group-test';head.append(test);const unlock=button('解除锁定',()=>fixed(name,data.proxies[name].fixed));unlock.dataset.action='unlock';
+    const info=make('p',undefined,'proxy-group-info'),grid=make('div',undefined,'proxy-node-grid'),more=button('显示更多',()=>{view.limit+=120;renderGroup(view);});advancedBody.append(label('测速 URL',url));tools.append(advanced,unlock);body.append(tools,info,grid,more);section.append(head,body);
     const view={name,section,kind,now,count,body,grid,region:region.control,url,unlock,info,more,limit:120,cards:new Map()};
     section.addEventListener('toggle',()=>{if(disposed)return;prefs.gcollapse[name]=!section.open;save();if(section.open)renderGroup(view);});return view;
   }
@@ -239,6 +240,7 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     setText(view.kind,typeLabel(node));setText(view.now,node.now?'当前：'+node.now:'');setText(view.count,node.all.length+' 个节点');
     view.unlock.hidden=!node.fixed;view.unlock.title=node.fixed||'';
     setText(view.info,node.fixed?'已锁定 '+node.fixed+(node.now!==node.fixed?'；当前选择已临时按策略切换。':'；组测速会解除锁定。'):node.type==='Selector'&&!node.smart?'点击节点切换。':lockable(node)?'由核心自动选择；可长按节点或使用锁定按钮。':'由核心决定节点，支持测速和查看详情。');
+    view.info.hidden=node.type==='Selector'&&!node.smart&&!node.fixed;
     if(!section.open)return;
     const codes=[...new Set(node.all.map(name=>labelFor(name).code).filter(Boolean))].sort(),regionSignature=JSON.stringify(codes);
     if(view.regionSignature!==regionSignature){const regionValue=filter.region;view.region.replaceChildren(...[['','全部区域'],...codes.map(code=>[code,code])].map(([value,text])=>{const option=make('option',text);option.value=value;return option;}));view.region.value=regionValue;view.regionSignature=regionSignature;}

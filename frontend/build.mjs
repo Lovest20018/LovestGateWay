@@ -36,6 +36,7 @@ export async function build(output=join(here,'dist')) {
   await emit('proxies.css',await textFile(join(here,'src/proxies.css')));
   await emit('monitor.css',await textFile(join(here,'src/monitor.css')));
   await emit('rules.css',await textFile(join(here,'src/rules.css')));
+  await emit('page-layout.css',await textFile(join(here,'src/page-layout.css')));
   await writeFile(join(output,'legacy.html'),'<!doctype html><meta charset="utf-8"><script>location.replace("/ui/"+location.hash)</script>');
   let index=await textFile(join(here,'src/index.html'));
   for(const [label,hashed] of Object.entries(assets)) index=index.replaceAll('@@'+label+'@@',hashed);

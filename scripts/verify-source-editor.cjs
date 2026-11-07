@@ -93,7 +93,7 @@ async function exercise(browser,kind){
       await advanced.locator('textarea').fill(JSON.stringify(value));await advanced.getByRole('button',{name:'应用 JSON 修改',exact:true}).click();
       page.once('dialog',dialog=>dialog.dismiss());await page.locator('#shell-nav [data-route="overview"]').click();assert.equal(new URL(page.url()).hash,'#/subscriptions','JSON edits participate in draft navigation protection');
     }
-    const fill=async(scope,key,value)=>{const control=scope.locator('[data-field="'+key+'"]');if(key==='url'&&await control.getAttribute('readonly')!==null&&await scope.getByRole('button',{name:'修改地址',exact:true}).count())await scope.getByRole('button',{name:'修改地址',exact:true}).click();await control.fill(value);};
+    const fill=async(scope,key,value)=>{if(await scope.evaluate(node=>node.tagName==='DETAILS'&&!node.open))await scope.locator(':scope > summary').click();const control=scope.locator('[data-field="'+key+'"]');if(key==='url'&&await control.getAttribute('readonly')!==null&&await scope.getByRole('button',{name:'修改地址',exact:true}).count())await scope.getByRole('button',{name:'修改地址',exact:true}).click();await control.fill(value);};
     const provider=page.locator('.subs .item').first(),group=page.locator('.groups .item').first();
     await fill(provider,'url','https://example.com/edited-provider');
     if(kind==='ppsub'){await fill(provider,'name','Edited airport');await provider.locator('[data-field="isforced"]').check();await page.getByLabel('Edited airport 更新方式',{exact:true}).selectOption('auto');await page.getByLabel('Edited airport 自动更新间隔',{exact:true}).fill('7h');}

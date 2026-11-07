@@ -152,12 +152,15 @@ async function main() {
     const draftInput=page.getByLabel('流量记录上限',{exact:true}),savedInput=await draftInput.inputValue();
     await draftInput.fill('12345');
     await page.getByRole('button',{name:'重新核对',exact:true}).click();
+    assert.equal(await page.locator('.management-check-details').evaluate(node=>node.open),false);await page.locator('.management-check-details>summary').click();
     await page.getByText(/最近核对：.*通过.*网关配置、启动环境、管理服务/).waitFor();
     assert.equal(rechecks,1);assert.equal(configReads,readsBeforeCheck,'recheck must preserve the current form and drafts');
     assert.equal(await draftInput.inputValue(),'12345');await draftInput.fill(savedInput);
     assert.match(await page.locator('.ppgw-management [role=status]').textContent(),/已核对当前运行配置与管理服务/);
+    await page.locator('.management-check-details>summary').click();
     management.verification={...management.verification,current:false};
     await page.waitForFunction(()=>document.querySelector('.ppgw-management')?.textContent.includes('运行状态已变化，等待重新核对'),null,{timeout:15000});
+    assert.equal(await page.locator('.management-check-details').evaluate(node=>node.open),true,'stale verification details stay visible');
     await page.screenshot({path:path.join(root,'dist/historical-alert-20261105/current-state.png')});
     model.recovery_required=true;await page.locator('#reload').click();
     await page.getByText('上一次事务需要恢复。请在宿主运行 sudo ppgw-admin recover --yes，再刷新页面。',{exact:true}).waitFor();

@@ -140,11 +140,13 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.match(await page.locator('[data-node-cache]').textContent(),/已保存 3 个节点.*获取失败/);
     const firstMode=page.getByLabel('Native provider 更新方式',{exact:true});
     await firstMode.selectOption('manual');
+    await page.locator('.subs > .item').nth(1).locator(':scope > summary').click();
     await page.getByLabel('ProviderB 更新方式',{exact:true}).selectOption('auto');
     await page.getByLabel('ProviderB 自动更新间隔',{exact:true}).fill('0d');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();
     await page.getByText('机场自动更新间隔请填写 30m、6h、1d 等有效值。',{exact:true}).waitFor();
     await page.getByLabel('ProviderB 自动更新间隔',{exact:true}).fill('1d');
+    await page.locator('.subs > .item').nth(2).locator(':scope > summary').click();
     await page.getByLabel('ProviderC 更新方式',{exact:true}).selectOption('auto');
     await page.getByLabel('ProviderC 自动更新间隔',{exact:true}).fill('1d');
     await page.getByRole('button',{name:'更新此订阅：Native provider',exact:true}).click();

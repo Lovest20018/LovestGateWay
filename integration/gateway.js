@@ -3,6 +3,7 @@
   'use strict';
   let current = null;
   function mount(root, options = {}) {
+    root.classList.add('layout-page');
     root.replaceChildren(document.getElementById('ppgw-gateway-view').content.cloneNode(true));
     const $ = id => root.querySelector('#' + id);
     const lifetime = new AbortController();
@@ -619,12 +620,15 @@
       const check = data?.verification;
       const checkNames={core_ini:'网关配置',service_environment:'启动环境',mihomo_source_policy:'Mihomo 来源与策略',management_services:'管理服务',observer_api:'观测 API'};
       const detail=check?.checked_at ? `最近核对：${new Date(check.checked_at*1000).toLocaleString()} · ${!check.current?'运行状态已变化，等待重新核对':check.result==='verified'?'通过':message(check.error)}${check.checks?.length?' · '+check.checks.map(key=>checkNames[key]||key).join('、'):''}` : '自动核对运行配置与管理服务；核对不应用修改或重启服务。';
+      const previousDetail=statusHost.querySelector('.management-check-details');
+      const checkDetails=el('details',{class:'management-check-details'},[el('summary',{text:'核对详情'}),el('p',{class:'subtext',text:detail})]);
+      checkDetails.open=!!(previousDetail?.open||check?.checked_at&&(!check.current||check.result!=='verified')||['retained','recovery_required'].includes(data?.state));
       statusHost.replaceChildren(el('div',{class:'management-status-row'},[heading,el('button',{class:'button',type:'button','data-recheck':'',disabled:checking,text:checking?'正在核对…':'重新核对',onclick:async()=>{
         checking=true;renderManagement();
         try { await api('recheck',{}); const fresh=await api('status'); if(!stopped&&model){model.management=fresh.management;model.runtime=fresh.runtime;model.running_mode=fresh.running_mode;model.recovery_required=fresh.recovery_required;} }
         catch(error){if(!stopped)notice(error.message,'error');}
         finally {checking=false;if(!stopped)renderManagement();}
-      }})]),el('p',{class:'subtext',text:detail}));
+      }})]),checkDetails);
       recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'展示最近 '+rows.length+' 条已记录的配置、订阅与核心维护操作。'})]),rows.length?records:el('p',{class:'empty-state',text:'暂无操作记录。'}));
     }
     async function pollManagement() {

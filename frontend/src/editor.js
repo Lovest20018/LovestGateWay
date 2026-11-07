@@ -2,10 +2,11 @@ import {clone,documentModel,exported,move,groupMode,setGroupMode,ruleType,setRul
 import {guardUrlInput} from './url-privacy.js';
 
 export function mountEditor(host) {
-  let doc=documentModel(),destroy,serial=0,editRevision=0,importSequence=0,stopped=false;
+  let doc=documentModel(),destroy,serial=0,editRevision=0,importSequence=0,stopped=false;const expanded=new WeakMap();
   const el=(tag,attrs={},children=[])=>{const node=document.createElement(tag);for(const [key,value]of Object.entries(attrs)){if(key==='text')node.textContent=value;else if(key.startsWith('on'))node.addEventListener(key.slice(2),value);else if(key==='class')node.className=value;else node.setAttribute(key,value);}node.append(...children);return node;};
-  const button=(text,onclick)=>el('button',{type:'button',class:'btn',text,onclick});
-  const root=el('section',{class:'source-editor','aria-label':'订阅与策略编辑器'}),header=el('header',{class:'phead'}),body=el('div',{class:'editor-body'});
+  // Prevent summary activation, but keep bubbling so the persistence owner sees document edits.
+  const button=(text,onclick)=>el('button',{type:'button',class:'btn',text,onclick:event=>{if(event.currentTarget.closest('summary'))event.preventDefault();onclick(event);}});
+  const root=el('section',{class:'source-editor layout-page','aria-label':'订阅与策略编辑器'}),header=el('header',{class:'phead layout-toolbar layout-toolbar--panel'}),body=el('div',{class:'editor-body'});
   const menu=(text,action)=>el('span',{class:'menuwrap'},[button(text,action)]);
   const download=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(doc,null,2)],{type:'application/json'}));const a=el('a',{href:url,download:'ppsub.json'});a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   const upload=el('input',{type:'file',accept:'.json,application/json',hidden:''});
@@ -48,13 +49,13 @@ export function mountEditor(host) {
     details.addEventListener('toggle',()=>{if(details.open)area.value=JSON.stringify(row,null,2);});return details;
   }
   function section(key,title,create,fields) {
-    const rows=doc[key],full=window.ppgwPpsub.clashEditing(),sectionClass=key==='node-groups'?'groups':key==='subs'?'subs':'rules',area=el('section',{class:sectionClass+' editor-section glass'}),top=el('div',{class:'editor-section-heading'},[el('h3',{text:title})]);
-    const add=button('＋ 添加'+title,()=>{rows.push(create());if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();const item=root.querySelector('.'+sectionClass+' > .item:last-of-type');item?.querySelector('input')?.focus({preventScroll:true});item?.scrollIntoView({block:'nearest',behavior:'smooth'});});add.setAttribute('aria-label','添加'+title);add.classList.add('editor-add');if(full&&key==='subs')add.hidden=true;area.append(top);
+    const rows=doc[key],full=window.ppgwPpsub.clashEditing(),sectionClass=key==='node-groups'?'groups':key==='subs'?'subs':'rules',area=el('section',{class:sectionClass+' editor-section'}),top=el('div',{class:'editor-section-heading'},[el('h3',{text:title+'（'+rows.length+'）'})]);
+    const add=button('＋ 添加'+title,()=>{const row=create();expanded.set(row,true);rows.push(row);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();const item=root.querySelector('.'+sectionClass+' > .item:last-of-type');item?.querySelector('input')?.focus({preventScroll:true});item?.scrollIntoView({block:'nearest',behavior:'smooth'});});add.setAttribute('aria-label','添加'+title);add.classList.add('editor-add');if(full&&key==='subs')add.hidden=true;area.append(top);
     rows.forEach((row,index)=>{
-      const item=el('article',{class:'item'}),tools=el('div',{class:'editor-item-tools'},[el('strong',{text:(index+1)+'. '+(row.name||row.remark||title)})]);
+      const item=el('details',{class:'item'}),tools=el('summary',{class:'editor-item-tools'},[el('strong',{text:(index+1)+'. '+(row.name||row.remark||title)})]);item.open=expanded.get(row)??index===0;item.addEventListener('toggle',()=>expanded.set(row,item.open));
       for(const [label,offset]of [['上移',-1],['下移',1]]){const b=button(label,()=>{move(rows,index,offset);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});b.disabled=index+offset<0||index+offset>=rows.length;if(full&&key==='subs')b.hidden=true;tools.append(b);}
       const remove=button('删除',()=>{if(!confirm('删除此'+title+'？'))return;rows.splice(index,1);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')remove.hidden=true;tools.append(remove);
-      const copy=button('复制',()=>{const duplicate=clone(row);delete duplicate._clash_id;if(duplicate.name)duplicate.name+=' 副本';rows.splice(index+1,0,duplicate);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')copy.hidden=true;tools.append(copy);
+      const copy=button('复制',()=>{const duplicate=clone(row);delete duplicate._clash_id;if(duplicate.name)duplicate.name+=' 副本';expanded.set(duplicate,true);rows.splice(index+1,0,duplicate);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')copy.hidden=true;tools.append(copy);
       item.append(tools,...fields(row,full));if(!full)item.append(advanced(row));area.append(item);
     });area.append(el('div',{class:'editor-section-footer'},[add]));return area;
   }

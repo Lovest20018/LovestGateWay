@@ -106,9 +106,11 @@
     }
     refreshNodes.onclick=()=>refreshProviders();
     refreshNodes.title='立即更新全部订阅，包括仅手动更新的机场';
-    editor.header.append(backup,refreshNodes,dirtyState,apply);
-    editor.header.after(cacheNote);
-    editor.header.after(notice,exportNote);
+    const commitbar=document.createElement('div');commitbar.className='editor-commitbar glass';commitbar.hidden=true;commitbar.append(dirtyState,apply);
+    const feedback=document.createElement('div');feedback.className='layout-feedback editor-feedback';feedback.append(notice,exportNote,cacheNote);
+    const importStatus=editor.header.parentElement.querySelector('[data-import-status]');if(importStatus)feedback.append(importStatus);
+    editor.header.append(backup,refreshNodes);editor.header.after(feedback);
+    editor.header.parentElement.insertBefore(commitbar,editor.header.parentElement.querySelector('.editor-body'));
     const optionsHost = document.createElement('div');
     optionsHost.className = 'ppgw-global-settings';
     const optionsSection=document.createElement('details');optionsSection.className='editor-schedule';
@@ -226,6 +228,7 @@
       editor.setLoading?.(state.loading,state.loaded);
       const changed=hasChanges()||window.ppgwGateway?.editorOptionsChanged();
       const dirtyText=state.loaded?(changed?'有未保存的修改':'没有未保存的修改'):'';
+      commitbar.hidden=!state.loaded;
       if(dirtyState.textContent!==dirtyText)dirtyState.textContent=dirtyText;
       refreshNodes.hidden=state.editKind!=='ppsub';
       refreshNodes.disabled=state.stopped||state.loading||state.active||state.settingsBusy||!state.loaded||!state.writeAllowed;
@@ -368,7 +371,7 @@
       window.ppgwGateway?.setEditorBusy(false);
       capabilityObserver.disconnect(); editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); backup.remove(); exportNote.remove(); refreshNodes.remove(); cacheNote.remove();
       detachOptions?.(); optionsHost.remove();
-      dirtyState.remove();apply.remove();
+      dirtyState.remove();apply.remove();commitbar.remove();feedback.remove();
       notice.remove();
       if (current === state) current = null;
     }
