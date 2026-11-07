@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/Lovest20018/LovestGateWay/main/inst
 
 ## 升级
 
-在“网关设置 → 维护与 API → LovestGateWay 更新”检查本项目 GitHub 正式版，查看发行说明并确认升级。检查只读取版本信息；确认后下载并校验指定版本，再备份和安装。重启期间管理页面与转发会短暂断开，重新登录后继续查询原任务，不要重复提交。完成后刷新页面加载新版界面。
+在“设置 → 维护与 API → LovestGateWay 更新”检查本项目 GitHub 正式版，查看发行说明并确认升级。检查只读取版本信息；确认后下载并校验指定版本，再备份和安装。重启期间管理页面与转发会短暂断开，重新登录后继续查询原任务，不要重复提交。完成后刷新页面加载新版界面。
 
 旧版没有此入口时，先重新运行在线安装命令升级一次；命令行升级以后仍可使用。升级沿用原有网卡、监听、密码、配置、订阅和启动设置，不必手工停服务。自动化升级可加 `--yes`，无需再传网卡。
 
@@ -34,12 +34,12 @@ Web 更新仅支持较新的 amd64 正式发行版，检查结果 30 分钟内�
 
 ## 离线安装或指定版本
 
-从 [Releases](https://github.com/Lovest20018/LovestGateWay/releases) 下载安装包及同名 `.sha256`，传到目标机器。以下以 `0.2.1` 为例：
+从 [Releases](https://github.com/Lovest20018/LovestGateWay/releases) 下载安装包及同名 `.sha256`，传到目标机器。以下以 `0.2.4` 为例：
 
 ```sh
-sha256sum -c lovestgateway-0.2.1-debian-amd64.tar.gz.sha256
-tar -xzf lovestgateway-0.2.1-debian-amd64.tar.gz
-cd lovestgateway-0.2.1-debian-amd64
+sha256sum -c lovestgateway-0.2.4-debian-amd64.tar.gz.sha256
+tar -xzf lovestgateway-0.2.4-debian-amd64.tar.gz
+cd lovestgateway-0.2.4-debian-amd64
 sudo sh install.sh
 ```
 

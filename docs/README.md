@@ -1,25 +1,34 @@
 # 文档导航
 
-日常使用只需前面三份文档；其余按需要查阅。
+首次使用从安装指南开始；日常设置通过 Web 完成。
 
-| 想做什么 | 文档 |
+| 需求 | 文档 |
 | --- | --- |
-| 安装、升级、处理常见故障 | [安装与升级](debian-deployment.md) |
-| 管理订阅、节点、规则和网关设置 | [Web 使用说明](debian-web-settings.md) |
-| 在终端备份、恢复、批量管理 | [命令行参考](debian-management.md) |
+| 安装、升级、离线包与常见问题 | [安装与升级](debian-deployment.md) |
+| 面板导航、订阅、策略及设置 | [Web 使用说明](debian-web-settings.md) |
+| 命令行管理、备份和恢复 | [命令行参考](debian-management.md) |
+| 已完成内容、待验收场景 | [项目状态](optimization-roadmap.md) |
 
 ## 开发与维护
 
-- [测试与验证](testing.md) · [前端源码](../frontend/README.md)
-- [上游同步与差异台账](upstream-maintenance.md) · [功能差异](project-differences-and-web-settings.md)
-- [正式发布](releasing.md) · [发行说明](releases/)
+- [测试与验收](testing.md) · [前端源码](../frontend/README.md) · [截图复现](images/README.md)
+- [发布流程](releasing.md) · [版本变化](releases/) · [GitHub Releases](https://github.com/Lovest20018/LovestGateWay/releases)
+- [上游跟进](upstream-maintenance.md) · [与上游的差异](project-differences-and-web-settings.md)
 - [可选观测 API](integration-api-v1.md) · [OpenAPI](openapi-v1.json)
 
 ## 专项参考
 
-- [Debian 运行机制](reference/debian-runtime.md)
-- [Mihomo 热加载边界](mihomo-reload-assessment.md)
-- [节点选择保留](node-selection-persistence.md) · [选择窗口](mihomo-selection-window.md)
-- [浏览器会话](browser-sessions.md)
+按遇到的问题查阅，无需逐份阅读。
 
-历史设计与来源资料：[优化路线](optimization-roadmap.md)、[UI 优化方案](ui-optimization-plan.md)、[上游 ISO 文档](upstream-iso-reference.md)。这些不是安装步骤。
+- [Debian 运行机制](reference/debian-runtime.md)
+- [Mihomo 热加载边界](mihomo-reload-assessment.md) · [新连接窗口](mihomo-selection-window.md)
+- [节点选择保留](node-selection-persistence.md) · [浏览器管理会话](browser-sessions.md)
+- [UI 优化结果](ui-optimization-plan.md) · [页面布局整理](ui-layout-review.md)
+
+<details>
+<summary>历史设计与上游资料</summary>
+
+- [UI 优化原始设计](reference/ui-optimization-history.md)：保留当时的判断、阶段状态与测量，不作为当前待办。
+- [上游 ISO 说明](upstream-iso-reference.md)：仅供来源追踪，不适用于本项目 Debian 安装步骤。
+
+</details>

@@ -88,8 +88,7 @@ jobs:
               if(error.status!==404)throw error;
               await github.rest.git.createRef({owner,repo,ref:'refs/tags/'+tag,sha:commit});
             }
-            const body=fs.readFileSync(`docs/releases/${process.env.VERSION}.md`,'utf8')+
-              `\n\n构建提交：${commit}\n已审查上游：${manifest.upstream.reviewed_head}\n`;
+            const body=fs.readFileSync(`docs/releases/${process.env.VERSION}.md`,'utf8');
             const {data:release}=await github.rest.repos.createRelease({owner,repo,tag_name:tag,target_commitish:commit,name:'LovestGateWay '+process.env.VERSION,body,draft:true,prerelease:false});
             const names=[...Object.keys(manifest.assets),'release-manifest.json'];
             for(const name of names){

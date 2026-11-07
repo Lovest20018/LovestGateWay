@@ -23,7 +23,7 @@ async function run({existing=[],tagSha='a'.repeat(40),badDigest=false,publishFla
   const readFileSync=(path,encoding)=>path.endsWith('release-manifest.json')?JSON.stringify(manifest):encoding?'Release notes':Buffer.from('fixture');
   const github={paginate:async()=>existing,rest:{repos:{
     listReleases:()=>{},
-    createRelease:async input=>{assert.equal(input.draft,true);calls.push('create-draft');return {data:{id:1,html_url:'https://example.invalid/release'}};},
+    createRelease:async input=>{assert.equal(input.draft,true);assert.equal(input.body,'Release notes');calls.push('create-draft');return {data:{id:1,html_url:'https://example.invalid/release'}};},
     uploadReleaseAsset:async input=>{calls.push('upload');return {data:{size:input.data.length,digest:badDigest?'wrong':'sha256:'+crypto.createHash('sha256').update(input.data).digest('hex')}};},
     updateRelease:async input=>{assert.equal(input.draft,false);calls.push('publish');}
   },git:{getRef:async()=>({data:{object:{type:'commit',sha:tagSha}}}),createRef:async()=>{calls.push('tag');}}}};
