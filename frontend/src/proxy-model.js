@@ -4,7 +4,11 @@ const strings=value=>Array.isArray(value)?value.filter(item=>typeof item==='stri
 export const isGroup=value=>Array.isArray(value?.all);
 export const automatic=value=>['URLTest','Fallback','LoadBalance'].includes(value?.type)||value?.smart===true;
 export const lockable=value=>['URLTest','Fallback'].includes(value?.type)||value?.smart===true;
-export const informationNode=name=>/^(?:剩余流量|到期时间|套餐到期|流量重置|重置剩余|官网地址|备用网址|订阅更新|traffic remaining|expires?[:：\s])/i.test(name.trim());
+export function informationNode(name){
+  const value=name.normalize('NFKC').trim().replace(/^[^\p{L}\p{N}]+/u,'').replace(/@(?:subdns|hosts)?(?:\d{1,3}|[0-9a-f]{4})[A-Z]*$/,'').trim();
+  return /^(?:剩余流量|到期时间|套餐到期|流量重置|重置剩余|官网地址|备用网址|订阅更新|traffic\s+remaining(?:[:：\s]|$)|traffic\s+reset\s*[:：]|expires?[:：\s]|(?:expiry|expiration)\s+date[:：\s])/i.test(value)||
+    /^\d+(?:\.\d+)?\s*(?:[KMGTPE]i?B|B)\s*[|/]\s*\d+(?:\.\d+)?\s*(?:[KMGTPE]i?B|B)$/i.test(value);
+}
 export const rejected=name=>['REJECT','REJECT-DROP'].includes(name);
 export const segment=value=>{if(value==='.'||value==='..')throw Error('该名称不能用于代理 API 路径，请先调整配置名称。');return encodeURIComponent(value).replace(/[!'()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());};
 export const defaultTestUrl='http://cp.cloudflare.com/generate_204';
@@ -28,6 +32,7 @@ export function preferences(value){
   const raw=record(value),sort=sorts.some(([key])=>key===raw.sort)?raw.sort:'natural';
   return {...raw,sort,hideUnavail:raw.hideUnavail===true,hideInfoNodes:raw.hideInfoNodes===true,autoClose:raw.autoClose===true,optimize:raw.optimize!==false,showUdp:raw.showUdp===true,
     curve:typeof raw.curve==='number'&&Number.isFinite(raw.curve)?Math.max(0,Math.min(100,raw.curve)):100,
+    hiddenNames:[...new Set(strings(raw.hiddenNames).filter(name=>name.trim()))],hiddenKeywords:[...new Set(strings(raw.hiddenKeywords).map(word=>word.normalize('NFKC').trim().toLowerCase()).filter(Boolean))],
     testUrl:typeof raw.testUrl==='string'?raw.testUrl:'',gsort:Object.assign(Object.create(null),record(raw.gsort)),gcollapse:Object.assign(Object.create(null),record(raw.gcollapse))};
 }
 export function groups(data,globalOnly=true){
@@ -62,10 +67,13 @@ export function nodeLabel(name,optimize=true){
   if(tag)display=display.slice(split+1).trim();
   return {display:display||name,flag,code,tag,dns};
 }
+export function customHiddenNode(name,prefs){
+  return prefs.hiddenNames.includes(name)||prefs.hiddenKeywords.some(word=>name.normalize('NFKC').toLowerCase().includes(word));
+}
 export function members(data,name,filter={},prefs=preferences({})){
   let values=[...(data.proxies[name]?.all||[])];
   if(data.mode==='global'&&name==='GLOBAL')values=values.filter(node=>!isGroup(data.proxies[node]));
-  values=values.filter(node=>(!prefs.hideInfoNodes||!informationNode(node))&&(!prefs.hideUnavail||isGroup(data.proxies[node])||state(data,node,name)!=='offline')&&(!filter.status||state(data,node,name)===filter.status)&&(!filter.region||nodeLabel(node).code===filter.region)&&(!filter.query||node.toLocaleLowerCase().includes(filter.query.toLocaleLowerCase())));
+  values=values.filter(node=>(isGroup(data.proxies[node])||!(prefs.hideInfoNodes&&informationNode(node))&&!customHiddenNode(node,prefs))&&(!prefs.hideUnavail||isGroup(data.proxies[node])||state(data,node,name)!=='offline')&&(!filter.status||state(data,node,name)===filter.status)&&(!filter.region||nodeLabel(node).code===filter.region)&&(!filter.query||node.toLocaleLowerCase().includes(filter.query.toLocaleLowerCase())));
   const order=filter.sort||prefs.gsort[name]||prefs.sort,latency=node=>delay(data,node,name)>0?delay(data,node,name):Infinity;
   if(order==='latAsc'||order==='latDesc')values.sort((a,b)=>{const x=latency(a),y=latency(b);return x===y?0:x===Infinity?1:y===Infinity?-1:order==='latAsc'?x-y:y-x;});
   else if(order==='scoreAsc')values.sort((a,b)=>(data.proxies[name]?.scores?.[a]?.score??Infinity)-(data.proxies[name]?.scores?.[b]?.score??Infinity));

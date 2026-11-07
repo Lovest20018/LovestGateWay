@@ -1,7 +1,7 @@
 import {modeControl} from './mode-control.js';
 import {icon} from './icons.js';
 import {formatBytes} from './format.js';
-import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode} from './proxy-model.js';
+import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode,customHiddenNode} from './proxy-model.js';
 
 const make=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
 const button=(label,callback)=>{const node=make('button',label,'btn');node.type='button';node.addEventListener('click',callback);return node;};
@@ -29,9 +29,17 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const globalSort=make('select');for(const [value,text]of sorts.filter(([key])=>key!=='scoreAsc')){const option=make('option',text);option.value=value;globalSort.append(option);}globalSort.value=prefs.sort;globalSort.addEventListener('change',()=>{prefs.sort=globalSort.value;save();render();});settings.append(label('组内排序',globalSort));
   for(const [key,text]of [['optimize','优化节点名标签显示'],['hideUnavail','隐藏不可用代理'],['hideInfoNodes','隐藏疑似订阅说明节点（仅影响展示）'],['autoClose','切换后关闭旧连接'],['showUdp','显示 UDP 标记']]){const check=make('input');check.type='checkbox';check.checked=prefs[key];check.dataset.preference=key;check.addEventListener('change',()=>{prefs[key]=check.checked;save();render();});settings.append(label(text,check));}
   const curve=make('input');curve.type='range';curve.min='0';curve.max='100';curve.value=String(prefs.curve);curve.addEventListener('input',()=>{prefs.curve=Number(curve.value);save();render();});settings.append(label('延迟曲线背景（100 为关闭）',curve));
+  const hiddenSettings=make('section',undefined,'proxy-hidden-settings'),hiddenHeading=make('h2','自定义隐藏'),hiddenHelp=make('p','可按完整节点名或关键词添加；关键词不区分大小写，按普通文字匹配。仅在当前浏览器生效，不修改配置、当前选择或测速范围，节点组仍会显示。');
+  const hiddenForm=make('form',undefined,'proxy-hidden-form');hiddenForm.setAttribute('aria-label','添加隐藏规则');
+  const hiddenType=make('select');hiddenType.setAttribute('aria-label','匹配方式');for(const [value,text]of [['hiddenKeywords','名称包含关键词'],['hiddenNames','完整名称匹配']]){const option=make('option',text);option.value=value;hiddenType.append(option);}
+  const hiddenInput=make('input');hiddenInput.type='text';hiddenInput.placeholder='例如：Traffic Reset';hiddenInput.autocomplete='off';hiddenInput.setAttribute('aria-label','隐藏内容');
+  const addHidden=button('添加',()=>{});addHidden.type='submit';hiddenForm.append(label('匹配方式',hiddenType),label('隐藏内容',hiddenInput),addHidden);
+  hiddenForm.addEventListener('submit',event=>{event.preventDefault();if(!hiddenInput.value.trim()){hiddenInput.focus();return;}addHiddenRule(hiddenType.value,hiddenInput.value);hiddenInput.value='';hiddenInput.focus();});
+  const hiddenList=make('ul',undefined,'proxy-hidden-list'),clearHidden=button('清空自定义隐藏',()=>{prefs.hiddenNames=[];prefs.hiddenKeywords=[];save();renderHiddenRules();render();message('已清空自定义隐藏规则。');});
+  hiddenSettings.append(hiddenHeading,hiddenHelp,hiddenForm,hiddenList,clearHidden);settings.append(hiddenSettings);renderHiddenRules();
   const toolbar=make('div',undefined,'proxies-actions'),testAll=button('全部测速',()=>{if(testing)testController?.abort();else runTests(()=>testPlan(data,prefs),'全部测速');}),updateAll=button('更新所有订阅',()=>perform('更新所有订阅',updateProviders));
   testAll.dataset.action='test-all';updateAll.dataset.action='update-all';toolbar.append(testAll,updateAll);
-  const information=make('p',undefined,'proxies-notice');information.hidden=true;
+  const information=make('p',undefined,'proxies-notice');information.hidden=true;information.setAttribute('aria-label','节点隐藏提示');
   const groupHost=make('div',undefined,'proxy-groups'),providerHost=make('section',undefined,'proxy-providers'),usageHost=make('section',undefined,'proxy-usages');
   const empty=make('p','暂无可用的节点组。','glass proxies-empty');empty.hidden=true;
   const dialog=make('dialog',undefined,'proxy-dialog');dialog.setAttribute('aria-label','节点详情');
@@ -50,6 +58,19 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
     const bounds=anchor.getBoundingClientRect();lockMenu.style.left=Math.max(12,Math.min(bounds.left,innerWidth-280))+'px';lockMenu.style.top=Math.max(12,Math.min(bounds.bottom,innerHeight-160))+'px';lockMenu.showPopover();lockConfirm.focus();
   }
   page.append(heading,status,modeNotice,settings,toolbar,information,groupHost,empty,providerHost,usageHost,dialog,lockMenu);host.replaceChildren(page);
+  function renderHiddenRules(){
+    hiddenList.replaceChildren();const count=prefs.hiddenNames.length+prefs.hiddenKeywords.length;hiddenHeading.textContent='自定义隐藏（'+count+' 条）';clearHidden.hidden=!count;
+    for(const key of ['hiddenNames','hiddenKeywords'])for(const value of prefs[key]){
+      const row=make('li'),text=make('span',(key==='hiddenNames'?'完整名称：':'关键词：')+value),remove=button(key==='hiddenNames'?'恢复显示':'删除规则',()=>{prefs[key]=prefs[key].filter(item=>item!==value);save();renderHiddenRules();render();message('已移除隐藏规则：'+value);});
+      remove.setAttribute('aria-label',(key==='hiddenNames'?'恢复显示 ':'删除关键词 ')+value);row.append(text,remove);hiddenList.append(row);
+    }
+    if(!count)hiddenList.append(make('li','尚未添加，可在节点详情中选择“隐藏此节点”。','proxy-hidden-empty'));
+  }
+  function addHiddenRule(key,value){
+    if(key==='hiddenKeywords')value=value.normalize('NFKC').trim().toLowerCase();
+    if(!prefs[key].includes(value)){prefs[key].push(value);save();renderHiddenRules();render();}
+    message('已添加隐藏规则，可在页面设置中恢复显示。');
+  }
   function message(text){if(disposed)return;status.textContent=text;status.hidden=!text;}
   function authorized(){paused=true;testController?.abort();if(!disposed)onUnauthorized();}
   async function request(url,{method='GET',body,signal,tag,allowNotModified=false}={}){
@@ -241,7 +262,8 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   }
   function render(){
     if(disposed)return;
-    const infoNames=Object.keys(data.proxies).filter(name=>!isGroup(data.proxies[name])&&informationNode(name));information.hidden=!infoNames.length;information.textContent=infoNames.length?'疑似订阅说明节点 '+infoNames.length+' 个：'+infoNames.join('、')+'。按名称识别，仅供参考；可在页面设置中隐藏，不修改配置或测速范围。':'';
+    const leaves=Object.keys(data.proxies).filter(name=>!isGroup(data.proxies[name])),infoNames=leaves.filter(informationNode),customNames=leaves.filter(name=>customHiddenNode(name,prefs));
+    information.hidden=!infoNames.length&&!customNames.length;information.textContent=[infoNames.length?(prefs.hideInfoNodes?'已隐藏疑似订阅说明节点 '+infoNames.length+' 个（仅影响展示）。按名称识别，仅供参考；不修改配置或测速范围。':'疑似订阅说明节点 '+infoNames.length+' 个：'+infoNames.join('、')+'。按名称识别，仅供参考；可在页面设置中隐藏，不修改配置或测速范围。'):'',customNames.length?'自定义规则已隐藏 '+customNames.length+' 个节点，可在页面设置中恢复显示。':''].filter(Boolean).join(' ');
     const ordered=groups(data);summary.textContent=ordered.length+' 个节点组';modeNotice.hidden=data.mode!=='global';
     const keep=new Set(ordered);for(const [name,view]of views)if(!keep.has(name)){for(const card of view.cards.values())card.clear();view.section.remove();views.delete(name);}
     for(const [index,name]of ordered.entries()){let view=views.get(name);if(!view){view=createGroup(name);views.set(name,view);}if(groupHost.children[index]!==view.section)groupHost.insertBefore(view.section,groupHost.children[index]||null);if(Object.hasOwn(prefs.gcollapse,name))view.section.open=!prefs.gcollapse[name];renderGroup(view);}
@@ -268,7 +290,8 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
       const history=Array.isArray(node.history)?node.history.slice(-8).map(item=>item.delay):data.proxies[name]?.hist||[],historyNode=make('p','延迟历史：'+(history.length?history.map(value=>value>0?value+' ms':'超时').join(' → '):'暂无测速历史'));
       const scores=data.proxies[group]?.scores?.[name],scoreNode=make('p',scores?'智能测速打分：'+(scores.score??'—')+'；最近样本：'+(scores.samples||[]).map(value=>value===null?'失败':value+' ms').join(' → '):'');
       const custom=make('input');custom.type='url';custom.value=testUrl(data,group,prefs,filterFor(group).url);custom.setAttribute('aria-label','节点详情测速 URL');const test=button('测速',async()=>{const completed=await runTests(()=>[{name,url:testUrl(data,'',{...prefs,testUrl:custom.value})}]);if(completed&&dialog.open&&detailName===name)openDetails(name,detailGroup);});test.dataset.action='detail-test';test.hidden=rejected(name);
-      dialogBody.replaceChildren(list,historyNode,scoreNode,label('测速 URL',custom),test);actionState();
+      const hide=button('隐藏此节点',()=>{addHiddenRule('hiddenNames',name);dialog.close();settingsButton.focus();});hide.hidden=isGroup(data.proxies[name]);
+      dialogBody.replaceChildren(list,historyNode,scoreNode,label('测速 URL',custom),test,hide);actionState();
     }catch(error){if(!disposed&&current===detailsVersion)dialogBody.replaceChildren(make('p',error.message));}
   }
   const visibility=()=>{if(document.hidden){clearTimeout(timer);sequence++;readController?.abort();reading=false;}else if(!disposed&&!paused)refresh(false);};
