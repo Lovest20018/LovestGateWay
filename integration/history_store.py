@@ -11,8 +11,7 @@ DATABASE = Path('/var/lib/paopaogw/history/observations.sqlite3')
 MAX_ROWS = 100000
 
 
-@contextmanager
-def connect(path=DATABASE, readonly=False):
+def open_database(path=DATABASE, readonly=False):
     if readonly:
         db = sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True, timeout=3)
     else:
@@ -23,6 +22,12 @@ def connect(path=DATABASE, readonly=False):
         db.execute('CREATE INDEX IF NOT EXISTS seen ON observations(last_seen)')
         db.execute('CREATE INDEX IF NOT EXISTS domain ON observations(domain)')
         os.chmod(path, 0o640)
+    return db
+
+
+@contextmanager
+def connect(path=DATABASE, readonly=False):
+    db = open_database(path, readonly)
     try:
         with db:
             yield db
@@ -30,19 +35,44 @@ def connect(path=DATABASE, readonly=False):
         db.close()
 
 
+class HistoryWriter:
+    """Reuse a connection; commit all successful sources in one sample together."""
+    def __init__(self, path=DATABASE):
+        self.db = open_database(path)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def close(self):
+        self.db.close()
+
+    def store(self, boot, batches, retention_days=30, now=None):
+        now = time.time() if now is None else now
+        values = []
+        for source, rows in batches:
+            for row in rows:
+                if not isinstance(row, dict) or not row.get('id'): continue
+                metadata = row.get('metadata')
+                if not isinstance(metadata, dict): metadata = {}
+                domain = row.get('domain') or metadata.get('host')
+                client = row.get('source_address') or metadata.get('sourceIP')
+                values.append((boot, str(row['id']), source, now, now, domain, client,
+                               json.dumps(row, ensure_ascii=False, separators=(',', ':'))))
+        with self.db as db:
+            db.executemany('INSERT INTO observations VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(boot,id,source) DO UPDATE SET last_seen=excluded.last_seen,domain=excluded.domain,client=excluded.client,value=excluded.value', values)
+            # Indexed expiry stays exact. Avoid the full offset eviction scan
+            # unless the hard capacity is actually exceeded.
+            db.execute('DELETE FROM observations WHERE last_seen < ?', (now - retention_days * 86400,))
+            if db.execute('SELECT COUNT(*) FROM observations').fetchone()[0] > MAX_ROWS:
+                db.execute('DELETE FROM observations WHERE rowid IN (SELECT rowid FROM observations ORDER BY last_seen DESC LIMIT -1 OFFSET ?)', (MAX_ROWS,))
+
+
 def store(boot, source, rows, path=DATABASE, retention_days=30, now=None):
-    now = time.time() if now is None else now
-    with connect(path) as db:
-        for row in rows:
-            if not isinstance(row, dict) or not row.get('id'): continue
-            metadata = row.get('metadata') or {}
-            domain = row.get('domain') or metadata.get('host')
-            client = row.get('source_address') or metadata.get('sourceIP')
-            db.execute('INSERT INTO observations VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(boot,id,source) DO UPDATE SET last_seen=excluded.last_seen,domain=excluded.domain,client=excluded.client,value=excluded.value',
-                       (boot, str(row['id']), source, now, now, domain, client,
-                        json.dumps(row, ensure_ascii=False, separators=(',', ':'))))
-        db.execute('DELETE FROM observations WHERE last_seen < ?', (now - retention_days * 86400,))
-        db.execute('DELETE FROM observations WHERE rowid IN (SELECT rowid FROM observations ORDER BY last_seen DESC LIMIT -1 OFFSET ?)', (MAX_ROWS,))
+    with HistoryWriter(path) as writer:
+        writer.store(boot, [(source, rows)], retention_days, now)
 
 
 def query(limit=100, before=None, domain=None, client=None, source=None, path=DATABASE):

@@ -71,9 +71,10 @@ pub(crate) struct RawProvider {
 pub struct WebProxies {
     clash_sock: PathBuf,
     ppgw_ini: PathBuf,
-    cache: Mutex<Option<String>>,
+    cache: Mutex<Option<Arc<sb_web::ProxySnapshot>>>,
 
-    last_fetch: Mutex<Option<std::time::Instant>>,
+    last_attempt: Mutex<Option<std::time::Instant>>,
+    refresh_lock: Mutex<()>,
 
     warm: Arc<tokio::sync::Notify>,
 
@@ -92,7 +93,8 @@ impl WebProxies {
             clash_sock,
             ppgw_ini: PathBuf::from("/tmp/ppgw.ini"),
             cache: Mutex::new(None),
-            last_fetch: Mutex::new(None),
+            last_attempt: Mutex::new(None),
+            refresh_lock: Mutex::new(()),
             warm: Arc::new(tokio::sync::Notify::new()),
             smart_stats,
             smart_fixed,
@@ -103,15 +105,15 @@ impl WebProxies {
         Arc::clone(&self.warm)
     }
 
-    fn cache_lock(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+    fn cache_lock(&self) -> std::sync::MutexGuard<'_, Option<Arc<sb_web::ProxySnapshot>>> {
         self.cache.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn last_fetch_lock(&self) -> std::sync::MutexGuard<'_, Option<std::time::Instant>> {
-        self.last_fetch.lock().unwrap_or_else(|e| e.into_inner())
+    fn last_attempt_lock(&self) -> std::sync::MutexGuard<'_, Option<std::time::Instant>> {
+        self.last_attempt.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn cached(&self) -> Option<String> {
+    fn cached(&self) -> Option<Arc<sb_web::ProxySnapshot>> {
         self.cache_lock().clone()
     }
 
@@ -159,39 +161,49 @@ impl WebProxies {
     }
 
     pub fn refresh(&self) -> bool {
-        if let Some(json) = self.fetch() {
-            *self.cache_lock() = Some(json);
-            *self.last_fetch_lock() = Some(std::time::Instant::now());
+        let _guard = self.refresh_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.refresh_locked()
+    }
+
+    // The caller owns refresh_lock. Failed attempts are also throttled so a
+    // temporarily unavailable core cannot cause a queue of identical fetches.
+    fn refresh_locked(&self) -> bool {
+        let result = self.fetch();
+        *self.last_attempt_lock() = Some(std::time::Instant::now());
+        if let Some(json) = result {
+            let mut cache = self.cache_lock();
+            if cache.as_ref().is_none_or(|snapshot| snapshot.body() != json) {
+                *cache = Some(Arc::new(sb_web::ProxySnapshot::new(json)));
+            }
             true
         } else {
             false
         }
     }
 
-    fn refresh_rate_limited(&self) {
-        let recent = self
-            .last_fetch_lock()
-            .is_some_and(|t| t.elapsed() < FRESH_MIN_INTERVAL);
-        if !recent {
-            self.refresh();
+    fn snapshot(&self, fresh: bool) -> Arc<sb_web::ProxySnapshot> {
+        if !fresh && let Some(snapshot) = self.cached() {
+            return snapshot;
         }
+        let _guard = self.refresh_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Recheck after acquiring the fetch gate; concurrent cold/fresh reads
+        // share the result of the first request.
+        let recent = self
+            .last_attempt_lock()
+            .is_some_and(|t| t.elapsed() < FRESH_MIN_INTERVAL);
+        if !recent && (fresh || self.cached().is_none()) {
+            self.refresh_locked();
+        }
+        self.cached().unwrap_or_else(|| {
+            static EMPTY: std::sync::OnceLock<Arc<sb_web::ProxySnapshot>> = std::sync::OnceLock::new();
+            Arc::clone(EMPTY.get_or_init(|| Arc::new(sb_web::ProxySnapshot::new("{}".to_string()))))
+        })
     }
 }
 
 impl sb_web::ProxiesSource for WebProxies {
-    fn proxies_json(&self) -> String {
-
-        if let Some(j) = self.cached() {
-            return j;
-        }
-
-        self.refresh();
-        self.cached().unwrap_or_else(|| "{}".to_string())
-    }
-
-    fn proxies_json_fresh(&self) -> String {
-        self.refresh_rate_limited();
-        self.cached().unwrap_or_else(|| "{}".to_string())
+    fn proxies_snapshot(&self, fresh: bool) -> Arc<sb_web::ProxySnapshot> {
+        self.snapshot(fresh)
     }
 
     fn mode_json(&self) -> String {
@@ -215,7 +227,7 @@ impl sb_web::ProxiesSource for WebProxies {
         let Some(raw) = self.cached() else {
             return (503, err_json("clash not ready"));
         };
-        let snap: Value = match serde_json::from_str(&raw) {
+        let snap: Value = match serde_json::from_str(raw.body()) {
             Ok(v) => v,
             Err(_) => return (503, err_json("clash not ready")),
         };
@@ -248,7 +260,6 @@ impl sb_web::ProxiesSource for WebProxies {
             }
         }
 
-        *self.last_fetch_lock() = None;
         self.refresh();
         (
             200,
@@ -638,6 +649,76 @@ fn dechunk_buffered(data: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn concurrent_proxy_reads_share_fetch_and_keep_last_good_snapshot() {
+        use std::os::unix::net::UnixListener;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        let socket = std::env::temp_dir().join(format!("ppgw-proxy-cache-{}.sock", std::process::id()));
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        let failed = Arc::new(AtomicBool::new(false));
+        let server = {
+            let (calls, stop, failed) = (Arc::clone(&calls), Arc::clone(&stop), Arc::clone(&failed));
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let Ok((mut stream, _)) = listener.accept() else {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    };
+                    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                    let mut request = Vec::new();
+                    let mut byte = [0];
+                    while stream.read_exact(&mut byte).is_ok() {
+                        request.push(byte[0]);
+                        if request.ends_with(b"\r\n\r\n") { break; }
+                    }
+                    let request = String::from_utf8_lossy(&request);
+                    let body = if request.starts_with("GET /proxies ") {
+                        calls.fetch_add(1, Ordering::Relaxed);
+                        std::thread::sleep(Duration::from_millis(25));
+                        if failed.load(Ordering::Relaxed) {
+                            "invalid"
+                        } else {
+                            r#"{"proxies":{"N":{"type":"Direct"},"G":{"type":"Selector","all":["N"],"now":"N"}}}"#
+                        }
+                    } else if request.starts_with("GET /configs ") {
+                        r#"{"mode":"rule"}"#
+                    } else {
+                        r#"{"providers":{}}"#
+                    };
+                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+                }
+            })
+        };
+        let source = WebProxies::new(socket.clone(), Arc::default(), crate::smart_fixed::SmartFixed::in_memory());
+        let read_batch = |fresh| {
+            let barrier = Arc::new(std::sync::Barrier::new(12));
+            let threads: Vec<_> = (0..12).map(|_| {
+                let (source, barrier) = (Arc::clone(&source), Arc::clone(&barrier));
+                std::thread::spawn(move || { barrier.wait(); source.snapshot(fresh) })
+            }).collect();
+            threads.into_iter().map(|t| t.join().unwrap()).collect::<Vec<_>>()
+        };
+        let cold = read_batch(false);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(cold.iter().all(|snapshot| Arc::ptr_eq(snapshot, &cold[0])));
+        *source.last_attempt_lock() = None;
+        let fresh = read_batch(true);
+        assert_eq!(calls.load(Ordering::Relaxed), 2);
+        assert!(fresh.iter().all(|snapshot| Arc::ptr_eq(snapshot, &cold[0])), "unchanged body keeps its validator and allocation");
+        failed.store(true, Ordering::Relaxed);
+        *source.last_attempt_lock() = None;
+        let retained = read_batch(true);
+        assert_eq!(calls.load(Ordering::Relaxed), 3, "failed refreshes are also coalesced");
+        assert!(retained.iter().all(|snapshot| Arc::ptr_eq(snapshot, &cold[0])), "bad core response cannot replace the last good snapshot");
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        std::fs::remove_file(socket).unwrap();
+    }
     fn px(v: Value) -> RawProxies {
         serde_json::from_value(v).unwrap()
     }

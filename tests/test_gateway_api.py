@@ -148,6 +148,21 @@ class ApiTests(unittest.TestCase):
         self.core.rows = [None]
         self.assert_error('INVALID_CORE_RESPONSE', '/api/v1/mihomo/connections')
 
+    def test_mihomo_empty_snapshot_accepts_null_but_rejects_malformed_values(self):
+        for mode in ('yaml', 'suburl'):
+            self.core.info['mode'] = mode
+            for value in (None, []):
+                with self.subTest(mode=mode, value=value):
+                    self.core.rows = value
+                    data = self.request('/api/v1/mihomo/connections')['data']
+                    self.assertEqual(data['items'], [])
+                    self.assertFalse(data['complete_history'])
+                    self.assertFalse(data['remote_target_verified'])
+        for value in (False, 0, '', {}, [None]):
+            with self.subTest(value=value):
+                self.core.rows = value
+                self.assert_error('INVALID_CORE_RESPONSE', '/api/v1/mihomo/connections')
+
     def test_persistent_history_query_validation_and_normalization(self):
         for query in ('before=-1', 'before=0', 'before=99999999999999999999', 'source=unknown', 'domain=', 'client=bad', 'limit=501'):
             self.assert_error('INVALID_QUERY', '/api/v1/history?' + query)

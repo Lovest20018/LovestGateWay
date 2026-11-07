@@ -161,6 +161,17 @@ def project(value: Any, keys: tuple[str, ...]) -> dict:
     return {k: value[k] for k in keys if k in value}
 
 
+def mihomo_connections(value):
+    """Normalize explicit null empty snapshots without masking invalid responses."""
+    if not isinstance(value, dict) or 'connections' not in value:
+        raise ApiError(502, 'INVALID_CORE_RESPONSE')
+    rows = value['connections']
+    if rows is None: return []
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ApiError(502, 'INVALID_CORE_RESPONSE')
+    return rows
+
+
 def metric_number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
 
@@ -288,10 +299,7 @@ class Application:
                     runtime = self.runtime()
                     if runtime['mode'] not in {'yaml', 'suburl'}:
                         raise ApiError(409, 'MIHOMO_NOT_ACTIVE')
-                    result = self.core.request('/connections')
-                    rows = result.get('connections', [])
-                    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
-                        raise ApiError(502, 'INVALID_CORE_RESPONSE')
+                    rows = mihomo_connections(self.core.request('/connections'))
                     items = []
                     for row in rows[:limit]:
                         item = project(row, ('id', 'start', 'upload', 'download', 'chains', 'rule', 'rulePayload'))

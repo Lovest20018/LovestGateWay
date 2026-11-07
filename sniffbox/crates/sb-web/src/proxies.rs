@@ -1,10 +1,33 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
+use std::hash::{DefaultHasher, Hasher};
+use std::sync::Arc;
+
+/// The body and its validator are published together and shared by all readers.
+pub struct ProxySnapshot {
+    body: String,
+    etag: String,
+}
+
+impl ProxySnapshot {
+    pub fn new(body: String) -> Self {
+        let mut hash = DefaultHasher::new();
+        hash.write(body.as_bytes());
+        let etag = format!("\"{:016x}\"", hash.finish());
+        Self { body, etag }
+    }
+
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    pub fn etag(&self) -> &str {
+        &self.etag
+    }
+}
+
 pub trait ProxiesSource: Send + Sync {
-
-    fn proxies_json(&self) -> String;
-
-    fn proxies_json_fresh(&self) -> String;
+    fn proxies_snapshot(&self, fresh: bool) -> Arc<ProxySnapshot>;
 
     fn mode_json(&self) -> String;
 

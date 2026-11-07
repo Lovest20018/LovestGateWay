@@ -70,10 +70,10 @@ export function nodeLabel(name,optimize=true){
 export function customHiddenNode(name,prefs){
   return prefs.hiddenNames.includes(name)||prefs.hiddenKeywords.some(word=>name.normalize('NFKC').toLowerCase().includes(word));
 }
-export function members(data,name,filter={},prefs=preferences({})){
+export function members(data,name,filter={},prefs=preferences({}),labelFor=nodeLabel){
   let values=[...(data.proxies[name]?.all||[])];
   if(data.mode==='global'&&name==='GLOBAL')values=values.filter(node=>!isGroup(data.proxies[node]));
-  values=values.filter(node=>(isGroup(data.proxies[node])||!(prefs.hideInfoNodes&&informationNode(node))&&!customHiddenNode(node,prefs))&&(!prefs.hideUnavail||isGroup(data.proxies[node])||state(data,node,name)!=='offline')&&(!filter.status||state(data,node,name)===filter.status)&&(!filter.region||nodeLabel(node).code===filter.region)&&(!filter.query||node.toLocaleLowerCase().includes(filter.query.toLocaleLowerCase())));
+  values=values.filter(node=>(isGroup(data.proxies[node])||!(prefs.hideInfoNodes&&informationNode(node))&&!customHiddenNode(node,prefs))&&(!prefs.hideUnavail||isGroup(data.proxies[node])||state(data,node,name)!=='offline')&&(!filter.status||state(data,node,name)===filter.status)&&(!filter.region||labelFor(node).code===filter.region)&&(!filter.query||node.toLocaleLowerCase().includes(filter.query.toLocaleLowerCase())));
   const order=filter.sort||prefs.gsort[name]||prefs.sort,latency=node=>delay(data,node,name)>0?delay(data,node,name):Infinity;
   if(order==='latAsc'||order==='latDesc')values.sort((a,b)=>{const x=latency(a),y=latency(b);return x===y?0:x===Infinity?1:y===Infinity?-1:order==='latAsc'?x-y:y-x;});
   else if(order==='scoreAsc')values.sort((a,b)=>(data.proxies[name]?.scores?.[a]?.score??Infinity)-(data.proxies[name]?.scores?.[b]?.score??Infinity));

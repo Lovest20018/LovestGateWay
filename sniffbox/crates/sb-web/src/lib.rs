@@ -41,7 +41,7 @@ pub use geo::{GeoControl, GeoFut};
 pub use info::{InfoScope, InfoSource};
 pub use nodes::NodesSource;
 pub use probe::{Busy, ProbeFut, ProbeSource};
-pub use proxies::ProxiesSource;
+pub use proxies::{ProxiesSource, ProxySnapshot};
 pub use screen::ScreenHistory;
 
 pub use screen::ScreenHistory as LineHistory;

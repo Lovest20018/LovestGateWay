@@ -315,39 +315,26 @@ async fn proxies_get(
 
     let fresh = req.path.contains("fresh=1");
     let src = Arc::clone(src);
-    let body = tokio::task::spawn_blocking(move || {
-        if fresh {
-            src.proxies_json_fresh()
-        } else {
-            src.proxies_json()
-        }
-    })
-    .await
-    .unwrap_or_else(|_| "{}".to_string());
+    let snapshot = tokio::task::spawn_blocking(move || src.proxies_snapshot(fresh))
+        .await
+        .unwrap_or_else(|_| Arc::new(crate::ProxySnapshot::new("{}".to_string())));
 
-    let etag = etag_of(body.as_bytes());
+    let etag = snapshot.etag();
     if req
         .header("if-none-match")
-        .is_some_and(|v| if_none_match_hits(v, &etag))
+        .is_some_and(|v| if_none_match_hits(v, etag))
     {
-        return respond::not_modified(stream, &etag, ka).await;
+        return respond::not_modified(stream, etag, ka).await;
     }
     respond::send(
         stream,
         200,
         "OK",
-        &[JSON, ("ETag", &etag), ("Cache-Control", "no-cache")],
-        body.as_bytes(),
+        &[JSON, ("ETag", etag), ("Cache-Control", "no-cache")],
+        snapshot.body().as_bytes(),
         ka,
     )
     .await
-}
-
-fn etag_of(body: &[u8]) -> String {
-    use std::hash::{DefaultHasher, Hasher};
-    let mut h = DefaultHasher::new();
-    h.write(body);
-    format!("\"{:016x}\"", h.finish())
 }
 
 fn if_none_match_hits(header: &[u8], etag: &str) -> bool {
@@ -879,7 +866,11 @@ async fn read_screen_async(dev: PathBuf) -> Option<String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{etag_of, if_none_match_hits, pct_decode, query_param};
+    use super::{if_none_match_hits, pct_decode, query_param};
+
+    fn etag_of(body: &[u8]) -> String {
+        crate::ProxySnapshot::new(String::from_utf8(body.to_vec()).unwrap()).etag().to_owned()
+    }
 
     #[test]
     fn if_none_match_follows_rfc_weak_comparison() {

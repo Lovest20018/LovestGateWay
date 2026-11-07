@@ -4,6 +4,7 @@ import {formatBytes} from './format.js';
 import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode,customHiddenNode} from './proxy-model.js';
 
 const make=(tag,text,className)=>{const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(className)node.className=className;return node;};
+const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
 const button=(label,callback)=>{const node=make('button',label,'btn');node.type='button';node.addEventListener('click',callback);return node;};
 const label=(text,input)=>{const node=make('label');node.append(make('span',text),input);return node;};
 const typeLabel=node=>node?.smart?'智能测速':({Selector:'手动选择',URLTest:'测速模式',Fallback:'故障转移',LoadBalance:'负载均衡',Relay:'中继',Direct:'直连',Reject:'拒绝',RejectDrop:'丢弃'})[node?.type]||node?.type||'未知';
@@ -15,7 +16,8 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   let prefs;try{prefs=preferences(JSON.parse(localStorage.getItem('ppgw-proxy-settings')||'{}'));}catch{prefs=preferences({});}
   const save=()=>{try{localStorage.setItem('ppgw-proxy-settings',JSON.stringify(prefs));}catch{}};
   let data=snapshot({}),disposed=false,paused=false,busy=false,testing=false,testController=null,reading=false,resumeRequested=false,timer=null,readController=null,sequence=0,etag='',detailsVersion=0,detailName='',detailGroup='',loaded=false;
-  const controllers=new Set(),views=new Map(),providerViews=new Map();
+  const controllers=new Set(),views=new Map(),providerViews=new Map(),labels=new Map();let usageSignature='';
+  const labelFor=(name,optimize=true)=>{if(!optimize)return nodeLabel(name,false);if(!labels.has(name))labels.set(name,nodeLabel(name));return labels.get(name);};
   const page=make('section',undefined,'proxies-page');page.id='proxies-page';
   const heading=make('header',undefined,'proxies-head'),title=make('h1','代理'),summary=make('span','正在读取…','proxies-summary');
   const modes=modeControl(next=>perform('切换模式',async()=>{await request('/configs',{method:'PATCH',body:{mode:next}});data.mode=next;if(next==='global')prefs.gcollapse.GLOBAL=false;save();})),modeButton=modes.root;
@@ -110,7 +112,10 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   }
   function accept(value){
     if(!value||typeof value!=='object'||Array.isArray(value)||!value.proxies||typeof value.proxies!=='object'||Array.isArray(value.proxies))throw Error('代理状态暂不可用，稍后重试。');
-    data=snapshot(value);loaded=true;render();
+    data=snapshot(value);
+    const names=new Set(Object.keys(data.proxies));for(const node of Object.values(data.proxies))if(isGroup(node))for(const name of node.all)names.add(name);
+    for(const name of labels.keys())if(!names.has(name))labels.delete(name);
+    loaded=true;render();
   }
   async function perform(description,work){
     if(disposed||busy||paused||!loaded)return;
@@ -231,25 +236,29 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   }
   function renderGroup(view){
     const {name,section}=view,node=data.proxies[name],filter=filterFor(name);if(!node)return;
-    view.kind.textContent=typeLabel(node);view.now.textContent=node.now?'当前：'+node.now:'';view.count.textContent=node.all.length+' 个节点';
+    setText(view.kind,typeLabel(node));setText(view.now,node.now?'当前：'+node.now:'');setText(view.count,node.all.length+' 个节点');
     view.unlock.hidden=!node.fixed;view.unlock.title=node.fixed||'';
-    view.info.textContent=node.fixed?'已锁定 '+node.fixed+(node.now!==node.fixed?'；当前选择已临时按策略切换。':'；组测速会解除锁定。'):node.type==='Selector'&&!node.smart?'点击节点切换。':lockable(node)?'由核心自动选择；可长按节点或使用锁定按钮。':'由核心决定节点，支持测速和查看详情。';
-    const codes=[...new Set(node.all.map(name=>nodeLabel(name).code).filter(Boolean))].sort();const regionValue=view.region.value||filter.region;
-    view.region.replaceChildren(...[['','全部区域'],...codes.map(code=>[code,code])].map(([value,text])=>{const option=make('option',text);option.value=value;return option;}));view.region.value=regionValue;
-    if(!codes.includes(filter.region)&&filter.region){filter.region='';view.region.value='';}
+    setText(view.info,node.fixed?'已锁定 '+node.fixed+(node.now!==node.fixed?'；当前选择已临时按策略切换。':'；组测速会解除锁定。'):node.type==='Selector'&&!node.smart?'点击节点切换。':lockable(node)?'由核心自动选择；可长按节点或使用锁定按钮。':'由核心决定节点，支持测速和查看详情。');
     if(!section.open)return;
-    const matches=members(data,name,filter,prefs),visible=matches.slice(0,view.limit),keep=new Set(visible);view.more.hidden=matches.length<=visible.length;view.more.textContent='显示更多（剩余 '+Math.max(0,matches.length-visible.length)+' 个）';
+    const codes=[...new Set(node.all.map(name=>labelFor(name).code).filter(Boolean))].sort(),regionSignature=JSON.stringify(codes);
+    if(view.regionSignature!==regionSignature){const regionValue=filter.region;view.region.replaceChildren(...[['','全部区域'],...codes.map(code=>[code,code])].map(([value,text])=>{const option=make('option',text);option.value=value;return option;}));view.region.value=regionValue;view.regionSignature=regionSignature;}
+    if(!codes.includes(filter.region)&&filter.region){filter.region='';view.region.value='';}
+    const matches=members(data,name,filter,prefs,labelFor),visible=matches.slice(0,view.limit),keep=new Set(visible);view.more.hidden=matches.length<=visible.length;setText(view.more,'显示更多（剩余 '+Math.max(0,matches.length-visible.length)+' 个）');
     for(const [key,card]of view.cards)if(!keep.has(key)){card.clear();card.row.remove();view.cards.delete(key);}
-    for(const [index,key]of visible.entries()){let card=view.cards.get(key);if(!card){card=cardFor(view,key);view.cards.set(key,card);}const child=data.proxies[key],info=nodeLabel(key,prefs.optimize),latency=delay(data,key,name),online=state(data,key,name),score=node.scores?.[key]?.score;
+    for(const [index,key]of visible.entries()){let card=view.cards.get(key);if(!card){card=cardFor(view,key);view.cards.set(key,card);}const child=data.proxies[key],latency=delay(data,key,name),online=state(data,key,name),score=node.scores?.[key]?.score;
+      const history=node.smart?node.scores?.[key]?.samples:child?.hist||child?.history?.map(item=>item.delay),samples=Array.isArray(history)?history.slice(-8):[];
+      const signature=JSON.stringify([Boolean(child),child?.type,child?.smart,child?.udp,latency,online,score,node.type,node.smart,node.now===key,node.fixed===key,prefs.optimize,prefs.showUdp,prefs.curve,samples,busy,paused]);
+      if(card.signature!==signature){const info=labelFor(key,prefs.optimize);
       card.display.textContent=[info.flag,info.display].filter(Boolean).join(' ');card.display.title=key;card.latency.textContent=latency===null?'—':latency===0?'超时':latency+' ms';card.row.dataset.state=online;card.row.classList.toggle('selected',node.now===key);card.choice.setAttribute('aria-pressed',String(node.now===key));card.choice.title=key;
       card.choice.disabled=busy||paused||!child||node.type!=='Selector'||node.smart===true;card.choice.dataset.action=node.type==='Selector'&&!node.smart?'select':'inspect';
       // Automatic groups keep the long-press target available without a selection mutation.
-      if(lockable(node)){card.choice.disabled=busy||paused;card.choice.setAttribute('aria-label','自动节点 '+key);}
+      if(lockable(node))card.choice.disabled=busy||paused;card.choice.setAttribute('aria-label',(lockable(node)?'自动节点 ':'选择 ')+key);
       card.choice.dataset.unavailable=String(!child||node.type!=='Selector'&&!lockable(node));
       card.badges.textContent=[typeLabel(child),info.tag,info.dns?'@'+info.dns:'',prefs.showUdp&&child?.udp?'UDP':'',typeof score==='number'?'打分 '+score:''].filter(Boolean).join(' · ');
       card.lock.hidden=!lockable(node);card.lock.textContent=node.fixed===key?'解锁':'锁定';card.lock.setAttribute('aria-pressed',String(node.fixed===key));card.test.hidden=rejected(key);
-      const hist=node.smart?node.scores?.[key]?.samples:child?.hist||child?.history?.map(item=>item.delay);card.curve.replaceChildren();card.curve.hidden=prefs.curve>=100||!Array.isArray(hist)||hist.length<2;
-      if(!card.curve.hidden){const samples=hist.slice(-8),valid=samples.filter(value=>typeof value==='number'&&Number.isFinite(value)&&value>0),max=Math.max(1,...valid),svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),line=document.createElementNS(svg.namespaceURI,'polyline');svg.setAttribute('viewBox','0 0 100 40');svg.setAttribute('preserveAspectRatio','none');line.setAttribute('points',samples.map((value,index)=>index/(samples.length-1)*100+','+(typeof value==='number'&&value>0?4+(1-value/max)*32:39)).join(' '));svg.append(line);card.curve.append(svg);card.curve.style.opacity=String((100-prefs.curve)/100);}
+      card.curve.hidden=prefs.curve>=100||samples.length<2;
+      if(!card.curve.hidden){const valid=samples.filter(value=>typeof value==='number'&&Number.isFinite(value)&&value>0),max=Math.max(1,...valid);if(!card.line){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');card.line=document.createElementNS(svg.namespaceURI,'polyline');svg.setAttribute('viewBox','0 0 100 40');svg.setAttribute('preserveAspectRatio','none');svg.append(card.line);card.curve.append(svg);}const points=samples.map((value,index)=>index/(samples.length-1)*100+','+(typeof value==='number'&&value>0?4+(1-value/max)*32:39)).join(' ');if(card.line.getAttribute('points')!==points)card.line.setAttribute('points',points);card.curve.style.opacity=String((100-prefs.curve)/100);}
+      card.signature=signature;}
       if(view.grid.children[index]!==card.row)view.grid.insertBefore(card.row,view.grid.children[index]||null);
     }
     let noResults=view.body.querySelector('.proxy-no-results');if(!noResults){noResults=make('p','当前筛选下没有节点。','proxy-no-results');view.body.append(noResults);}noResults.hidden=visible.length>0;
@@ -275,8 +284,8 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
       if(!view){const card=make('article',undefined,'glass proxy-provider'),kind=make('span'),count=make('span'),updated=make('small');card.dataset.provider=name;card.append(make('h3',name),kind,count,updated);
         const update=button('更新订阅',()=>perform('更新订阅',async()=>request('/providers/proxies/'+segment(name),{method:'PUT'}))),health=button('批量测速',()=>runTests(()=>{const url=testUrl(data,'',prefs);return data.providers[name].proxies.filter(node=>!rejected(node)).map(node=>({name:node,url}));},'代理集合测速'));update.dataset.action='provider-update';health.dataset.action='provider-test';card.append(update,health);providerHost.append(card);view={card,kind,count,updated};providerViews.set(name,view);}
       view.kind.textContent=provider.vehicleType||'代理集合';view.count.textContent=provider.proxies.length+' 个节点';view.updated.textContent=provider.updatedAt?'更新于 '+time(provider.updatedAt):'暂无更新时间';}
-    usageHost.replaceChildren();const subscriptions=[...data.subs,...providers.filter(name=>data.providers[name].subscriptionInfo).map(name=>({name,...data.providers[name].subscriptionInfo}))];usageHost.hidden=!subscriptions.length;
-    if(subscriptions.length){usageHost.append(make('h2','订阅用量'));for(const sub of subscriptions)usageHost.append(usageCard(sub.name,sub));}
+    const subscriptions=[...data.subs,...providers.filter(name=>data.providers[name].subscriptionInfo).map(name=>({name,...data.providers[name].subscriptionInfo}))],nextUsage=JSON.stringify(subscriptions);usageHost.hidden=!subscriptions.length;
+    if(usageSignature!==nextUsage){usageHost.replaceChildren();if(subscriptions.length){usageHost.append(make('h2','订阅用量'));for(const sub of subscriptions)usageHost.append(usageCard(sub.name,sub));}usageSignature=nextUsage;}
     actionState();
   }
   async function openDetails(name,group){
