@@ -44,6 +44,9 @@
 :is(.ppgw-gateway,.ppgw-global-settings) .notice.error {background:color-mix(in srgb,var(--err) 8%,transparent);border-color:color-mix(in srgb,var(--err) 25%,transparent);color:var(--err-text)}
 :is(.ppgw-gateway,.ppgw-global-settings) .notice.success {background:color-mix(in srgb,var(--up) 8%,transparent);border-color:color-mix(in srgb,var(--up) 25%,transparent);color:var(--up-text)}
 :is(.ppgw-gateway,.ppgw-global-settings) .notice a {color:inherit;text-decoration:underline}
+.ppgw-gateway .unknown-task-review {font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.ppgw-gateway .unknown-task-ack {display:flex;align-items:flex-start;gap:8px}
+.ppgw-gateway .unknown-task-ack input {flex:none;margin:4px 0 0}
 :is(.ppgw-gateway,.ppgw-global-settings) .source-summary {display:flex;align-items:center;gap:12px;background:var(--row-hover);border:1px solid var(--edge);border-radius:10px;padding:14px 16px;margin-bottom:20px}
 :is(.ppgw-gateway,.ppgw-global-settings) .source-icon {color:var(--brand-text);font-size:22px}
 :is(.ppgw-gateway,.ppgw-global-settings) .source-summary strong {font-size:13px}

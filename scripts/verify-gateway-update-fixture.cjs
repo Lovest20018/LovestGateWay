@@ -17,8 +17,8 @@ async function main() {
     const context = await browser.newContext({viewport:{width:1440,height:1000}, reducedMotion:'reduce'});
     const page = await context.newPage(), errors = [], posts = [];
     page.on('pageerror', error => errors.push(error.message));
-    const sessions = sessionFixture();
-    let fail = false, expire = false, pause = false, lost = false, reads = 0;
+    const sessions = sessionFixture({proof:()=>require('node:crypto').createHash('sha256').update('GatewayFixturePassword8').digest('hex')});
+    let fail = false, expire = false, pause = false, lost = false, missing = false, reads = 0;
     const data = {installed:{version:'0.2.1'},candidate:null,available:false,operation:null};
     const model = {...defaults,revision:'a'.repeat(64),assets:[],source:{},management:{state:'loaded',recent:[]},mihomo_installed:true};
     await page.route(origin+'/**', async route => {
@@ -32,6 +32,7 @@ async function main() {
           return route.fulfill({status:202,contentType:'application/json',body:JSON.stringify(data.operation)});
         }
         if (target.includes('/jobs/')) {
+          if (missing) return route.fulfill({status:404,contentType:'application/json',body:'{"error":"JOB_NOT_FOUND"}'});
           assert.equal(target.split('/').pop(),data.operation.id);
           if (expire) return route.fulfill({status:401,contentType:'application/json',body:'{"error":"LOGIN_REQUIRED"}'});
           reads++;
@@ -99,11 +100,33 @@ async function main() {
     fail=false;expire=true;await page.locator('#gateway-release-check').click();
     await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('登录已失效'));
     assert.equal(posts.length,4);assert.ok(await page.evaluate(()=>sessionStorage.getItem('lovestgateway-release-job')));
-    expire=false;await page.locator('#gateway-release-query').click();
+    expire=false;await page.getByRole('button',{name:'重新登录',exact:true}).click();
+    await page.locator('#reauth-panel input[type=password]').fill('GatewayFixturePassword8');
+    await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();
+    await page.locator('#reauth-panel').waitFor({state:'detached'});
     await page.waitForFunction(()=>!sessionStorage.getItem('lovestgateway-release-job'),null,{timeout:15000});
     assert.equal(posts.length,4,'resume after authentication may only query');
+    // An unknown task can be queried read-only, and a confirmed idle backend unlocks this view.
+    missing=true;await page.locator('#gateway-release-check').click();
+    await page.getByRole('button',{name:'核对后台状态',exact:true}).waitFor();
+    assert.equal(await page.locator('#gateway-release-query').isDisabled(),false);
+    await page.locator('#gateway-release-query').click();await page.getByRole('button',{name:'核对后台状态',exact:true}).waitFor();
+    assert.equal(posts.length,5,'querying the unknown task must never repeat POST');
+    data.operation=null;await page.getByRole('button',{name:'核对后台状态',exact:true}).click();
+    await page.getByText('后台没有进行中的网关更新，可重新检查版本。',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>sessionStorage.getItem('lovestgateway-release-job')),null);
+    for(const selector of ['#gateway-release-check','#gateway-release-query','#reload'])assert.equal(await page.locator(selector).isDisabled(),false);
+    await page.locator('#shell-nav [data-route=overview]').click();await page.locator('#overview-page').waitFor();await open();
+    // A newer active task discovered by the check remains locked and is followed without another POST.
+    await page.locator('#gateway-release-check').click();await page.getByRole('button',{name:'核对后台状态',exact:true}).waitFor();
+    data.operation={id:'f'.repeat(32),action:'check',status:'running',stage:'checking'};missing=false;pause=true;
+    await page.getByRole('button',{name:'核对后台状态',exact:true}).click();
+    await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('lovestgateway-release-job')||'null')?.id==='f'.repeat(32));
+    assert.equal(await page.locator('#gateway-release-check').isDisabled(),true);assert.equal(await page.locator('#reload').isDisabled(),true);
+    pause=false;await page.waitForFunction(()=>!sessionStorage.getItem('lovestgateway-release-job'),null,{timeout:15000});
+    assert.equal(posts.length,6);
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({passed:true,checks:['check-only','pinned-release','cancel','lost-response','restart-refresh','success','rollback','401-resume','mobile'],posts:posts.length}));
+    console.log(JSON.stringify({passed:true,checks:['check-only','pinned-release','cancel','lost-response','restart-refresh','success','rollback','401-resume','unknown-read-retry','idle-check-unlocks','newer-task-stays-locked','mobile'],posts:posts.length}));
   } finally { await browser.close(); }
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

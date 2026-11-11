@@ -14,7 +14,54 @@ on:
 permissions:
   contents: read
 jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PPGW_PLAYWRIGHT_MODULE: ${{ runner.temp }}/ppgw-browser/node_modules/playwright
+      PPGW_PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Browser test dependencies
+        run: |
+          python -m pip install PyYAML jsonschema
+          npm install --no-save --package-lock=false --prefix "$RUNNER_TEMP/ppgw-browser" playwright@1.62.1
+          "$RUNNER_TEMP/ppgw-browser/node_modules/.bin/playwright" install --with-deps chrome
+      - name: Build and exercise synthetic dashboard
+        run: |
+          node frontend/build.mjs --output dist/browser-ui
+          node scripts/verify-management-auth-fixture.cjs dist/browser-ui
+          node scripts/verify-settings-fixture.cjs dist/browser-ui
+          node scripts/verify-gateway-update-fixture.cjs dist/browser-ui
+          node scripts/verify-overview-fixture.cjs dist/browser-ui --evidence=dist/browser-evidence/overview
+          node scripts/verify-proxies-fixture.cjs dist/browser-ui --evidence=dist/browser-evidence/proxies
+          node scripts/verify-rules-fixture.cjs dist/browser-ui --evidence=dist/browser-evidence/rules
+          node scripts/verify-source-editor.cjs dist/browser-ui
+          node scripts/verify-subscription-flow.cjs dist/browser-ui
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dashboard-browser-evidence
+          path: |
+            dist/browser-evidence/
+            dist/management-auth-evidence/
+            dist/*browser-evidence.json
+            dist/settings-*.png
+            dist/password-settings-*.png
+            dist/mihomo-manual-*.png
+          if-no-files-found: ignore
   debian:
+    needs: browser
     runs-on: ubuntu-latest
     container: rust:bookworm
     steps:

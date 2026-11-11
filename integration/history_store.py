@@ -13,7 +13,7 @@ MAX_ROWS = 100000
 
 def open_database(path=DATABASE, readonly=False):
     if readonly:
-        db = sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True, timeout=3)
+        db = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True, timeout=3)
     else:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
         db = sqlite3.connect(path, timeout=3)

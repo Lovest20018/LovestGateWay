@@ -17,7 +17,7 @@ node --check integration/ppsub_panel.js
 
 浏览器会话使用真实 Rust HTTP 测试核对登录、限速、同源边界、远端永久 Bearer 拒绝和 Cookie 撤销；实际 SSE socket 覆盖注销、改密和到期后断开。`node scripts/verify-browser-sessions.cjs dist/test-ui` 额外核对刷新恢复、HttpOnly、旧凭据清理、偏好保留和注销失败重试。其合成 API 不替代服务端认证测试，接口约定见[浏览器管理会话](browser-sessions.md)。
 
-API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。面板构建和调用打包脚本的测试需要 Node.js 18+（Debian Bookworm 可安装 `nodejs`）；不需要安装 npm 依赖，Node 不属于生产运行依赖。`PPGW_NODE` 可指定构建解释器。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
+API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。开发与完整测试使用 Node.js 24，与 CI 和 frontend/package.json 保持一致；单独运行面板构建脚本仍兼容 Node.js 18+；不需要安装 npm 依赖，Node 不属于生产运行依赖。`PPGW_NODE` 可指定构建解释器。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
 
 受限 Mihomo 热加载的真实连接与完整 Debian 服务验收分别使用 `scripts/verify-mihomo-reload.py` 和 `scripts/verify-mihomo-policy-linux.py`，运行条件与覆盖边界见[热加载说明](mihomo-reload-assessment.md)。只在一次性隔离环境运行失败注入，不对现用配置执行此类实验。
 
@@ -38,6 +38,7 @@ cargo build --release --locked -p sniffbox
 
 ```sh
 python3 scripts/prepare_dashboard.py --output dist/test-ui
+node scripts/verify-management-auth-fixture.cjs dist/test-ui
 node scripts/verify-settings-fixture.cjs dist/test-ui
 node scripts/verify-gateway-update-fixture.cjs dist/test-ui
 node scripts/verify-dashboard-fixture.cjs dist/test-ui
@@ -71,7 +72,9 @@ node scripts/verify-observer-api-fixture.cjs dist/test-ui
 
 诊断恢复验证检查分页备份校验、损坏备份禁用、脱敏报告固定字段、签名预览与确认、过期预览拒绝、网络断开与刷新后按原任务号续查、待核实任务的导航保护，以及历史密码恢复后的重新登录。明确被拒绝的提交与查询时认证失效分别处理；成功结果区分真实验收、目标未启用和暂存环境，并验证管理任务服务保留状态的例外提示。所有操作均使用合成响应，同时检查 320px 手机布局、主题和文本安全。
 
-未知任务的 404 不会自动解锁或重放：页面保留任务号并展示只读诊断；存在待恢复事务时不能解除。只有人工明确确认已通过管理脚本或状态核对，且点击时再次读取诊断确认无待恢复事务，才停止本浏览器追踪；测试同时断言该步骤不会创建、取消或重新提交服务端任务。
+设置与诊断页遇到未知任务的 404 不会自动解锁或重放：页面保留任务号并展示只读诊断；存在待恢复事务时不能解除。只有人工明确确认已通过管理脚本或状态核对，且点击时再次读取诊断确认无待恢复事务，才停止本浏览器追踪；测试同时断言该步骤不会创建、取消或重新提交服务端任务。设置页还验证畸形诊断、活动任务和确认时状态变化会阻止解除，刷新后仍保留任务，解除后恢复配置编辑与导航。
+
+网关更新回归覆盖未知任务的只读重查、核对为空闲后恢复按钮与导航、发现较新活动任务时继续锁定并查询该任务。认证恢复回归延迟核心维护 POST 的响应，在尚未返回任务号时完成重新登录，确认提交锁一直保留；收到成功响应后续查原任务，明确拒绝后解锁，两种情况都不重放写入。
 
 诊断 fixture 还会延迟旧任务完成后的运行信息请求，在此期间提交第二个备份任务，验证新任务无需人工操作即可继续查询至终态；桌面导航按 free 模式完整可见项集合、文字与位置边界验收，避免空集合检查误通过。
 
@@ -98,3 +101,5 @@ FakeIP DNS 同时监听 UDP 和 TCP，两种协议共用解析与地址池。Rus
 历史清理后，旧克隆应重新克隆，或仅将审查后的修改移植到新的主线。不要将旧分支合并回来或恢复公开推送旧备份。真实部署的截图、日志和记录继续保存在仓库之外。
 
 连接、流量、分布、日志、区域通过 `scripts/verify-monitors-fixture.cjs` 使用本机 HTTP/SSE 合成服务验证，浏览器阻断所有外部请求。覆盖活动/已关闭连接、筛选和列偏好、显式关闭、流量分组及 JSON 导出、暂停恢复、六组分布排行和确认重置、安全 ANSI、独立日志搜索和暂停缓冲、2000 行保留上限、59 项区域定义、429 重试、最多五个检测请求、排队取消、隐藏/离页停止、401 后共享重新登录不重放操作、未启用采集和不可用终端，以及桌面亮暗主题与 320px 手机。`--baseline` 从迁移前构建采集同一数据的原页面截图。Node 测试补充流式 UTF-8/CRLF、多行 SSE、计数重置、最长持续时间、CSV 单元格转义、检测依赖和队列取消。上述为合成 UI 验证，不代表真实出口或商业服务解锁验收。
+
+Debian CI 的独立 browser 作业使用固定版本 Playwright 和 Chrome，运行认证恢复、完整设置与核心维护、网关升级、概览、代理、规则、源码编辑及订阅流程；通过后才进入 Debian 测试与打包。截图和合成验证报告随 CI artifact 保存。认证恢复用例覆盖立即原地登录、设置与订阅草稿保留、提交被明确拒绝、设置原任务号续查、待确认任务锁定及不重放写入。旧会话迟到的 401 不会使新登录失效：只读查询使用新会话重试，写入拒绝保留草稿并要求重新预览。

@@ -37,11 +37,11 @@ async function main() {
     const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
     let stale = false, fail = false, expireLogin = false, runningJob, polls = 0, configDelay = 0, coreFailed = true, coreLimited = false, localUpload = null, localInstalled = false, localOperations = [];
     let managementOffline=false, managementPolls=0, configReads=0, rechecks=0;
-    let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreSuperseded=false;
+    let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreExpireOnSubmit=false, coreSuperseded=false;
     const management={state:'unknown',policy_state:'saved_unconfirmed',recent:[],latest:null};
     model.management=management;
     model.latest_job={id:'f'.repeat(32),kind:'config',status:'failed',error:'MANAGEMENT_BUSY',created_at:1700000000,finished_at:1700000001};
-    const sessions=sessionFixture({proof:()=> 'fixture-token'});
+    const sessions=sessionFixture({proof:()=> crypto.createHash('sha256').update('SettingsFixturePassword8').digest('hex')});
     await page.route(origin + '/**', async route => {
       const req = route.request(), target = new URL(req.url()).pathname;
       if (target === '/sniffbox/subscription/core/update') {
@@ -56,7 +56,7 @@ async function main() {
       }
       if (target === '/sniffbox/subscription/core/check' || target === '/sniffbox/subscription/core/rollback' || target === '/sniffbox/subscription/maintenance') {
         assert.equal(sessions.authorized(req),true);
-        if (!target.endsWith('/maintenance')) { coreId='mihomo_'+(++coreSerial);coreMutations++;coreReads=0; }
+        if (!target.endsWith('/maintenance')) { coreId='mihomo_'+(++coreSerial);coreMutations++;coreReads=0;if(coreExpireOnSubmit){coreExpired=true;coreExpireOnSubmit=false;} }
         if (target.endsWith('/maintenance') && coreRestart) {
           coreReads++;
           if (coreExpired) return route.fulfill({status:401,contentType:'application/json',body:JSON.stringify({error:'LOGIN_REQUIRED'})});
@@ -246,11 +246,15 @@ async function main() {
     assert.equal(coreMutations,mutationsBefore+1);
     await page.getByRole('tab',{name:'维护与 API',exact:true}).click();
     // Authentication can expire during reconnect. Relogin/read recovery never resubmits.
-    coreReads=0;coreGate=true;coreSuperseded=false;coreExpired=true;
+    coreReads=0;coreGate=true;coreSuperseded=false;coreExpireOnSubmit=true;
     await page.getByRole('button',{name:'回退上一版本',exact:true}).click();
-    await page.getByText('登录已失效，请先返回管理面板重新登录。',{exact:true}).waitFor();
+    await page.getByText('登录已失效，请重新登录；任务与未保存的修改仍保留。',{exact:true}).waitFor();
     assert.ok(await page.evaluate(()=>sessionStorage.getItem('lovestgateway-core-job')));
     coreExpired=false;coreGate=false;
+    await page.getByRole('button',{name:'重新登录',exact:true}).click();
+    await page.locator('#reauth-panel input[type=password]').fill('SettingsFixturePassword8');
+    await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();
+    await page.locator('#reauth-panel').waitFor({state:'detached'});
     await page.getByText('核心维护已完成。',{exact:true}).waitFor({timeout:20000});
     assert.equal(coreMutations,mutationsBefore+2);
     coreRestart=false;coreSuperseded=false;
@@ -372,7 +376,7 @@ async function main() {
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).isEnabled(), true);
     fail = false; expireLogin = true;
     await blur(page.getByLabel('流量记录上限', {exact: true}), '9003');
-    await apply(); await page.getByText('登录已失效，请先返回管理面板重新登录。', {exact: true}).waitFor();
+    await apply(); await page.getByText('登录已失效，请重新登录；任务与未保存的修改仍保留。', {exact: true}).waitFor();
     const pending = await page.evaluate(() => JSON.parse(sessionStorage.getItem('lovestgateway-job')));
     assert.match(pending.id, /^[0-9a-f]{32}$/); assert.equal(Object.keys(pending).length, 3);
     expireLogin = false; await page.reload(); await saved();

@@ -24,4 +24,8 @@ async function sessionRequest(path,body){
 export async function restoreSession(){clearLegacyCredentials();const value=await sessionRequest('session');setSessionContext(value.authenticated&&typeof value.context==='string'?value.context:'');return !!context;}
 export async function loginSession(password){await sessionRequest('login',{proof:sha256(password)});if(!await restoreSession())throw Error('登录状态未确认，请重新登录。');}
 export async function logoutSession(){await sessionRequest('logout',{});setSessionContext('');}
-if(typeof window!=='undefined')window.ppgwAuth={active:()=>!!context,identity:sessionContext};
+if(typeof window!=='undefined')window.ppgwAuth={
+  active:()=>!!context,identity:sessionContext,
+  expired:()=>window.dispatchEvent(new Event('ppgw:unauthorized')),
+  requestLogin:()=>window.dispatchEvent(new Event('ppgw:login')),
+};

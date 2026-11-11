@@ -30,21 +30,26 @@ function percent(value){return number(value)===null?'—':value.toFixed(1)+'%';}
 const make=(tag,content,className)=>{const node=document.createElement(tag);if(content!==undefined)node.textContent=content;if(className)node.className=className;return node;};
 function chart(label,series,format){
   const box=make('div',undefined,'overview-chart'),canvas=make('canvas'),tip=make('output',undefined,'overview-chart-tip');
-  canvas.setAttribute('role','img');canvas.setAttribute('aria-label',label);box.append(canvas,tip);tip.hidden=true;
+  const scale=make('div',undefined,'overview-chart-scale'),ceiling=make('span'),zero=make('span',format(0));scale.append(ceiling,zero);
+  const range=make('div',undefined,'overview-chart-range'),startLabel=make('span'),windowLabel=make('span'),endLabel=make('span');range.append(startLabel,windowLabel,endLabel);
+  canvas.setAttribute('role','img');canvas.setAttribute('aria-label',label);box.append(canvas,scale,range,tip);tip.hidden=true;
   let values=[],maximum=1;
+  const time=value=>new Date(value).toLocaleTimeString('zh-CN',{hour12:false});
+  const fraction=(value,index)=>values.length>1?(value.at-values[0].at)/(values.at(-1).at-values[0].at||1):index;
   const redraw=()=>{
     const bounds=box.getBoundingClientRect(),width=Math.max(1,bounds.width),height=box.clientHeight,scale=devicePixelRatio||1;
     canvas.width=width*scale;canvas.height=height*scale;const ctx=canvas.getContext('2d');if(!ctx)return;ctx.scale(scale,scale);
     const style=getComputedStyle(box);ctx.clearRect(0,0,width,height);ctx.strokeStyle=style.getPropertyValue('--edge');ctx.lineWidth=1;
-    for(let i=1;i<4;i++){const y=i*height/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();}
+    const left=64,right=8,top=10,bottom=26,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
+    for(let i=0;i<4;i++){const y=top+i*plotHeight/3;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();}
     series.forEach(([key,,color])=>{ctx.strokeStyle=style.getPropertyValue(color)||color;ctx.lineWidth=1.8;ctx.beginPath();let begun=false;
-      values.forEach((value,index)=>{const v=number(value[key]);if(v===null){begun=false;return;}const x=index*width/39,y=height-6-Math.min(v/maximum,1)*(height-20);if(begun)ctx.lineTo(x,y);else ctx.moveTo(x,y);begun=true;});ctx.stroke();});
+      values.forEach((value,index)=>{const v=number(value[key]);if(v===null){begun=false;return;}if(index&&value.at-values[index-1].at>3000)begun=false;const x=left+fraction(value,index)*plotWidth,y=top+plotHeight-Math.min(v/maximum,1)*plotHeight;if(begun)ctx.lineTo(x,y);else ctx.moveTo(x,y);begun=true;});ctx.stroke();});
   };
   const observer=new ResizeObserver(redraw);observer.observe(box);
   const themeObserver=new MutationObserver(redraw);themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-  canvas.addEventListener('pointermove',event=>{if(!values.length)return;const width=canvas.getBoundingClientRect().width,index=Math.min(values.length-1,Math.max(0,Math.round(event.offsetX/width*39))),sample=values[index];tip.textContent=series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');tip.hidden=false;});
+  canvas.addEventListener('pointermove',event=>{if(!values.length)return;const width=canvas.getBoundingClientRect().width,at=Math.max(0,Math.min(1,(event.offsetX-64)/Math.max(1,width-72))),sample=values.reduce((best,value,index)=>Math.abs(fraction(value,index)-at)<Math.abs(fraction(best,values.indexOf(best))-at)?value:best,values[0]);tip.textContent=time(sample.at)+' · '+series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');tip.hidden=false;});
   canvas.addEventListener('pointerleave',()=>{tip.hidden=true;});
-  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;canvas.setAttribute('aria-label',label+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
+  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;ceiling.textContent=format(maximum);startLabel.textContent=values.length?time(values[0].at):'';endLabel.textContent=values.length>1?time(values.at(-1).at):'';windowLabel.textContent=values.length>1?'近 '+Math.max(1,Math.round((values.at(-1).at-values[0].at)/1000))+' 秒':'等待采样…';canvas.setAttribute('aria-label',label+'，'+windowLabel.textContent+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
 }
 
 export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInfo=()=>{}}={}){
@@ -61,6 +66,12 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   <section class="glass overview-config"><h2>配置信息</h2><dl class="overview-details" data-config></dl><div class="overview-features" data-features></div></section>
   <section class="glass overview-pool" data-section="pool" hidden><h2>SOCKS 连接池</h2><p>空闲连接与近期活动</p><div class="overview-pool-stats" data-pool></div><div class="overview-memory-blocks" data-pool-blocks aria-hidden="true"></div></section>`;
   host.replaceChildren(page);
+  page.querySelector('.overview-stat.total small').textContent='总速率';
+  for(const key of ['total','down','up'])fieldsForCumulative(key);
+  function fieldsForCumulative(key){page.querySelector('[data-field="traffic-'+key+'"]').after(make('span','核心累计流量'));}
+  for(const [section,label,selectors]of [['cpu','每核与进程详情',['[data-cores]','[data-cpu-processes]']],['memory','内存分配与进程详情',['[data-memory-blocks]','[data-field=memory-block-size]','[data-memory-processes]']]]){
+    const parent=page.querySelector('.overview-'+section),details=make('details',undefined,'overview-resource-details');details.append(make('summary',label));for(const selector of selectors)details.append(parent.querySelector(selector));parent.append(details);
+  }
   page.querySelector('.overview-columns').after(page.querySelector('.overview-interfaces'));
   const fields=Object.fromEntries([...page.querySelectorAll('[data-field]')].map(node=>[node.dataset.field,node]));
   const put=(key,value)=>{fields[key].textContent=value??'—';};
@@ -131,7 +142,7 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
     if(sample){
       const next=trafficSample(previous,value.traffic,performance.now(),boot);if(next){if(previous&&(next.down<previous.down||next.up<previous.up)){history=[];poolHistory=[];}previous=next;}else previous=null;
       const m=data.memory||{},c=data.cpu||{},core=m.ovpn_rss??m.clash_rss,total=number(m.total),free=number(m.available);
-      history=[...history.slice(-39),{total:previous?.downRate!=null?previous.downRate+previous.upRate:null,down:previous?.downRate,up:previous?.upRate,cpu:c.usage,cpuSb:c.sniffbox,cpuCore:c.ovpn??c.clash,cpuCf:c.cloudflared,memSb:m.sniffbox_rss,memCore:core,memCf:m.cloudflared_rss,memOther:total!==null&&free!==null?Math.max(0,total-free-(m.sniffbox_rss||0)-(core||0)-(m.cloudflared_rss||0)):null}];
+      history=[...history.slice(-39),{at:Date.now(),total:previous?.downRate!=null?previous.downRate+previous.upRate:null,down:previous?.downRate,up:previous?.upRate,cpu:c.usage,cpuSb:c.sniffbox,cpuCore:c.ovpn??c.clash,cpuCf:c.cloudflared,memSb:m.sniffbox_rss,memCore:core,memCf:m.cloudflared_rss,memOther:total!==null&&free!==null?Math.max(0,total-free-(m.sniffbox_rss||0)-(core||0)-(m.cloudflared_rss||0)):null}];
       poolHistory=poolWindow(poolHistory,data.pool,performance.now());
     }
     render();trafficChart.update(history);cpuChart.update(history,100,cloudflaredSeen?[...cpuSeries,['cpuCf','Cloudflared','--err']]:cpuSeries);memoryChart.update(history,data.memory?.total||undefined,cloudflaredSeen?[...memorySeries,['memCf','Cloudflared','--err']]:memorySeries);

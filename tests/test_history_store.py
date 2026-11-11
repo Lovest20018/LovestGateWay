@@ -8,6 +8,15 @@ import history_store as history
 
 
 class HistoryTests(unittest.TestCase):
+    def test_readonly_paths_escape_uri_characters(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / '记录 #100%.sqlite3'
+            history.store('boot', 'mihomo_snapshot', [{'id': 'one'}], path, now=100)
+            self.assertEqual(len(history.query(path=path)['items']), 1)
+            with history.connect(path, True) as db:
+                with self.assertRaises(history.sqlite3.OperationalError):
+                    db.execute('DELETE FROM observations')
+
     def test_upserts_survive_restart_and_filter_without_conflating_boots(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'events.sqlite3'

@@ -15,7 +15,10 @@
     let model, category = 'access', subscriptionPage = 'editor', subscriptionControls = null, sourceDraft = null, sourceDetails = null, sourceExpanded = false;
     let passwordConfirmation = '';
     let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0, corePolling = null;
-    let gatewayUpdate = null, gatewayPolling = null;
+    let gatewayUpdate = null, gatewayPolling = null, jobPolling = null, authPaused = false, managementTimer = null, managementPolling = false;
+    let activeActions = 0, unknownJobId = null, unknownReviewVersion = 0;
+    const unknownReview = el('section', {class:'card glass unknown-task-review', hidden:true, 'data-unknown-settings-job':'', 'aria-label':'任务结果核对'});
+    $('notice').after(unknownReview);
     const bridge = {setEditorBusy: busy => { if(editorBusy!==busy){editorBusy=busy;updateDirty();} },
       syncEditor: data => {
         if (!data.settings_revision) throw Error('配置已变化，请重新读取后再保存。');
@@ -170,7 +173,7 @@
       GATEWAY_INSTALLED_VERSION_MISMATCH: '安装后的版本尚未核对通过，请在“诊断与恢复”检查。',
       GATEWAY_UPDATE_FAILED: '网关更新未完成，请核对运行状态后重试。',
       DEPLOY_FAILED_ROLLED_BACK: '升级验收失败，已恢复安装前的版本与配置。',
-      LOGIN_REQUIRED: '登录已失效，请先返回管理面板重新登录。',
+      LOGIN_REQUIRED: '登录已失效，请重新登录；任务与未保存的修改仍保留。',
       CONFIG_REVISION_CONFLICT: '配置已被其他操作修改。请刷新配置后重新编辑。',
       STALE_POLICY_SNAPSHOT: '运行配置或订阅已变化，请重新载入策略后再编辑。',
       SOURCE_CONFLICT: '更换来源与现有本地策略或 PPsub 冲突。确认清除选项后重新预览。',
@@ -217,7 +220,8 @@
     async function api(path, body, namespace = 'settings') {
       if (stopped) throw new DOMException('View closed', 'AbortError');
       const token = secret();
-      if (!token) throw Object.assign(Error(message('LOGIN_REQUIRED')), {status: 401});
+      if (!token || authPaused) { authPaused = true; window.ppgwAuth?.expired(); throw Object.assign(Error(message('LOGIN_REQUIRED')), {status: 401}); }
+      const session = window.ppgwAuth?.identity();
       const response = await fetch('/sniffbox/' + namespace + '/' + path, {
         method: body === undefined ? 'GET' : 'POST',
         headers: {...(body === undefined ? {} : {'Content-Type': 'application/json'})},
@@ -225,13 +229,17 @@
       });
       const data = await response.json().catch(() => ({}));
       if (stopped) throw new DOMException('View closed', 'AbortError');
-      if (!response.ok) throw Object.assign(Error(response.status === 401 ? message('LOGIN_REQUIRED') : (namespace === 'subscription' && typeof data.message === 'string' ? data.message : message(data.error))), {status: response.status, code: data.error});
+      const staleSession = response.status === 401 && window.ppgwAuth?.active() && session !== window.ppgwAuth?.identity();
+      // A late response from the old session must not invalidate a new login. Only retry reads.
+      if (staleSession && body === undefined) return api(path, body, namespace);
+      if (response.status === 401 && !staleSession) { authPaused = true; window.ppgwAuth?.expired(); }
+      if (!response.ok) throw Object.assign(Error(staleSession ? '登录状态已更新，请重新预览后再提交。' : response.status === 401 ? message('LOGIN_REQUIRED') : (namespace === 'subscription' && typeof data.message === 'string' ? data.message : message(data.error))), {status: response.status, code: data.error, staleSession});
       return data;
     }
     function notice(text, kind = '') {
       if (stopped) return;
       const node = $('notice'); node.replaceChildren(el('span', {text})); node.className = 'notice ' + kind; node.hidden = !text;
-      if (text === message('LOGIN_REQUIRED')) node.append(el('a', {href: '/ui/#/overview', text: ' 返回面板登录 ↗'}));
+      if (text === message('LOGIN_REQUIRED')) node.append(el('button', {type:'button', class:'btn', text:'重新登录并保留编辑', onclick:()=>window.ppgwAuth?.requestLogin()}));
     }
     async function refreshRuntime() {
       if (stopped || !options.refreshRuntime) return;
@@ -243,6 +251,15 @@
         const record = JSON.parse(sessionStorage.getItem('lovestgateway-core-job') || 'null');
         return /^mihomo_[0-9]+$/.test(record?.id || '') && ['check','update','rollback','install-local','scheduled'].includes(record.action) ? record : null;
       } catch { return null; }
+    }
+    function hasPendingTask() { return Boolean(pending() || pendingCore() || pendingGateway()); }
+    function syncRunning() {
+      running = Boolean(activeActions || jobPolling || corePolling || gatewayPolling || hasPendingTask());
+      if (!stopped) { updateDirty(); paintGateway(); }
+    }
+    function beginTaskAction() {
+      activeActions++; syncRunning();
+      return () => { activeActions--; syncRunning(); };
     }
     function identifier() { return [...crypto.getRandomValues(new Uint8Array(16))].map(v => v.toString(16).padStart(2, '0')).join(''); }
     function valueOf(namespace, key) { return dirty.has(namespace + '.' + key) ? dirty.get(namespace + '.' + key) : model.settings[namespace][key]; }
@@ -263,7 +280,7 @@
       window.ppgwPpsub?.setSettingsBusy(running || otherSettings);
       const count = dirty.size;
       $('savebar').hidden = !model || subscriptions || draftLocked || (!count && !running);
-      $('dirty-count').textContent = running ? '正在应用并验证，请稍候…' : `${count} 项设置待应用`;
+      $('dirty-count').textContent = running ? (authPaused ? '任务已保留，重新登录后继续查询。' : '正在应用并验证，请稍候…') : `${count} 项设置待应用`;
       $('preview').disabled = running || draftLocked || !count;
       $('discard').disabled = running;
       $('reload').disabled = running;
@@ -275,6 +292,7 @@
         el('a', {href: subscriptions ? '/ui/#/settings' : '/ui/#/subscriptions', text: subscriptions ? '继续编辑网关设置' : '继续编辑订阅与策略'}));
       root.querySelectorAll('#content input,#content select,#content textarea,#content button').forEach(node => {
         if (node.hasAttribute('data-setting-help')) return;
+        if (node.id === 'gateway-release-query' && pendingGateway() && !gatewayPolling && !activeActions) { node.disabled = false; return; }
         if (running || editorBusy || (draftLocked && node.getAttribute('role') !== 'tab')) { if (!('wasDisabled' in node.dataset)) node.dataset.wasDisabled = node.disabled ? '1' : '0'; node.disabled = true; }
         else if ('wasDisabled' in node.dataset) { node.disabled = node.dataset.wasDisabled === '1'; delete node.dataset.wasDisabled; }
       });
@@ -632,11 +650,17 @@
       recentHost.replaceChildren(el('div',{class:'card-heading'},[el('h2',{text:'最近操作'}),el('p',{class:'subtext',text:'展示最近 '+rows.length+' 条已记录的配置、订阅与核心维护操作。'})]),rows.length?records:el('p',{class:'empty-state',text:'暂无操作记录。'}));
     }
     async function pollManagement() {
+      clearTimeout(managementTimer); timers.delete(managementTimer);
+      if (stopped || authPaused || managementPolling) return;
+      managementPolling = true;
       try {
         const data = await api('status');
         if (model && !stopped) { model.management=data.management; model.runtime=data.runtime; model.running_mode=data.running_mode; model.recovery_required=data.recovery_required; if(data.source)model.source.local_policy=data.source.local_policy; renderManagement(); }
       } catch { if (!stopped) { statusFingerprint=''; const heading=statusHost.querySelector('[role=status]'); if(heading)heading.textContent='运行状态暂时无法读取，正在重新连接…'; } }
-      if (!stopped) later(pollManagement, 5000);
+      finally {
+        managementPolling = false;
+        if (!stopped && !authPaused) { managementTimer=setTimeout(()=>{timers.delete(managementTimer);pollManagement();},5000);timers.add(managementTimer); }
+      }
     }
     function render() {
       if (stopped) return;
@@ -783,17 +807,18 @@
       openPreview();
     }
     async function startJob(kind, payload, address) {
-      if (running || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) throw Error('请先保存或重新读取编辑器中的修改，再应用全局选项或网关设置。');
+      if (running || hasPendingTask() || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) throw Error('请先完成当前任务或编辑，再应用网关设置。');
       const id = identifier();
       if (address) { const target = new URL(address); target.searchParams.set('job', id); address = target.href; }
       const record = {id, address: address || null, kind};
       sessionStorage.setItem('lovestgateway-job', JSON.stringify(record));
-      running = true; updateDirty();
+      const finish = beginTaskAction();
       try { await api('apply', {id, kind, payload}); }
       catch (error) {
-        if (error.status && error.status < 500) { sessionStorage.removeItem('lovestgateway-job'); running = false; updateDirty(); throw error; }
+        if (error.status && error.status < 500) { sessionStorage.removeItem('lovestgateway-job'); clearUnknownJob(); throw error; }
         // The response can be lost after the server accepted a restart. Poll by ID.
       }
+      finally { finish(); }
       dirty.clear();
       passwordConfirmation = '';
       root.querySelectorAll('#content input[type=password]').forEach(input => { input.value = ''; });
@@ -801,19 +826,27 @@
       if (address && new URL(address).origin !== location.origin) {
         showReconnect(address); running = false; updateDirty(); return;
       }
-      await pollJob(record);
+      await followJob(record);
     }
     function showReconnect(address) {
       $('reconnect').replaceChildren(document.createTextNode('管理监听正在切换。请打开新地址登录后查看任务结果： '), el('a', {href: address, text: address}));
       $('reconnect').hidden = false;
     }
+    function followJob(record) {
+      if (jobPolling) return jobPolling;
+      clearUnknownJob();
+      running = true; updateDirty();
+      jobPolling = pollJob(record).finally(() => { jobPolling = null; syncRunning(); });
+      return jobPolling;
+    }
     async function pollJob(record) {
       const deadline = Date.now() + 150000;
-      while (!stopped && Date.now() < deadline) {
+      while (!stopped && pending()?.id === record.id && Date.now() < deadline) {
         try {
           const job = await api('jobs/' + record.id);
+          if (stopped || pending()?.id !== record.id) return;
           if (job.status === 'succeeded' || job.status === 'failed') {
-            sessionStorage.removeItem('lovestgateway-job'); running = false;
+            if (pending()?.id === record.id) sessionStorage.removeItem('lovestgateway-job');
             if (job.status === 'failed') {
               postUpload = null; await load(); notice(message(job.error), 'error'); updateDirty(); return;
             }
@@ -831,12 +864,67 @@
             return;
           }
         } catch (error) {
-          if (error.status === 401) { running = false; notice(message('LOGIN_REQUIRED'), 'error'); updateDirty(); return; }
-          if (error.code === 'JOB_NOT_FOUND') { sessionStorage.removeItem('lovestgateway-job'); running = false; notice('未查到任务记录。请刷新配置核对状态后重试。', 'error'); updateDirty(); return; }
+          if (stopped || pending()?.id !== record.id) return;
+          if (error.status === 401) { notice(message('LOGIN_REQUIRED'), 'error'); updateDirty(); return; }
+          if (error.code === 'JOB_NOT_FOUND') { showUnknownJob(record); return; }
         }
         await pause(1500);
       }
-      running = false; notice('仍未确认任务结果。任务号已保留，刷新或重新登录后继续查询；也可使用管理脚本检查状态。'); updateDirty();
+      if (stopped || pending()?.id !== record.id) return;
+      notice('仍未确认任务结果。任务号已保留，刷新或重新登录后继续查询；也可使用管理脚本检查状态。');
+      if (!stopped) $('notice').append(el('button',{type:'button',class:'btn',text:'继续查询本次任务',onclick:()=>followJob(record)}));
+    }
+    function clearUnknownJob() {
+      unknownJobId = null; unknownReviewVersion++; unknownReview.hidden = true; unknownReview.replaceChildren();
+    }
+    function showUnknownJob(record) {
+      unknownJobId = record.id; unknownReviewVersion++; unknownReview.hidden = false;
+      notice('未查到本次任务，结果尚未确认。任务号已保留，请核对后台状态。', 'error');
+      unknownReview.replaceChildren(el('h2',{text:'任务结果核对'}),el('p',{text:'任务号：'+record.id}),
+        el('p',{class:'subtext',text:'查询不到记录不能证明任务未执行。先核对运行状态，再决定是否停止本浏览器的追踪。'}),
+        el('div',{class:'button-row'},[
+          el('button',{type:'button',class:'btn',text:'继续查询本次任务',onclick:()=>followJob(record)}),
+          el('button',{type:'button',class:'btn',text:'核对任务状态',onclick:()=>reviewUnknownJob(record)})]));
+    }
+    async function reviewUnknownJob(record, acknowledged = false) {
+      if (stopped || unknownJobId !== record.id || pending()?.id !== record.id) return;
+      const version = ++unknownReviewVersion;
+      const currentReview = () => !stopped && version === unknownReviewVersion && unknownJobId === record.id && pending()?.id === record.id;
+      unknownReview.querySelectorAll('button,input').forEach(node => { node.disabled = true; });
+      try {
+        const data = await api('diagnostics');
+        if (!currentReview()) return;
+        const reliable = data?.schema === 1 && typeof data?.recovery?.required === 'boolean' && Array.isArray(data.recent);
+        const blocked = !reliable ? '诊断状态无法确认，暂不解除追踪。' : data.recovery.required ? '仍存在待恢复事务，暂不解除追踪。请先通过管理脚本核对并恢复。' :
+          activeActions || jobPolling || data.recent.some(row => ['queued','running','applying'].includes(row?.status)) ? '仍有请求或后台任务正在处理，暂不解除追踪。' : '';
+        if (acknowledged && !blocked) {
+          sessionStorage.removeItem('lovestgateway-job'); postUpload = null; clearUnknownJob();
+          await load(); syncRunning();
+          if (!authPaused) notice('本浏览器已停止追踪该任务。请核对当前配置后重新预览；没有取消或重新提交服务端任务。');
+          return;
+        }
+        const runtimeNames = {running:'核心响应正常',staged:'暂存环境',unknown:'尚未确认'};
+        const sourceNames = {settings:'网关设置',subscription:'订阅',mihomo:'核心维护',gateway:'网关更新'};
+        const recent = reliable ? data.recent.slice(0,5).map(row => el('li',{text:(sourceNames[row?.source]||'管理操作')+'：'+(statusNames[row?.status]||'待核对')})) : [];
+        unknownReview.replaceChildren(el('h2',{text:'任务结果核对'}),el('p',{text:'任务号：'+record.id}),
+          el('p',{text:'运行状态：'+(runtimeNames[data?.runtime?.state]||'尚未确认')}),
+          el('p',{text:blocked || '当前诊断没有待恢复事务或正在进行的任务。请结合管理脚本与最近操作核对本次任务。'}),
+          ...recent.length ? [el('ul',{},recent)] : []);
+        if (!blocked) {
+          const acknowledgement = el('input',{type:'checkbox'});
+          const release = el('button',{type:'button',class:'btn',text:'仅本浏览器停止追踪',disabled:true,
+            onclick:()=>{ if (acknowledgement.checked) reviewUnknownJob(record, true); }});
+          acknowledgement.onchange = () => { release.disabled = !acknowledgement.checked; };
+          unknownReview.append(el('label',{class:'unknown-task-ack'},[acknowledgement,document.createTextNode('已通过管理脚本或状态核对该任务没有执行或已结束')]),
+            el('p',{class:'subtext',text:'只清除本浏览器的追踪记录；不会取消或重新提交服务端任务。'}),release);
+        }
+      } catch (error) {
+        if (currentReview()) unknownReview.replaceChildren(el('h2',{text:'任务结果核对'}),el('p',{text:error.message}));
+      } finally {
+        if (currentReview()) unknownReview.append(el('div',{class:'button-row'},[
+          el('button',{type:'button',class:'btn',text:'继续查询本次任务',onclick:()=>followJob(record)}),
+          el('button',{type:'button',class:'btn',text:'重新核对任务状态',onclick:()=>reviewUnknownJob(record)})]));
+      }
     }
     function maintenanceState(data) {
       const failed = ['failed','interrupted'].includes(data.operation?.status), busy = ['running','queued'].includes(data.operation?.status);
@@ -876,6 +964,7 @@
         } catch (error) {
           if (stopped) return;
           notice(error.status === 401 ? message('LOGIN_REQUIRED') : '网关正在重启或暂时断连，正在重新连接并查询维护结果；请勿重复安装。', error.status === 401 ? 'error' : '');
+          if (error.status === 401) return;
         }
       }
       if (!stopped) {
@@ -889,7 +978,7 @@
       if (corePolling) return corePolling;
       sessionStorage.setItem('lovestgateway-core-job', JSON.stringify(record));
       running = true; updateDirty();
-      corePolling = pollCore(record).finally(() => { corePolling = null; running = Boolean(pendingCore()); updateDirty(); });
+      corePolling = pollCore(record).finally(() => { corePolling = null; syncRunning(); });
       return corePolling;
     }
     function pendingGateway() {
@@ -955,10 +1044,10 @@
               $('notice').append(el('button', {type:'button',class:'btn',text:'核对后台状态',onclick:async()=>{
                 try {
                   gatewayUpdate = await api('gateway-update');
+                  if (stopped || pendingGateway()?.id !== id) return;
                   sessionStorage.removeItem('lovestgateway-release-job');
-                  paintGateway();
                   if (['queued','running'].includes(gatewayUpdate.operation?.status)) await followGateway(gatewayUpdate.operation.id);
-                  else notice('后台没有进行中的网关更新，可重新检查版本。');
+                  else { syncRunning(); notice('后台没有进行中的网关更新，可重新检查版本。'); }
                 } catch (error) { notice(error.message, 'error'); }
               }}));
               return;
@@ -967,7 +1056,7 @@
           }
         }
         if (!stopped) notice('更新结果尚未确认，任务号已保留。请点击“查询更新结果”继续核对。');
-      })().finally(() => { gatewayPolling = null; running = false; updateDirty(); paintGateway(); });
+      })().finally(() => { gatewayPolling = null; syncRunning(); });
       return gatewayPolling;
     }
     async function resumeGateway() {
@@ -984,13 +1073,14 @@
       const id = identifier(), body = {id, ...(action === 'update' ? {candidate:gatewayUpdate.candidate.token} : {})};
       // Retain identity before sending. A lost response is resolved by GET, never another POST.
       sessionStorage.setItem('lovestgateway-release-job', JSON.stringify({id}));
-      running = true; updateDirty(); paintGateway();
+      const finish = beginTaskAction();
       try { await api('gateway-update/' + action, body); }
       catch (error) {
         if (error.status && error.status < 500) {
-          sessionStorage.removeItem('lovestgateway-release-job'); running = false; updateDirty(); paintGateway(); notice(error.message, 'error'); return;
+          sessionStorage.removeItem('lovestgateway-release-job'); notice(error.message, 'error'); return;
         }
       }
+      finally { finish(); }
       await followGateway(id);
     }
     function coreAvailable() {
@@ -999,13 +1089,13 @@
     }
     async function coreAction(action) {
       if (!coreAvailable()) return;
-      running = true; updateDirty();
+      const finish = beginTaskAction();
       try {
         const operation = await api('core/' + action, {}, 'subscription');
         if ($('maintenance-state')) $('maintenance-state').textContent = '维护已提交，正在处理…';
         await followCore(operation, action);
       } catch (error) { if (!stopped) notice(error.status ? error.message : '提交响应暂时中断，维护可能已在后台启动。请刷新页面核对维护状态，勿重复安装。', 'error'); }
-      finally { running = Boolean(pendingCore()); updateDirty(); }
+      finally { finish(); }
     }
     function localCoreForm() {
       const file = el('input', {id: 'core-local-file', type: 'file', accept: '.gz,application/gzip', required: true});
@@ -1026,7 +1116,7 @@
         if (!coreAvailable()) return;
         const archive = file.files[0], coreVersion = version.value.trim(), checksum = sha.value.trim().toLowerCase();
         if (!archive || !archive.name.endsWith('.gz') || !archive.size || archive.size > 64 * 1024 * 1024 || !/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(coreVersion) || !/^[0-9a-f]{64}$/.test(checksum)) { notice('请选择不超过 64 MiB 的官方 .gz 文件，并填写有效版本和 SHA256。', 'error'); return; }
-        running = true; updateDirty();
+        const finish = beginTaskAction();
         const id = identifier(); let committed = false, committing = false;
         const send = body => api('core/update', body, 'subscription');
         try {
@@ -1053,7 +1143,7 @@
           if (!stopped) notice(committing && (!error.status || error.status >= 500) ? '提交响应中断，安装可能已在后台启动。请刷新页面检查维护状态后再重试。' : error.message, 'error');
         } finally {
           if (!committed && !committing && !stopped) { try { await send({operation: 'cancel', id}); } catch {} }
-          running = Boolean(pendingCore()); updateDirty();
+          finish();
         }
       };
       later(async () => {
@@ -1121,6 +1211,22 @@
       document.title = 'LovestGateWay';
     }
     destroy.refresh = render;
+    destroy.resumeAfterLogin = async () => {
+      if (stopped) return;
+      const wasAuthPaused = authPaused; authPaused = false;
+      if (wasAuthPaused) notice('已重新登录，任务与未保存的修改仍保留。');
+      try {
+        if (!model && !await load()) return;
+        const record = pending();
+        if (record) {
+          if (record.address && new URL(record.address).origin !== location.origin) showReconnect(record.address);
+          else await followJob(record);
+        } else if (pendingCore()) await followCore(pendingCore());
+        else if (pendingGateway()) await followGateway(pendingGateway().id);
+        if (!stopped && !authPaused) { pollManagement(); await window.ppgwPpsub?.resumeAfterLogin(); }
+      } catch (error) { if (!stopped) notice(error.message, 'error'); }
+      finally { if (!stopped) syncRunning(); }
+    };
     destroy.allowNavigation = (url, type) => {
       const sameView = url && url.origin === location.origin && url.pathname === '/ui/' && /^#\/(settings|subscriptions)(?:$|[?])/.test(url.hash);
       if (sameView) {
@@ -1139,6 +1245,7 @@
       incoming.searchParams.delete('job'); history.replaceState(history.state, '', incoming.href);
     }
     $('reset-policy').onclick = resetPolicy;
+    running = hasPendingTask();
     render();
     later(pollManagement, 5000);
     load().then(async () => {
@@ -1146,7 +1253,7 @@
       await refreshRuntime();
       if (stopped) return;
       const record = pending();
-      if (record) { running = true; updateDirty(); if (record.address && new URL(record.address).origin !== location.origin) { showReconnect(record.address); running = false; updateDirty(); } else pollJob(record); }
+      if (record) { running = true; updateDirty(); if (record.address && new URL(record.address).origin !== location.origin) { showReconnect(record.address); running = false; updateDirty(); } else followJob(record); }
       else if (pendingCore()) followCore(pendingCore());
       else resumeGateway();
     });

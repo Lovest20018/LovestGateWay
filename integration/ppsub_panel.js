@@ -1,11 +1,13 @@
 /* Debian persistence for the existing PPsub editor; no separate form or login. */
 (() => {
   let current = null;
+  const loginRequired = '登录已失效，请重新登录；任务与未保存的修改仍保留。';
 
   function secret() { return window.ppgwAuth?.active() ? 'session' : ''; }
   async function api(path, body, signal) {
     const token = secret();
-    if (!token) throw Error('登录已失效，请刷新面板后重试。');
+    if (!token) { window.ppgwAuth?.expired(); throw Object.assign(Error(loginRequired), {status:401}); }
+    const session = window.ppgwAuth?.identity();
     const response = await fetch('/sniffbox/subscription/' + path, {
       method: body ? 'POST' : 'GET',
       headers: { ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -15,9 +17,13 @@
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const error = Error(response.status === 401 ? '登录已失效，请刷新面板后重试。' :
+      const staleSession = response.status === 401 && window.ppgwAuth?.active() && session !== window.ppgwAuth?.identity();
+      if (staleSession && body === undefined) return api(path, body, signal);
+      if (response.status === 401 && !staleSession) window.ppgwAuth?.expired();
+      const error = Error(staleSession ? '登录状态已更新，请重新预览后再提交。' : response.status === 401 ? loginRequired :
         ({CONFIG_REVISION_CONFLICT:'配置已变化，请重新读取后再保存。',SOURCE_CHANGE_REQUIRES_SWITCH:'请通过上方“切换配置来源”完成来源更换。',MANAGEMENT_BUSY:'其他管理操作正在进行，请稍后重试。',CONFIG_CHANGED:'运行配置或快照已变化，请重新读取后再保存。'}[data.error] || data.error) || '暂时无法连接网关，请稍后重试。');
       error.status = response.status;
+      error.staleSession = staleSession;
       throw error;
     }
     return data;
@@ -29,7 +35,12 @@
       loaded: false, loading: false, settingsBusy: false, editingLocked: false, baseline: null };
     state.needsReload = false;
     const lifetime = new AbortController();
-    const request = (path, body) => api(path, body, lifetime.signal);
+    state.authPaused = false;
+    const request = async (path, body) => {
+      if (state.authPaused) throw Object.assign(Error(loginRequired), {status:401});
+      try { return await api(path, body, lifetime.signal); }
+      catch (error) { if (error.status === 401 && !error.staleSession) { state.authPaused = true; clearTimeout(state.providerTimer); } throw error; }
+    };
     current = state;
     const apply = document.createElement('button');
     apply.type = 'button';
@@ -86,13 +97,16 @@
       providerControls();
     }
     async function pollProviders() {
+      clearTimeout(state.providerTimer);
+      if (state.stopped || state.authPaused || state.providerPolling) return;
+      state.providerPolling = true;
       try {
         if (!state.active && !state.loading) {
           const data = await request('providers');
           if (!state.stopped) showCache(data);
         }
       } catch { /* Keep saved provider evidence and every unsaved editor field. */ }
-      finally { if (!state.stopped) state.providerTimer = setTimeout(pollProviders, 5000); }
+      finally { state.providerPolling = false; if (!state.stopped && !state.authPaused) state.providerTimer = setTimeout(pollProviders, 5000); }
     }
     async function refreshProviders(names) {
       if(state.loading||state.active||state.settingsBusy||!state.loaded)return;
@@ -128,13 +142,18 @@
       explanationText.textContent = detailed ? message : '';
       notice.dataset.state = failed ? 'error' : state.loading || state.active ? 'working' : 'ready';
       text.style.color = failed ? 'var(--err-text)' : 'var(--text-2)';
+      notice.querySelector('[data-reauth]')?.remove();
+      if (message === loginRequired) {
+        const login = document.createElement('button');login.type='button';login.className='btn';login.dataset.reauth='';login.textContent='重新登录并保留编辑';
+        login.onclick=()=>window.ppgwAuth?.requestLogin();notice.append(login);
+      }
     }
 
     function lockEditing(busy) {
       if (busy) {
         state.editingLocked = true;
         const unlocked = Array.from(editor.header.parentElement.querySelectorAll('input,select,textarea,button'))
-          .filter(element => element !== apply && !element.disabled);
+          .filter(element => element !== apply && !element.hasAttribute('data-reauth') && !element.disabled);
         unlocked.forEach(element => { element.disabled = true; });
         state.locked.push(...unlocked);
       } else {
@@ -342,6 +361,15 @@
       }catch(error){state.loading=false;state.active=false;syncEditing();updateApply();show(error.message,true);}
     };
 
+    state.resumeAfterLogin = async () => {
+      if (state.stopped) return;
+      state.authPaused = false;
+      if (state.active) await refresh();
+      else if (!state.loaded) await state.loadCurrent(editor.importConfig, false);
+      else if (text.textContent === loginRequired) show('已重新登录，未保存的修改仍保留。');
+      if (!state.stopped && !state.authPaused) { syncEditing(); updateApply(); pollProviders(); }
+    };
+
     lockEditing(true);
     state.providerTimer = setTimeout(pollProviders, 5000);
     show('正在读取本机当前配置…');
@@ -395,6 +423,7 @@
       return JSON.stringify(value) !== current.baseline;
     })()),
     isBusy: () => Boolean(current?.active),
+    resumeAfterLogin: () => current?.resumeAfterLogin(),
     setSettingsBusy: busy => current?.setSettingsBusy?.(busy),
     invalidate: () => { if (current) current.needsReload = true; },
     refreshIfNeeded: () => {
