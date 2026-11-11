@@ -18,7 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      PPGW_PLAYWRIGHT_MODULE: ${{ runner.temp }}/ppgw-browser/node_modules/playwright
       PPGW_PYTHON: python
     steps:
       - uses: actions/checkout@v4
@@ -38,6 +37,8 @@ jobs:
           npm install --no-save --package-lock=false --prefix "$RUNNER_TEMP/ppgw-browser" playwright@1.62.1
           "$RUNNER_TEMP/ppgw-browser/node_modules/.bin/playwright" install --with-deps chrome
       - name: Build and exercise synthetic dashboard
+        env:
+          PPGW_PLAYWRIGHT_MODULE: ${{ runner.temp }}/ppgw-browser/node_modules/playwright
         run: |
           node frontend/build.mjs --output dist/browser-ui
           node scripts/verify-management-auth-fixture.cjs dist/browser-ui
