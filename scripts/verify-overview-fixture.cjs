@@ -25,6 +25,12 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
     await page.addInitScript(()=>{localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]}));localStorage.setItem('debug','1');});
     let expectedSecret='fixture-token',dynamic=0,status=200,boot='fixture-boot-1',reset=false,hold=false,releaseHeld;
+    const metricAt=Math.floor(Date.now()/300000)*300;
+    let historyState='running';
+    const historyPoints=Array.from({length:12},(_,index)=>({at:metricAt-(11-index)*300,samples:300,coverage_seconds:299,
+      download_bytes:1024*100*(index+1),upload_bytes:1024*20,download_rate:1024*(index+1),upload_rate:1024,
+      cpu_percent:10+index,memory_bytes:1024**3,active_connections:4,connected:10,failed:index===5?2:0,
+      failure_percent:index===5?16.7:0,latency_ms:index<4?null:50+index,gaps:index===3?1:0}));
     async function capture(name){const viewport=page.viewportSize(),height=await page.evaluate(()=>document.documentElement.scrollHeight);await page.setViewportSize({width:viewport.width,height:Math.max(viewport.height,height)});await page.evaluate(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(evidence,name),fullPage:true,animations:'disabled'});await page.setViewportSize(viewport);}
     const sessions=sessionFixture({proof:()=>expectedSecret});
     await page.route(origin+'/**',async route=>{
@@ -43,6 +49,8 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
         }
         if(target==='/sniffbox/info')return reply({...fixture,integration:{data:{boot_id:boot}}});
         if(target==='/sniffbox/geo')return reply({version:'2026-11-05.fixture'});
+        if(target==='/sniffbox/settings/status')return reply({history:{collector_state:historyState,status:'available',enabled:true,
+          connection_rows:1200,capacity:100000,last_sample_at:Date.now()/1000,points:historyPoints}});
         if(target==='/sniffbox/proxies')return reply({proxies:{GLOBAL:{name:'GLOBAL',type:'Selector',now:'Fixture Node',all:['Fixture Node','DIRECT'],history:[]},'Fixture Node':{name:'Fixture Node',type:'Shadowsocks',history:[]},DIRECT:{name:'DIRECT',type:'Direct',history:[]}}});
         return reply({});
       }
@@ -56,6 +64,16 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     assert.equal(await overview.locator('[data-field=mode]').textContent(),'订阅');await page.evaluate(()=>window.documentIdentity='overview-source');
     assert.equal(requests.filter(row=>row.target.includes('bundle.')).length,0,'overview must not mount the compatibility runtime');
     assert.equal(await page.locator('#runtime-panel').count(),0);
+    const history=overview.getByRole('region',{name:'运行历史',exact:true});
+    await overview.locator('.overview-history-status').getByText(/历史采集正在运行/).waitFor();
+    assert.equal(await overview.locator('.overview-history canvas').count(),1);
+    assert.match(await overview.locator('.overview-history-stats').innerText(),/1200 \/ 100000/);
+    await overview.getByLabel('历史指标',{exact:true}).selectOption('latency');
+    assert.match(await overview.locator('.overview-history canvas').getAttribute('aria-label'),/最近检测延迟/);
+    await overview.getByLabel('历史指标',{exact:true}).selectOption('failure');
+    assert.match(await overview.locator('.overview-history-note').innerText(),/不代表网站成功率/);
+    await overview.getByLabel('历史时间范围',{exact:true}).selectOption('3600');
+    await overview.getByLabel('历史指标',{exact:true}).selectOption('traffic');
     await overview.locator('[data-field=memory-total]').getByText('8.0 GB',{exact:true}).waitFor();
     await overview.locator('[data-field=rate-down]').filter({hasText:/KB\/s/}).waitFor();
     assert.equal(await overview.locator('[data-field=memory-total]').innerText(),'8.0 GB','dynamic nested fields must retain static totals');

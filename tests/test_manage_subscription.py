@@ -9,10 +9,24 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_common import Layout, ManagementError
 from manage_model import validate
-from manage_subscription import refresh_nodes, payload_content
+from manage_subscription import refresh_nodes, payload_content, candidate_matches_runtime
 
 
 class SubscriptionCacheTransactionTests(unittest.TestCase):
+    def test_complete_candidate_equivalence_preserves_types_lists_and_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            running, candidate = Path(temporary) / 'running.yaml', Path(temporary) / 'candidate.yaml'
+            running.write_text('proxies: [{name: A, password: yes, port: 443}]\nrules: [MATCH,A]\n')
+            system = SimpleNamespace(command=lambda *args: SimpleNamespace(stdout='123'))
+            def same(text):
+                candidate.write_text(text)
+                return candidate_matches_runtime(system, '123', candidate, runtime=running)
+            self.assertTrue(same('rules: [MATCH,A]\nproxies: [{port: 443, password: yes, name: A}]\n'))
+            for text in ('proxies: [{name: A, password: true, port: 443}]\nrules: [MATCH,A]\n',
+                         'proxies: [{name: A, password: yes, port: 443}]\nrules: [MATCH,DIRECT]\n',
+                         'proxies: []\nproxies: []\n'):
+                self.assertFalse(same(text))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -167,6 +181,15 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
         self.assertIn(b'new valid nodes', (self.cache / self.filename).read_bytes())
         self.assertEqual(self.waits, 1)
         self.assertEqual(self.commands.count(('systemctl', 'restart', 'paopaogw')), 1)
+
+    def test_equivalent_generated_candidate_publishes_cache_without_restart(self):
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute), \
+             patch('manage_subscription.candidate_matches_runtime', return_value=True) as compare:
+            rows = refresh_nodes(self.layout, self.system)
+        compare.assert_called_once()
+        self.assertEqual(rows[0]['core_action'], 'none')
+        self.assertIn(b'new valid nodes', (self.cache / self.filename).read_bytes())
+        self.assertFalse(any('restart' in command for command in self.commands))
 
     def test_selected_refresh_sends_only_chosen_names_and_rejects_unknown_provider(self):
         def execute(command, **kwargs):

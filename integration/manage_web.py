@@ -59,6 +59,8 @@ class SettingsAdmin:
         self.lock = threading.Lock()
         self.active = None
         self.revision_sample = RevisionSample()
+        from history_store import HistorySummary
+        self.history_summary = HistorySummary(self.layout)
         from manage_acceptance import Acceptance
         self.acceptance = Acceptance(self.layout, self.system)
         self.start_job = start_job or self.schedule
@@ -97,7 +99,7 @@ class SettingsAdmin:
         return {'token': token}
 
     def show(self):
-        value = self.manager.show()
+        value = self.manager.show(include_proxy_username=True)
         value['schema'] = {ns: {key: {'type': spec[0], 'secret': key in SECRET_KEYS, 'constraints': spec[2:]}
                                for key, spec in fields.items()} for ns, fields in SCHEMA.items()}
         value['assets'] = []
@@ -145,6 +147,7 @@ class SettingsAdmin:
             value['management'] = {'state': 'unknown', 'policy_state': 'saved_unconfirmed', 'recent': rows,
                                    'latest': rows[0] if rows else None, 'error': 'STATE_SAMPLE_UNAVAILABLE'}
         value['source'] = {'local_policy': self.layout.path('etc/paopaogw/files/clash-policy.json').exists()}
+        value['history'] = self.history_summary.read()
         return value
 
     def preview(self, body):
@@ -295,6 +298,7 @@ class SettingsAdmin:
             record(self.layout, 'settings', value)
             self.manager.progress = lambda stage: None
             self.diagnostics.progress = lambda stage: None
+            self.history_summary.invalidate()
             with self.lock: self.active = None
 
 

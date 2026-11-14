@@ -14,7 +14,13 @@ class ConfigManager:
     def __init__(self, layout, system=None):
         self.layout = layout; self.system = system or System(layout); self.backups = BackupStore(layout)
         self.progress = lambda stage: None
-    def show(self): return {'revision': settings_revision(self.layout), 'settings': public_settings(load_settings(self.layout))}
+    def show(self, *, include_proxy_username=False):
+        revision = settings_revision(self.layout)
+        settings = load_settings(self.layout)
+        value = {'revision': revision, 'settings': public_settings(settings)}
+        if include_proxy_username:
+            value['proxy_username'] = settings['ini']['openport_auth'].partition(':')[0]
+        return value
     def journal(self):
         raw = read_bytes(self.layout, JOURNAL)
         return json.loads(raw) if raw else None

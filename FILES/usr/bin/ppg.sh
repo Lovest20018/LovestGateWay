@@ -214,7 +214,10 @@ log_ts() {
 
 log() {
     log_msg=$1
-    log_type=$2
+    log_type=${2:-}
+    if [ "$log_type" = "debug" ] && [ "${PPGW_DEBIAN:-0}" = "1" ] && [ "${PPGW_LOG_VERBOSE:-0}" != "1" ]; then
+        return 0
+    fi
     log_ts
     if [ "$log_type" = "warn" ]; then
         ppgwecho "\033[31m[LovestGateWay $log_hms]\033[0m ""$log_msg"
@@ -225,6 +228,29 @@ log() {
         return 0
     fi
     ppgwecho "[LovestGateWay $log_hms] ""$1"
+}
+
+log_heartbeat() {
+    [ "${PPGW_DEBIAN:-0}" = "1" ] || return 0
+    read -r heartbeat_up _ </proc/uptime
+    heartbeat_up=${heartbeat_up%.*}
+    if [ -z "${heartbeat_last:-}" ] || [ "${heartbeat_mode:-}" != "$mode" ] || [ $((heartbeat_up - heartbeat_last)) -ge 600 ]; then
+        log "Controller polling; mode=$mode. Routine configuration checks completed."
+        heartbeat_last=$heartbeat_up
+        heartbeat_mode=$mode
+    fi
+}
+
+ppsub_healthcheck() {
+    ppgw -healthcheck "$1" >/tmp/ppgw-health-result 2>&1
+    health_result=$?
+    while IFS= read -r health_line || [ -n "$health_line" ]; do
+        case "$health_line" in
+            *Failover*|*failed*|*Failed*|*'Max retries'*) log "$health_line" ;;
+            *) log "$health_line" debug ;;
+        esac
+    done </tmp/ppgw-health-result
+    return "$health_result"
 }
 
 
@@ -436,7 +462,7 @@ load_box() {
         /usr/bin/nft.sh || exit 1
     fi
     if pidof sniffbox >/dev/null 2>&1; then
-        log "sniffbox Running OK." succ
+        log "sniffbox Running OK." debug
     else
     /usr/bin/sniffbox 2>&1 | ppgwout &
     fi
@@ -853,7 +879,7 @@ try_conf() {
     conf_port=7889
     conf_name=$1
     down_type=$2
-    log "Try to get new ""$conf_name"
+    log "Try to get new ""$conf_name" debug
     if [ "${PPGW_DEBIAN:-0}" = "1" ]; then
         if [ "$conf_name" = "ppgw.ini" ] && [ "$down_type" = "ini" ] && [ -f /www/ppgw.ini ]; then
             # Debian's persistent file is authoritative; an existing private /tmp copy
@@ -1221,8 +1247,8 @@ while true; do
         core_reload_rc=$?
         if [ "$core_reload_rc" = "2" ]; then sleep 1; continue; fi
     fi
-    log "[OLD PPGW HASH]: ""$last_hash"
-    log "[NEW PPGW HASH]: ""$hash"
+    log "[OLD PPGW HASH]: ""$last_hash" debug
+    log "[NEW PPGW HASH]: ""$hash" debug
     if [ "$hash" != "$last_hash" ]; then
         if echo "$hash" | grep -Eqo "[a-z0-9]{32}"; then
             log "The hash has changed, reload gateway." warn
@@ -1323,8 +1349,8 @@ while true; do
     fi
     if [ "$mode" = "yaml" ] || [ "$mode" = "suburl" ]; then
         yaml_hash=$(gen_yaml_hash "/tmp/ppgw.yaml.down")
-        log "[OLD YAML HASH]: ""$last_yaml_hash"
-        log "[NEW YAML HASH]: ""$yaml_hash"
+        log "[OLD YAML HASH]: ""$last_yaml_hash" debug
+        log "[NEW YAML HASH]: ""$yaml_hash" debug
         if [ "$last_yaml_hash" != "$yaml_hash" ]; then
             log "The yaml hash has changed, reload gateway." warn
             reload_gw
@@ -1336,8 +1362,8 @@ while true; do
     fi
     if [ "$mode" = "ovpn" ]; then
         ovpn_hash=$(gen_ovpn_hash "/tmp/ppgw.ovpn.down")
-        log "[OLD OVPN HASH]: ""$last_ovpn_hash"
-        log "[NEW OVPN HASH]: ""$ovpn_hash"
+        log "[OLD OVPN HASH]: ""$last_ovpn_hash" debug
+        log "[NEW OVPN HASH]: ""$ovpn_hash" debug
         if [ "$last_ovpn_hash" != "$ovpn_hash" ]; then
             log "The ovpn hash has changed, reload gateway." warn
             reload_gw
@@ -1357,16 +1383,17 @@ while true; do
     if [ "$mode" = "yaml" ] || [ "$mode" = "suburl" ]; then
         load_box
         if pidof clash >/dev/null 2>&1; then
-            log "Clash Running OK." succ
+            log "Clash Running OK." debug
             ppgw_health_file="/etc/config/clash/clash-dashboard/data/ppsub.json"
             if ! is_ppsub_url "$suburl"; then
                 ppgw_health_file="/etc/config/clash/clash-dashboard/data/ppsub-policy.json"
             fi
             if [ -f "$ppgw_health_file" ]; then
-                ppgw -healthcheck "$ppgw_health_file" >"$PPGWTTY" 2>&1
+                ppsub_healthcheck "$ppgw_health_file"
                 hc_rc=$?
                 if [ "$hc_rc" -eq 0 ]; then
-                    echo PPsub health check succ
+                    if [ "$hc_fail_streak" -gt 0 ]; then log "PPsub health cycle recovered." succ; fi
+                    log "PPsub health cycle completed (checks depend on the configured monitor policy)." debug
                     hc_fail_streak=0
                 elif [ "$hc_rc" -eq 3 ]; then
                     log "PPsub: clash not ready yet, backoff without teardown." warn
@@ -1377,7 +1404,7 @@ while true; do
                     log "PPsub: Try to update and reload..." warn
                     get_conf "$suburl" "yaml" || log "Failed to update suburl, keep current config." warn
                     reload_gw
-                    ppgw -healthcheck "$ppgw_health_file" >"$PPGWTTY" 2>&1
+                    ppsub_healthcheck "$ppgw_health_file"
                     hc_rc2=$?
                     if [ "$hc_rc2" -eq 0 ] || [ "$hc_rc2" -eq 3 ]; then
                         hc_fail_streak=0
@@ -1430,11 +1457,12 @@ while true; do
             load_clash $fast_node
         fi
     else
-        log "Box mode ""$mode"", ensure box running." succ
+        log "Box mode ""$mode"", ensure box running." debug
         load_box
     fi
     if [ -f /tmp/ppgw.ini ]; then
-        log "Same hash. Sleep 30s."
+        log "Same hash. Sleep 30s." debug
+        log_heartbeat
         sleep 30
         sleep_count=$((sleep_count + 1))
     fi
@@ -1445,7 +1473,7 @@ while true; do
             continue
         fi
         if [ "$subtime" = "manual" ]; then
-            log "[SUBTIME] manual updates only; keeping saved subscription nodes."
+            log "[SUBTIME] manual updates only; keeping saved subscription nodes." debug
             continue
         fi
         read_hour_date
@@ -1483,14 +1511,14 @@ while true; do
             sleep_count=0
             log "Apply suburl to get new subscription..." warn
             old_sub_yaml_hash=$(gen_yaml_hash "/tmp/ppgw.yaml.down")
-            log "[OLD SUB YAML HASH]: ""$old_sub_yaml_hash"
+            log "[OLD SUB YAML HASH]: ""$old_sub_yaml_hash" debug
             if ! get_conf "$suburl" "yaml"; then
                 log "Failed to get subscription, retry later." warn
                 sleep_count=$((ppgw_subtime / 2))
                 continue
             fi
             new_sub_yaml_hash=$(gen_yaml_hash "/tmp/ppgw.yaml.down")
-            log "[NEW SUB YAML HASH]: ""$new_sub_yaml_hash"
+            log "[NEW SUB YAML HASH]: ""$new_sub_yaml_hash" debug
             if [ "$old_sub_yaml_hash" != "$new_sub_yaml_hash" ]; then
                 log "The sub hash has changed, reload gateway." warn
                 reload_gw

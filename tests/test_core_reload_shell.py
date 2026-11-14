@@ -16,6 +16,32 @@ if not SHELL and os.name == 'nt' and (git := shutil.which('git')):
 
 class CoreReloadShellTests(unittest.TestCase):
     @unittest.skipUnless(SHELL, 'requires a POSIX shell')
+    def test_routine_logs_are_quiet_but_warnings_and_verbose_diagnostics_remain(self):
+        source=(ROOT/'FILES/usr/bin/ppg.sh').read_text(encoding='utf-8')
+        helper=source[source.index('log() {'):source.index('read_dns() {')]
+        script='set -e\nlog_ts() { log_hms=120000; }\nppgwecho() { printf "%s\\n" "$1"; }\n'+helper+r'''
+PPGW_DEBIAN=1
+mode=suburl
+log 'routine hash' debug
+log 'failure preserved' warn
+PPGW_LOG_VERBOSE=1
+log 'verbose enabled' debug
+unset PPGW_LOG_VERBOSE
+if [ -r /proc/uptime ]; then
+    log_heartbeat
+    log_heartbeat
+    heartbeat_last=0
+    log_heartbeat
+fi
+'''
+        result=subprocess.run([SHELL,'-s'],input=script,text=True,capture_output=True,timeout=10)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertNotIn('routine hash',result.stdout)
+        self.assertIn('failure preserved',result.stdout)
+        self.assertIn('verbose enabled',result.stdout)
+        self.assertLessEqual(result.stdout.count('Controller polling;'),2)
+
+    @unittest.skipUnless(SHELL, 'requires a POSIX shell')
     def test_pending_target_and_accepted_snapshot_gate_the_polling_controller(self):
         helper = (ROOT / 'deploy/debian/runtime.sh').read_text(encoding='utf-8')
         helper = helper[helper.index('prepare_core_reload()'):]

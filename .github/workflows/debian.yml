@@ -114,6 +114,8 @@ jobs:
         run: |
           cargo test --workspace --locked
           cargo build --release --locked -p sniffbox
+      - name: Verify default group failover with synthetic controller
+        run: python3 scripts/verify-failover-fixture.py --binary sniffbox/target/release/sniffbox
       - name: Package Debian amd64
         run: |
           SOURCE_SHA=$(python3 scripts/source-manifest.py)

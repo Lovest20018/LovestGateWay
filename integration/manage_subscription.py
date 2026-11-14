@@ -13,6 +13,42 @@ JOURNAL = 'var/lib/paopaogw/admin/transaction.json'
 from manage_model import load_settings
 
 
+def canonical_yaml(text):
+    """Compare YAML semantics without losing scalar tags, list order or duplicates."""
+    import yaml
+    documents = list(yaml.compose_all(text))
+    if len(documents) != 1 or not isinstance(documents[0], yaml.MappingNode):
+        raise ValueError('one mapping required')
+    def canonical(node, seen):
+        if id(node) in seen: raise ValueError('recursive YAML')
+        seen = seen | {id(node)}
+        if isinstance(node, yaml.ScalarNode): return ['scalar', node.tag, node.value]
+        if isinstance(node, yaml.SequenceNode): return ['sequence', [canonical(n, seen) for n in node.value]]
+        if isinstance(node, yaml.MappingNode):
+            pairs = [[canonical(k, seen), canonical(v, seen)] for k, v in node.value]
+            keys = [json.dumps(k) for k, _ in pairs]
+            if len(set(keys)) != len(keys): raise ValueError('duplicate YAML key')
+            return ['mapping', sorted(pairs, key=lambda pair: json.dumps(pair[0]))]
+        raise ValueError('unknown YAML node')
+    return canonical(documents[0], set())
+
+
+def candidate_matches_runtime(system, pid, candidate, *, runtime=None):
+    """Only skip a restart when the complete validated candidate equals live YAML."""
+    try:
+        current = system.command('systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip()
+        if current != pid: return False
+        running = runtime if runtime is not None else Path('/proc') / pid / 'root/tmp/clash.yaml'
+        if not 0 < running.stat().st_size <= 2 * 1024 * 1024: return False
+        original = running.read_bytes()
+        same = canonical_yaml(original.decode()) == canonical_yaml(candidate.read_text(encoding='utf-8'))
+        # An external reload or restart during comparison must remain conservative.
+        return same and running.read_bytes() == original and system.command(
+            'systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip() == pid
+    except Exception:
+        return False
+
+
 def payload_content(raw):
     """Compare complete ordered nodes and hosts, ignoring fetch/account metadata.
 
@@ -157,6 +193,10 @@ def _refresh_nodes(layout, system, names=None, progress=None):
                 old_row = old_rows.get(provider['name'], {})
                 row['node_delta'] = row.get('nodes', 0) - (old_row.get('nodes', 0) if filename in original else 0)
                 changed = changed or not same
+            if changed and candidate_matches_runtime(system, pid, merged):
+                changed = False
+            for row in rows:
+                row['core_action'] = 'restart' if changed else 'none'
             updates = {'var/lib/paopaogw/subscriptions/' + target.name: target.read_bytes()
                        for target in stage.glob('*.json') if re.fullmatch(r'[0-9a-f]{64}\.json', target.name)}
             status_path = 'var/lib/paopaogw/subscriptions/status.json'

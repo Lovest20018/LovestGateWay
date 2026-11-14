@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Short stable version, e.g. 0.2.1 (must have docs/releases/VERSION.md)'
+        description: 'Short stable version, e.g. 0.2.6 (must have docs/releases/VERSION.md)'
         type: string
         required: true
       commit:

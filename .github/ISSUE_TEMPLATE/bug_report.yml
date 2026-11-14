@@ -1,0 +1,43 @@
+name: 问题反馈
+description: 报告安装、升级、面板或网关运行中的问题
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先查看 README 与安装/使用文档。提交前删除真实订阅、节点地址、密码、Token 和私人部署信息。
+        服务正常启动与实际客户端网络可用是不同结果，请说明问题发生在哪个环节。
+  - type: input
+    id: version
+    attributes:
+      label: LovestGateWay 版本
+      description: 填写面板显示的版本；源码构建请附提交号。
+      placeholder: v0.2.6
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      description: Debian 版本、架构、安装/升级方式，以及相关 Mihomo 版本。
+      placeholder: Debian 13 / amd64 / Web 升级
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 描述具体页面或命令、必要设置和可重复的步骤，使用虚构数据替代私密内容。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏错误与补充信息
+      description: 可附必要日志片段或已脱敏截图，避免粘贴完整配置和诊断包。

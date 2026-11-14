@@ -15,8 +15,15 @@ const proxies={GLOBAL:{type:'Selector',all:['节点选择','自动选择','流�
   '自动选择':{type:'URLTest',all:names,now:names[0]},
   '流媒体':{type:'Selector',all:[names[2],names[4],names[5]],now:names[2]},DIRECT:{type:'Direct',delay:1}};
 for(const [i,name]of names.entries())proxies[name]={type:'Shadowsocks',udp:true,alive:true,delay:delays[i],hist:[delays[i]+4,delays[i]-2,delays[i]+1,delays[i]]};
-const info={version:'0.2.4 · 演示',clash_version:'v1.19.33',clash_meta:true,mode:'suburl',kernel:'6.1',
-  timestamp:1794038400,uptime:90061,integration:{data:{boot_id:'documentation-demo'}},
+const demoAt=Date.parse('2026-11-14T08:00:00Z')/1000;
+const historyPoints=Array.from({length:288},(_,i)=>{
+  const download=(1.5+Math.sin(i*.13)*.4)*1024**2,upload=(180+Math.cos(i*.17)*30)*1024;
+  return {at:demoAt-(287-i)*300,samples:300,coverage_seconds:300,download_bytes:download*300,upload_bytes:upload*300,
+    download_rate:download,upload_rate:upload,cpu_percent:12+Math.sin(i*.2)*4,memory_bytes:(1.1+Math.sin(i*.1)*.05)*1024**3,
+    connected:120,failed:i%11===0?1:0,failure_percent:i%11===0?100/121:0,latency_ms:28+Math.sin(i*.15)*5,gaps:0};
+});
+const info={version:'0.2.6 · 演示',clash_version:'v1.19.33',clash_meta:true,mode:'suburl',kernel:'6.1',
+  timestamp:demoAt,uptime:90061,integration:{data:{boot_id:'documentation-demo'}},
   memory:{total:4*1024**3,available:2.9*1024**3,sniffbox_rss:42*1024**2,sniffbox_uptime:90000,clash_rss:86*1024**2,clash_uptime:90000},
   cpu:{model:'4 核虚拟处理器',cores:4,freq_min:800,freq_max:3200,usage:12.5,per_core:[10,15,20,5],freq:2400,temp:46.5,sniffbox:2.5,clash:3.5},
   interfaces:[{name:'ens18',ipv4:['192.0.2.10/24'],ipv6:[],gateway:'192.0.2.1',mac:'02:00:00:00:00:10',model:'VirtIO',speed:1000,duplex:'full',link:true}],
@@ -53,7 +60,9 @@ const info={version:'0.2.4 · 演示',clash_version:'v1.19.33',clash_meta:true,m
         sample++;download+=(1.5+Math.sin(sample*.5)*.3)*1024**2;upload+=(180+Math.cos(sample*.5)*25)*1024;
         return json(reading());
       }
-      if(url.pathname==='/sniffbox/geo')return json({version:'2026-11-07'});
+      if(url.pathname==='/sniffbox/geo')return json({version:'2026-11-14'});
+      if(url.pathname==='/sniffbox/settings/status')return json({history:{status:'available',collector_state:'running',enabled:true,
+        connection_rows:26480,capacity:100000,last_sample_at:demoAt+sample,points:historyPoints}});
       if(url.pathname==='/sniffbox/proxies')return json({mode:'rule',testUrl:'https://example.com/generate_204',proxies,providers:{},subs:[]});
       if(url.pathname==='/configs')return json({mode:'rule'});
       if(url.pathname==='/connections')return json({connections:[],downloadTotal:0,uploadTotal:0});
@@ -64,7 +73,7 @@ const info={version:'0.2.4 · 演示',clash_version:'v1.19.33',clash_meta:true,m
       catch{unexpected.push(url.pathname);return route.fulfill({status:404,body:''});}
     });
     await sessionFixture().install(page);
-    await page.clock.install({time:new Date('2026-11-07T08:00:00Z')});
+    await page.clock.install({time:new Date(demoAt*1000)});
     await page.goto(origin+'/ui/#/overview');
     await page.getByText('4 核虚拟处理器',{exact:true}).waitFor();
     for(let i=0;i<100;i++){
@@ -72,6 +81,8 @@ const info={version:'0.2.4 · 演示',clash_version:'v1.19.33',clash_meta:true,m
       if(Number(await page.locator('.overview-chart').first().getAttribute('data-samples'))>=40)break;
     }
     assert.equal(await page.locator('.overview-chart').first().getAttribute('data-samples'),'40');
+    assert.equal(await page.locator('.overview-history canvas').count(),1);
+    await page.getByText('历史采集正在运行。',{exact:false}).waitFor();
     await page.evaluate(()=>document.fonts.ready);
     await page.screenshot({path:path.join(destination,'overview.png'),animations:'disabled'});
     await page.locator('[data-route=proxies]').click();

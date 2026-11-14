@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from manage_common import Layout, ManagementError
 from manage_config import ConfigManager
-from manage_model import settings_revision
+from manage_model import load_settings, settings_revision
 from manage_web import SettingsAdmin, Handler
 from test_manage_config import FakeSystem
 
@@ -39,6 +39,33 @@ class WebSettingsTests(unittest.TestCase):
         self.assertFalse(self.layout.path('var/backups/paopaogw').exists())
         bad = self.request(); bad['base_revision'] = '0' * 64
         with self.assertRaisesRegex(ManagementError, 'CONFIG_REVISION_CONFLICT'): self.admin.preview(bad)
+
+    def test_authenticated_config_exposes_proxy_username_without_password(self):
+        ini = self.layout.path('etc/paopaogw/files/ppgw.ini')
+        ini.write_text(ini.read_text() + 'openport_auth=proxy-user:private-proxy-password\n')
+        value = self.admin.show()
+        self.assertEqual(value['proxy_username'], 'proxy-user')
+        self.assertEqual(value['settings']['ini']['openport_auth'], '********')
+        self.assertNotIn('private-proxy-password', json.dumps(value))
+        self.assertNotIn('proxy_username', self.admin.manager.show())
+        self.assertNotIn('proxy_username', self.admin.status())
+        preview = self.admin.preview(self.request({'ini': {'openport_auth': 'new-user:new-private-proxy-password'}}))
+        self.assertNotIn('new-user', json.dumps(preview))
+        self.assertNotIn('new-private-proxy-password', json.dumps(preview))
+
+    def test_config_change_during_username_read_requires_a_fresh_preview(self):
+        before = settings_revision(self.layout)
+        def change_after_read(layout):
+            settings = load_settings(layout)
+            ini = layout.path('etc/paopaogw/files/ppgw.ini')
+            ini.write_text(ini.read_text() + 'openport_auth=another-user:another-password\n')
+            return settings
+        with patch('manage_config.load_settings', side_effect=change_after_read):
+            value = self.admin.manager.show(include_proxy_username=True)
+        self.assertEqual(value['revision'], before)
+        self.assertNotEqual(value['revision'], settings_revision(self.layout))
+        with self.assertRaisesRegex(ManagementError, 'CONFIG_REVISION_CONFLICT'):
+            self.admin.preview({'base_revision': value['revision'], 'patch': {'ini': {'max_rec': 9}}})
 
     def test_jobs_are_idempotent_and_never_persist_plaintext_inputs(self):
         body = self.job(payload=self.request({'ini': {'clash_web_password': 'new-secret-password-long'}}))

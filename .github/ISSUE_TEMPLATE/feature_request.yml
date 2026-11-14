@@ -1,0 +1,22 @@
+name: 功能建议
+description: 提出具体使用需求或现有流程的改进
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与遇到的问题
+      description: 说明当前版本中哪一步难以完成，以及希望获得的结果。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议的行为
+      description: 可描述页面操作、配置方式或具体示例，请使用虚构数据。
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 已尝试的方法与补充背景

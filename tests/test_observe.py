@@ -1,10 +1,13 @@
 from pathlib import Path
+import datetime
+import tempfile
 import sys
 import unittest
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 import observe
+import history_store
 from gateway_api import ApiError, mihomo_connections
 
 
@@ -15,20 +18,71 @@ class Core:
 
     def request(self, path, body=None):
         self.calls.append(path)
-        if path == '/sniffbox/info':
+        if path in {'/sniffbox/info', '/sniffbox/info/dynamic'}:
             return {'mode': self.mode, 'integration': {'boot_id': 'fixture-boot'}}
         if path == '/sniffbox/evidence':
             return {'boot_id': self.boot, 'data': {'items': [{'id': 1, 'domain': 'example.test'}]}}
         if path == '/connections':
             if isinstance(self.rows, Exception): raise self.rows
             return {'connections': self.rows}
+        if path == '/rules': return {'rules': []}
         raise AssertionError(path)
 
 
 class ObserveTests(unittest.TestCase):
+    def test_restart_after_native_pages_never_commits_old_boot_snapshots(self):
+        class RestartingCore(Core):
+            def request(self,path,body=None):
+                if path=='/sniffbox/info/dynamic': return {'integration':{'boot_id':'new-boot'}}
+                return super().request(path,body)
+        writer=Mock();writer.cursor.return_value=0
+        with self.assertRaises(ApiError):observe.collect_once(RestartingCore(),writer,30,Mock())
+        writer.store.assert_not_called()
+
+    def test_pages_are_drained_and_cursor_survives_collector_restart(self):
+        class PagedCore(Core):
+            def request(self, path, body=None):
+                if path != '/sniffbox/evidence': return super().request(path, body)
+                after = body['after']; end = min(after+200, 450)
+                return {'boot_id': self.boot, 'data': {'items': [{'id': str(i), 'ended_at': 1,
+                        'decision': {'connect_result': 'failed'}} for i in range(after+1,end+1)],
+                        'next_sequence': end, 'truncated': end<450}}
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/'history.sqlite3';core=PagedCore();report=Mock()
+            with history_store.HistoryWriter(path) as writer: observe.collect_once(core,writer,30,report)
+            with history_store.HistoryWriter(path) as writer:
+                self.assertEqual(writer.cursor(core.boot),450)
+                observe.collect_once(core,writer,30,report)
+            result=history_store.metrics_summary(path)
+            self.assertEqual(result['connection_rows'],450)
+            self.assertEqual(result['failed'],450)
+            report.assert_not_called()
+
+    def test_latency_uses_only_existing_fresh_default_outbound_checks(self):
+        client=Mock();now=1700000000
+        def request(path):
+            if path=='/rules':return {'rules':[{'type':'Match','proxy':'Main'}]}
+            return {'proxies':{'Main':{'all':['N1'],'now':'N1'},'N1':{'history':[
+                {'time':datetime.datetime.fromtimestamp(now-5,datetime.timezone.utc).isoformat(),'delay':25}]}}}
+        client.request.side_effect=request
+        self.assertEqual(observe.selected_latency(client,now),25)
+        self.assertIsNone(observe.selected_latency(client,now+120))
+        self.assertTrue(all(call.args[0] in ['/rules','/proxies'] for call in client.request.call_args_list))
+
+    def test_latency_retains_checks_on_selected_nested_groups(self):
+        now=1700000000;checked=datetime.datetime.fromtimestamp(now-5,datetime.timezone.utc).isoformat()
+        client=Mock()
+        proxies={'Main':{'all':['Region'],'now':'Region'},'Region':{'all':['N1'],'now':'N1',
+                 'history':[{'time':checked,'delay':32}]},'N1':{'history':[]}}
+        client.request.side_effect=lambda path: {'rules':[{'type':'Match','proxy':'Main'},{'type':'Match','proxy':'REJECT'}]} if path=='/rules' else {'proxies':proxies}
+        self.assertEqual(observe.selected_latency(client,now),32)
+        proxies['Region']['history'][-1]['delay']=0
+        self.assertIsNone(observe.selected_latency(client,now))
+
     def test_both_modes_normalize_empty_then_active_then_empty_and_commit_once(self):
         for mode in ('yaml', 'suburl'):
             core, writer, report = Core(mode), Mock(), Mock()
+            writer.cursor.return_value = 0
             for rows in (None, [], [{'id': 'm1', 'chains': ['Node'], 'metadata': {'host': 'example.test', 'password': 'private'}, 'password': 'private'}], None):
                 core.rows = rows
                 observe.collect_once(core, writer, 30, report)
@@ -45,6 +99,7 @@ class ObserveTests(unittest.TestCase):
         for rows in (False, 0, '', {}, [None], ApiError(503, 'CORE_UNAVAILABLE')):
             with self.subTest(rows=rows):
                 core, writer, report = Core(rows=rows), Mock(), Mock()
+                writer.cursor.return_value = 0
                 observe.collect_once(core, writer, 30, report)
                 self.assertEqual([source for source, _ in writer.store.call_args.args[1]], ['sniffbox_lifecycle'])
                 report.assert_called_once()

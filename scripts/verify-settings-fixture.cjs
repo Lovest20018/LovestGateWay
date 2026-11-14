@@ -28,13 +28,13 @@ async function main() {
   const browser = await chromium.launch({channel: 'chrome', headless: true});
   try {
     const context = await browser.newContext({viewport: {width: 1440, height: 1000}, reducedMotion: 'reduce'});
-    const page = await context.newPage(), errors = [], submitted = [];
+    const page = await context.newPage(), errors = [], submitted = [], previews = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
       localStorage.setItem('PaoPaoGateWay', JSON.stringify({clashAPIConfigs: [{secret: 'fixture-token'}]}));
       if (!localStorage.getItem('ppgw-theme')) localStorage.setItem('ppgw-theme', 'light');
     });
-    const model = {...defaults, revision: 'a'.repeat(64), assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
+    const model = {...defaults, revision: 'a'.repeat(64), proxy_username: '', assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
     let stale = false, fail = false, expireLogin = false, runningJob, polls = 0, configDelay = 0, coreFailed = true, coreLimited = false, localUpload = null, localInstalled = false, localOperations = [];
     let managementOffline=false, managementPolls=0, configReads=0, rechecks=0;
     let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreExpireOnSubmit=false, coreSuperseded=false;
@@ -90,6 +90,7 @@ async function main() {
         }
         else if (target.endsWith('/config')) { configReads++; if (configDelay) await new Promise(resolve => setTimeout(resolve, configDelay)); data = model; }
         else if (target.endsWith('/preview')) {
+          previews.push(body);
           if (stale) { status = 409; data = {error: 'CONFIG_REVISION_CONFLICT'}; }
           else {
             const action = body.restart || body.patch.service || body.patch.ini?.mode ? 'restart' : body.patch.ini ? 'reload' : 'none';
@@ -105,7 +106,10 @@ async function main() {
           else {
             data = {id: runningJob.id, status: 'succeeded', result: {runtime: {status: 'running'}}};
             if (runningJob.kind === 'config') for (const [ns, fields] of Object.entries(runningJob.payload.patch)) {
-              for (const [key, value] of Object.entries(fields)) model.settings[ns][key] = model.schema[ns][key].secret ? '********' : value;
+              for (const [key, value] of Object.entries(fields)) {
+                model.settings[ns][key] = model.schema[ns][key].secret && value ? '********' : value;
+                if (ns === 'ini' && key === 'openport_auth') model.proxy_username = value.split(':', 1)[0];
+              }
             }
             if (runningJob.kind === 'asset') model.assets.push(runningJob.payload.name);
           }
@@ -123,7 +127,10 @@ async function main() {
     });
     const blur = async (locator, value) => { await locator.fill(value); await locator.press('Tab'); };
     const apply = async () => { await page.locator('#preview').click(); await page.locator('#preview-dialog').waitFor({state: 'visible'}); await page.locator('#apply').click(); };
-    const saved = () => page.getByText('配置已应用，运行状态验收通过。', {exact: true}).waitFor();
+    const saved = async () => {
+      await page.waitForFunction(() => !sessionStorage.getItem('lovestgateway-job'));
+      await page.getByText('配置已应用，运行状态验收通过。', {exact: true}).waitFor();
+    };
     await sessions.install(page);
     await page.goto(origin + '/ui/gateway.html#/settings');
     await page.locator('.ppgw-management [role=status]').waitFor();
@@ -175,6 +182,90 @@ async function main() {
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     assert.equal(new URL(page.url()).pathname, '/ui/');
     await page.getByRole('heading', {name:'修改管理密码',exact:true}).waitFor();
+    const proxyUser=page.getByLabel('代理用户名',{exact:true}),proxyPassword=page.getByLabel('代理密码',{exact:true});
+    const proxyToggle=page.getByLabel('允许局域网显式代理',{exact:true}),proxyStatus=page.locator('#proxy-auth-status');
+    const proxyScope=page.getByLabel('代理访问范围',{exact:true}),originalProxyScope=await proxyScope.inputValue();
+    const proxySection=page.getByRole('heading',{name:'局域网代理',exact:true}).locator('../..');
+    assert.equal(await page.locator('#setting-ini-openport_auth').count(),0,'credentials use two independent inputs');
+    assert.equal(await proxyPassword.getAttribute('type'),'password');
+    assert.match(await page.locator('.proxy-connection').innerText(),/代理端口\s+1080/);
+    assert.match(await page.locator('.proxy-connection').innerText(),/HTTP \/ SOCKS5/);
+    assert.doesNotMatch(await page.locator('.proxy-connection').innerText(),/127\.0\.0\.1/,'other devices must use the gateway LAN IP');
+    await proxyToggle.check();
+    const previewsBeforeProxy=previews.length;
+    await page.locator('#preview').click();
+    assert.match(await page.locator('#notice').innerText(),/填写代理用户名和密码/);
+    await proxyUser.fill('fixture-user');
+    await page.getByRole('tab',{name:'维护与 API',exact:true}).click();
+    await page.locator('#preview').click();
+    assert.equal(await page.getByRole('tab',{name:'访问与统计',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await proxyUser.inputValue(),'fixture-user','partial credentials survive tab changes');
+    assert.match(await page.locator('#notice').innerText(),/同时填写代理用户名和密码/);
+    await proxyPassword.fill('fixture:password!');
+    await proxyUser.fill('invalid:name');
+    await page.locator('#preview').click();
+    assert.match(await page.locator('#notice').innerText(),/用户名不能包含英文冒号/);
+    await page.getByRole('tab',{name:'高级选项',exact:true}).click();
+    await page.locator('#preview').click();
+    assert.equal(await proxyUser.inputValue(),'invalid:name','rerendering must not reinterpret a colon in the username');
+    await proxyUser.fill('用'.repeat(86));
+    await page.locator('#preview').click();
+    assert.match(await page.locator('#notice').innerText(),/255 字节/);
+    assert.equal(previews.length,previewsBeforeProxy,'invalid credentials never reach the preview API');
+    await proxyUser.fill('fixture-user');
+    await page.getByRole('button',{name:'显示密码',exact:true}).click();
+    assert.equal(await proxyPassword.getAttribute('type'),'text');
+    await page.getByRole('tab',{name:'高级选项',exact:true}).click();
+    await page.getByRole('tab',{name:'访问与统计',exact:true}).click();
+    assert.equal(await proxyPassword.inputValue(),'fixture:password!');
+    assert.equal(await proxyPassword.getAttribute('type'),'password','draft passwords are hidden again after rerendering');
+    await page.locator('#preview').click();
+    await page.locator('#preview-dialog').waitFor({state:'visible'});
+    assert.equal(previews.at(-1).patch.ini.openport_auth,'fixture-user:fixture:password!','password colons remain intact');
+    assert.doesNotMatch(await page.locator('#preview-content').innerText(),/fixture-user|fixture:password!/);
+    const submittedBeforeProxy=submitted.length;
+    await proxyPassword.fill('changed-password');
+    await page.locator('#apply').click();
+    assert.match(await page.locator('#notice').innerText(),/编辑内容已变化/);
+    assert.equal(submitted.length,submittedBeforeProxy,'a stale credential preview cannot be applied');
+    await proxyPassword.fill('fixture:password!');
+    await apply();await saved();
+    assert.deepEqual(submitted.at(-1).payload.patch.ini,{openport:true,openport_auth:'fixture-user:fixture:password!'});
+    assert.equal(await proxyUser.inputValue(),'fixture-user','the saved username remains visible');assert.equal(await proxyPassword.inputValue(),'');
+    assert.match(await proxyStatus.innerText(),/已保存代理账号.*留空/);
+    assert.equal(await page.getByRole('button',{name:'清除已保存的代理账号',exact:true}).isDisabled(),true);
+    assert.doesNotMatch(await page.evaluate(()=>JSON.stringify({localStorage,sessionStorage})),/fixture-user|fixture:password!|changed-password/);
+    await proxySection.screenshot({path:path.join(root,'dist/proxy-settings-desktop.png')});
+    await page.setViewportSize({width:320,height:740});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+    await page.evaluate(()=>scrollTo(0,0));
+    await page.screenshot({path:path.join(root,'dist/proxy-settings-mobile.png'),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});
+    await blur(proxyScope,'192.0.2.0/24');await apply();await saved();
+    assert.equal(Object.hasOwn(submitted.at(-1).payload.patch.ini,'openport_auth'),false,'blank credentials preserve the saved account');
+    await proxyPassword.fill('replacement-password');await apply();await saved();
+    assert.equal(submitted.at(-1).payload.patch.ini.openport_auth,'fixture-user:replacement-password','a password-only edit retains the visible username');
+    assert.equal(await proxyUser.inputValue(),'fixture-user');assert.equal(await proxyPassword.inputValue(),'');
+    await proxyUser.fill('');
+    await proxyPassword.fill('password-without-user');await page.locator('#preview').click();
+    assert.match(await page.locator('#notice').innerText(),/同时填写代理用户名和密码/);
+    await page.locator('#discard').click();
+    assert.equal(await proxyUser.inputValue(),'fixture-user');assert.equal(await proxyPassword.inputValue(),'');
+    await proxyUser.fill('reload-draft');
+    page.once('dialog',dialog=>dialog.accept());
+    const proxyReload=page.waitForResponse(response=>new URL(response.url()).pathname==='/sniffbox/settings/config');
+    await page.locator('#reload').click();await proxyReload;
+    assert.equal(await proxyUser.inputValue(),'fixture-user');assert.equal(await proxyPassword.inputValue(),'');
+    await proxyToggle.uncheck();
+    await page.getByRole('button',{name:'清除已保存的代理账号',exact:true}).click();
+    assert.match(await proxyStatus.innerText(),/将清除已保存的代理账号/);
+    await proxyToggle.check();await page.locator('#preview').click();
+    assert.match(await page.locator('#notice').innerText(),/填写代理用户名和密码/);
+    await proxyToggle.uncheck();await blur(proxyScope,originalProxyScope);await apply();await saved();
+    assert.equal(submitted.at(-1).payload.patch.ini.openport_auth,'');
+    assert.equal(submitted.at(-1).payload.patch.ini.openport,false);
+    assert.equal(await page.getByRole('button',{name:'清除已保存的代理账号',exact:true}).count(),0);
+    submitted.length=0;
     await page.screenshot({path:path.join(root,'dist/password-settings-desktop.png'),fullPage:true});
     await page.setViewportSize({width:390,height:844}); await page.waitForTimeout(400);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
@@ -420,7 +511,7 @@ async function main() {
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
       sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, appearanceSelection: true, mobileMenu: true,
-      unmountDuringFetch: true, observerApiSettings: true, recheckPreservesDraft:true, staleCheckDistinguished:true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, pageErrors: errors}));
+      unmountDuringFetch: true, observerApiSettings: true, recheckPreservesDraft:true, staleCheckDistinguished:true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, proxySeparateCredentials:true, proxyFixedPortInfo:true, proxyCredentialValidation:true, proxySavedCredentialRetention:true, proxyExplicitCredentialClear:true, proxyDraftProtection:true, proxyUsernameVisibleAfterSave:true, proxyPasswordOnlyChange:true, pageErrors: errors}));
   } finally { for(const context of browser.contexts())for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await browser.close(); }
 }
 main().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

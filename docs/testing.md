@@ -21,6 +21,8 @@ API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。开发�
 
 受限 Mihomo 热加载的真实连接与完整 Debian 服务验收分别使用 `scripts/verify-mihomo-reload.py` 和 `scripts/verify-mihomo-policy-linux.py`，运行条件与覆盖边界见[热加载说明](mihomo-reload-assessment.md)。只在一次性隔离环境运行失败注入，不对现用配置执行此类实验。
 
+`python3 scripts/verify-failover-fixture.py --binary /path/to/sniffbox` 在 Linux 的临时 Unix socket 上运行真实 PPsub CLI，使用合成控制器验证健康节点不切换、当前节点失败时只切指定组、全部失败时保留选择。不会连接真实 Mihomo、发起出口探测或关闭真实连接。历史指标测试覆盖分页游标、重复结果去重、跨进程计数器增量、归零/缺口、过期与连接容量；概览浏览器回归覆盖历史指标和时间范围切换、鉴权、取消及手机布局。
+
 ```sh
 node frontend/build.mjs
 node --test frontend/tests/*.test.mjs

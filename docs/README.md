@@ -1,18 +1,22 @@
 # 文档导航
 
-首次使用从安装指南开始；日常设置通过 Web 完成。
+适用于 LovestGateWay Debian 正式版。首次使用从安装指南开始；日常设置通过 Web 完成。
+
+当前版本：[v0.2.6](releases/0.2.6.md) · [更新记录](../CHANGELOG.md) · [正式安装包](https://github.com/Lovest20018/LovestGateWay/releases/latest)
 
 | 需求 | 文档 |
 | --- | --- |
 | 安装、升级、离线包与常见问题 | [安装与升级](debian-deployment.md) |
 | 面板导航、订阅、策略及设置 | [Web 使用说明](debian-web-settings.md) |
+| 代理账号、故障转移和运行历史 | [首页常用设置](../README.md#常用设置) · [Web 详细说明](debian-web-settings.md) |
 | 命令行管理、备份和恢复 | [命令行参考](debian-management.md) |
 | 已完成内容、待验收场景 | [项目状态](optimization-roadmap.md) |
 
 ## 开发与维护
 
-- [测试与验收](testing.md) · [前端源码](../frontend/README.md) · [截图复现](images/README.md)
-- [发布流程](releasing.md) · [版本变化](releases/) · [GitHub Releases](https://github.com/Lovest20018/LovestGateWay/releases)
+- [参与开发与目录说明](../CONTRIBUTING.md) · [测试与验收](testing.md)
+- [前端源码](../frontend/README.md) · [截图复现](images/README.md)
+- [发布流程](releasing.md) · [版本变化](../CHANGELOG.md) · [GitHub Releases](https://github.com/Lovest20018/LovestGateWay/releases)
 - [上游跟进](upstream-maintenance.md) · [与上游的差异](project-differences-and-web-settings.md)
 - [可选观测 API](integration-api-v1.md) · [OpenAPI](openapi-v1.json)
 

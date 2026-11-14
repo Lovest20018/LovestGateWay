@@ -13,7 +13,7 @@
     const dirty = new Map();
     const openHelp = new Set();
     let model, category = 'access', subscriptionPage = 'editor', subscriptionControls = null, sourceDraft = null, sourceDetails = null, sourceExpanded = false;
-    let passwordConfirmation = '';
+    let passwordConfirmation = '', proxyCredentials = null;
     let prepared, running = false, editorBusy = false, postUpload = null, stopped = false, modelRequest = 0, corePolling = null;
     let gatewayUpdate = null, gatewayPolling = null, jobPolling = null, authPaused = false, managementTimer = null, managementPolling = false;
     let activeActions = 0, unknownJobId = null, unknownReviewVersion = 0;
@@ -52,8 +52,8 @@
       fake_cidr: ['FakeIP 网段', '网段须与现有 LAN、VPN 和其他 DNS 服务避开。'],
       dns_ip: ['DNS 上游地址', '信任 DNS：网关本地解析使用的基础上游。'], dns_port: ['DNS 上游端口', '通常为 53；与上游 DNS 实际端口一致。'],
       clash_web_password: ['管理密码', '留空保留；至少 8 个字符。应用后需要重新登录。'],
-      openport: ['允许局域网显式代理', '启用后允许范围内的设备连接 HTTP / SOCKS5 代理，必须同时设置认证。'],
-      openport_auth: ['代理认证', '格式为 用户名:密码；留空保留已保存的认证。'],
+      openport: ['允许局域网显式代理', 'HTTP / SOCKS5 共用 1080 端口；启用前请设置代理用户名和密码。'],
+      openport_auth: ['代理账号', '用户名明文显示；密码留空保留当前账号。'],
       admin_cidr: ['管理访问范围', '逗号分隔 CIDR；留空允许所有来源。请保留当前设备所在网段。'],
       proxy_cidr: ['代理访问范围', '透明 TCP 转发与显式代理共用的客户端范围；逗号分隔 IPv4 / IPv6 CIDR，留空允许所有来源。'],
       net_rec: ['核心流量统计', '记录核心流量与分布；与 API 历史采集分别控制。'],
@@ -150,8 +150,8 @@
         ['配合设置', '会话上限控制资源使用，保留额度必须小于上限。高级选项中的 QUIC 阻断会单独影响 QUIC 流量。'],
       ],
       openport: [
-        ['作用', '让局域网设备显式连接网关的 HTTP / SOCKS5 代理。'],
-        ['配合设置', '同时填写代理认证，并用“代理访问范围”限制允许连接的来源；“管理访问范围”单独控制管理接口。'],
+        ['作用', '让局域网设备通过 1080 端口连接网关的 HTTP / SOCKS5 代理，两种协议共用同一端口和账号。'],
+        ['配合设置', '分别填写代理用户名和密码，并用“代理访问范围”限制允许连接的来源；“管理访问范围”单独控制管理接口。'],
       ],
       subtime: [
         ['填写示例', '30m 表示每 30 分钟，6h 表示每 6 小时，1d 表示每天。填写每天定时更新的小时后，按该定时计划执行。'],
@@ -184,7 +184,7 @@
       ASSET_REQUIRED: '未找到所选配置文件，请先导入。',
       ASSET_EXISTS: '同名文件已存在，请选择新名称或明确允许覆盖。',
       INVALID_ASSET_CONTENT: '文件格式不正确，或包含不支持的指令。',
-      EXPLICIT_PROXY_AUTH_REQUIRED: '开启显式代理时必须设置 用户名:密码。',
+      EXPLICIT_PROXY_AUTH_REQUIRED: '开启局域网代理前，请填写代理用户名和密码。',
       DASHBOARD_PASSWORD_TOO_SHORT: '管理密码至少需要 8 个字符。',
       APPLY_FAILED_ROLLED_BACK: '应用验收失败，已恢复原配置。请检查网卡、监听端口和资源。',
       ROLLBACK_UNCONFIRMED: '原保存文件已还原，运行恢复尚未通过验证；请检查系统服务和恢复提示。',
@@ -387,6 +387,74 @@
         ])]),
       ]);
     }
+    function proxyAuthError() {
+      if (proxyCredentials) {
+        const {username, password} = proxyCredentials;
+        if (!username || !password) return '请同时填写代理用户名和密码。';
+        if (username.includes(':')) return '代理用户名不能包含英文冒号（:）。';
+        if ([username, password].some(value => new TextEncoder().encode(value).length > 255)) return '代理用户名和密码各不能超过 255 字节，请缩短后重试。';
+        if (/[\x00-\x1f\x7f]/.test(username + password)) return '代理用户名和密码不能包含控制字符。';
+      }
+      return valueOf('ini', 'openport') && !valueOf('ini', 'openport_auth') ? message('EXPLICIT_PROXY_AUTH_REQUIRED') : '';
+    }
+    function proxyAccessCard() {
+      const saved = Boolean(model.settings.ini.openport_auth);
+      const savedUsername = model.proxy_username || '';
+      const toggle = field('ini', 'openport', {wide:true});
+      const hostname = location.hostname;
+      const ip = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname) || hostname.includes(':');
+      const host = ip && !/^(127\.|0\.0\.0\.0$)/.test(hostname) && !['[::1]', '[::]'].includes(hostname) ? hostname : '网关局域网IP';
+      const connection = el('div', {class:'proxy-connection', 'aria-label':'代理连接信息'}, [
+        el('strong', {text:'客户端连接信息'}),
+        el('dl', {class:'proxy-connection-grid'}, [['服务器地址', host], ['代理端口', '1080'], ['代理类型', 'HTTP / SOCKS5']].map(([label, value]) =>
+          el('div', {}, [el('dt', {text:label}), el('dd', {}, [el('code', {text:value})])]))),
+        el('p', {class:'subtext'}, [document.createTextNode('连接示例：'), el('code', {text:host + ':1080'}), document.createTextNode('。两种协议共用此端口，当前不可修改。')]),
+        el('p', {class:'subtext', text:'其他设备连接时，服务器地址请填写网关的局域网 IP，用户名和密码分别填写下方设置的账号。'}),
+      ]);
+      const username = el('input', {id:'setting-proxy-username', type:'text', autocomplete:'off', spellcheck:false, maxLength:255,
+        value:proxyCredentials ? proxyCredentials.username : dirty.get('ini.openport_auth') === '' ? '' : savedUsername,
+        placeholder:saved && !savedUsername ? '已保存，修改时重新填写用户名' : '例如 proxyuser'});
+      const password = el('input', {id:'setting-proxy-password', type:'password', autocomplete:'new-password', maxLength:255,
+        value:proxyCredentials?.password || '', placeholder:saved ? '已保存，留空保留原密码' : '输入代理密码'});
+      const reveal = el('button', {type:'button', class:'btn', text:'显示密码', 'aria-controls':password.id, 'aria-pressed':'false', onclick:() => {
+        const show = password.type === 'password'; password.type = show ? 'text' : 'password';
+        reveal.textContent = show ? '隐藏密码' : '显示密码'; reveal.setAttribute('aria-pressed', String(show));
+      }});
+      const credentials = el('div', {class:'field-grid proxy-auth-fields'}, [
+        el('div', {class:'field'}, [el('div', {class:'setting-field-heading'}, [el('label', {htmlFor:username.id, text:'代理用户名'})]), username]),
+        el('div', {class:'field'}, [el('div', {class:'setting-field-heading'}, [el('label', {htmlFor:password.id, text:'代理密码'})]), el('div', {class:'proxy-password-control'}, [password, reveal])]),
+      ]);
+      const status = el('p', {id:'proxy-auth-status', class:'subtext', 'aria-live':'polite'});
+      for (const input of [username, password]) input.setAttribute('aria-describedby', status.id);
+      const clear = saved ? el('button', {type:'button', class:'btn btn-ghost secret-clear', text:'清除已保存的代理账号', 'aria-label':'清除已保存的代理账号', onclick:() => {
+        proxyCredentials = null; username.value = ''; password.value = ''; setValue('ini', 'openport_auth', ''); showState();
+      }}) : null;
+      function showState() {
+        const error = proxyAuthError();
+        status.textContent = error || (proxyCredentials ? '新代理账号待应用；客户端请分别填写用户名和密码。' :
+          dirty.get('ini.openport_auth') === '' ? '应用后将清除已保存的代理账号。' :
+          saved ? savedUsername ? '已保存代理账号；用户名明文显示，密码留空保留。更换用户名时请同时填写新密码。' :
+          '已保存代理账号；两项都留空可继续使用。更换时请同时填写用户名和密码。' : '尚未设置代理账号；启用前请填写用户名和密码。');
+        status.classList.toggle('setting-warning', Boolean(error));
+        if (clear) clear.disabled = Boolean(valueOf('ini', 'openport')) || dirty.get('ini.openport_auth') === '';
+      }
+      function editCredentials() {
+        const retain = !password.value && (!username.value || username.value === savedUsername);
+        proxyCredentials = retain ? null : {username:username.value, password:password.value};
+        if (proxyCredentials) setValue('ini', 'openport_auth', proxyCredentials.username + ':' + proxyCredentials.password);
+        else { dirty.delete('ini.openport_auth'); updateDirty(); }
+        showState();
+      }
+      username.addEventListener('input', editCredentials); password.addEventListener('input', editCredentials);
+      toggle.querySelector('input').addEventListener('change', showState);
+      const scope = field('ini', 'proxy_cidr', {wide:true}); scope.classList.add('proxy-client-scope');
+      showState();
+      return card('局域网代理', '开启后，允许访问范围内的设备使用 HTTP / SOCKS5 代理。修改账号后，请预览变更并确认应用。', '02', [
+        toggle, connection, credentials, status,
+        ...(clear ? [el('div', {class:'button-row proxy-auth-clear'}, [clear, el('span', {class:'subtext', text:'关闭局域网代理后可清除账号。'})])] : []),
+        scope,
+      ]);
+    }
     async function copyValue(value) {
       if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(value);
       const input = el('textarea', {value, readOnly:true, class:'clipboard-helper'});
@@ -449,10 +517,9 @@
       const result = [];
       if (category === 'access') {
         result.push(passwordCard());
-        result.push(card('管理与代理访问', '管理认证和访问范围统一在这里维护。', '02', [fields([
-          ['ini', 'openport_auth'], ['ini', 'admin_cidr'], ['ini', 'proxy_cidr'], ['ini', 'openport'],
-        ])]));
-        result.push(card('流量记录', '核心统计与 API 持久历史分别控制。', '03', [fields([
+        result.push(proxyAccessCard());
+        result.push(card('管理页面访问', '限制可访问管理页面和管理接口的设备。', '03', [fields([['ini', 'admin_cidr', true]])]));
+        result.push(card('流量记录', '核心统计与 API 持久历史分别控制。', '04', [fields([
           ['ini', 'net_rec'], ['ini', 'max_rec'], ['ini', 'net_cleanday'], ['ini', 'traffic_window_min'],
         ])]));
       } else if (category === 'maintenance') {
@@ -780,6 +847,12 @@
       return items;
     }
     async function preview(forceRestart = false) {
+      const proxyError = proxyAuthError();
+      if (proxyError) {
+        category = 'access'; render(); notice(proxyError, 'error');
+        $('setting-proxy-' + (!proxyCredentials?.username || proxyCredentials.username.includes(':') ? 'username' : 'password'))?.focus();
+        return;
+      }
       if (dirty.has('ini.clash_web_password')) {
         const password = dirty.get('ini.clash_web_password');
         if (password.length < 8) { notice('管理密码至少需要 8 个字符。', 'error'); return; }
@@ -821,6 +894,8 @@
       finally { finish(); }
       dirty.clear();
       passwordConfirmation = '';
+      proxyCredentials = null;
+      root.querySelectorAll('.proxy-auth-fields input').forEach(input => { input.value = ''; });
       root.querySelectorAll('#content input[type=password]').forEach(input => { input.value = ''; });
       notice('任务已提交，正在等待实际加载与验收结果。');
       if (address && new URL(address).origin !== location.origin) {
@@ -1182,7 +1257,7 @@
       }
       finally { if (!stopped) $('reload').disabled = running; }
     }
-    function previewSnapshot(){return JSON.stringify({dirty:[...dirty],source:sourceDraft,passwordConfirmation});}
+    function previewSnapshot(){return JSON.stringify({dirty:[...dirty],source:sourceDraft,passwordConfirmation,proxyCredentials});}
     function openPreview(){
       prepared.snapshot??=previewSnapshot();
       const panel=$('preview-dialog');panel.hidden=false;panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true});
@@ -1196,10 +1271,10 @@
       try { if (action.submit) await action.submit(); else await startJob(action.kind, action.body, action.address); }
       catch (error) { notice(error.message, 'error'); }
     };
-    $('discard').onclick = () => { passwordConfirmation = ''; dirty.clear(); sessionReset = false; notice(''); render(); };
+    $('discard').onclick = () => { passwordConfirmation = ''; proxyCredentials = null; dirty.clear(); sessionReset = false; notice(''); render(); };
     $('reload').onclick = async () => {
       if ((dirty.size) && !confirm('刷新会放弃未保存的修改，继续吗？')) return;
-      passwordConfirmation = ''; dirty.clear(); sessionReset = false; notice(''); await load();
+      passwordConfirmation = ''; proxyCredentials = null; dirty.clear(); sessionReset = false; notice(''); await load();
     };
     function destroy() {
       stopped = true;

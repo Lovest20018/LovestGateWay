@@ -16,6 +16,7 @@ ppgw.exe
 FILES/etc/dropbear/
 sniffbox/target/
 /dist/
+/.venv/
 __pycache__/
 *.pyc
 /docs/validation/

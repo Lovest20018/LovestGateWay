@@ -28,13 +28,14 @@ export function poolWindow(history,pool,at){
 function duration(value){value=number(value);if(value===null)return '—';return (value>=86400?Math.floor(value/86400)+'天 ':'')+[Math.floor(value/3600)%24,Math.floor(value/60)%60,Math.floor(value)%60].map(v=>String(v).padStart(2,'0')).join(':');}
 function percent(value){return number(value)===null?'—':value.toFixed(1)+'%';}
 const make=(tag,content,className)=>{const node=document.createElement(tag);if(content!==undefined)node.textContent=content;if(className)node.className=className;return node;};
-function chart(label,series,format){
+function chart(label,series,format,gapMs=3000){
   const box=make('div',undefined,'overview-chart'),canvas=make('canvas'),tip=make('output',undefined,'overview-chart-tip');
   const scale=make('div',undefined,'overview-chart-scale'),ceiling=make('span'),zero=make('span',format(0));scale.append(ceiling,zero);
   const range=make('div',undefined,'overview-chart-range'),startLabel=make('span'),windowLabel=make('span'),endLabel=make('span');range.append(startLabel,windowLabel,endLabel);
   canvas.setAttribute('role','img');canvas.setAttribute('aria-label',label);box.append(canvas,scale,range,tip);tip.hidden=true;
   let values=[],maximum=1;
-  const time=value=>new Date(value).toLocaleTimeString('zh-CN',{hour12:false});
+  const time=value=>gapMs>3000?new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):new Date(value).toLocaleTimeString('zh-CN',{hour12:false});
+  const rangeLabel=seconds=>seconds<60?seconds+' 秒':seconds<3600?(seconds/60).toFixed(seconds%60?1:0)+' 分钟':(seconds/3600).toFixed(seconds%3600?1:0)+' 小时';
   const fraction=(value,index)=>values.length>1?(value.at-values[0].at)/(values.at(-1).at-values[0].at||1):index;
   const redraw=()=>{
     const bounds=box.getBoundingClientRect(),width=Math.max(1,bounds.width),height=box.clientHeight,scale=devicePixelRatio||1;
@@ -43,13 +44,13 @@ function chart(label,series,format){
     const left=64,right=8,top=10,bottom=26,plotWidth=Math.max(1,width-left-right),plotHeight=Math.max(1,height-top-bottom);
     for(let i=0;i<4;i++){const y=top+i*plotHeight/3;ctx.beginPath();ctx.moveTo(left,y);ctx.lineTo(width-right,y);ctx.stroke();}
     series.forEach(([key,,color])=>{ctx.strokeStyle=style.getPropertyValue(color)||color;ctx.lineWidth=1.8;ctx.beginPath();let begun=false;
-      values.forEach((value,index)=>{const v=number(value[key]);if(v===null){begun=false;return;}if(index&&value.at-values[index-1].at>3000)begun=false;const x=left+fraction(value,index)*plotWidth,y=top+plotHeight-Math.min(v/maximum,1)*plotHeight;if(begun)ctx.lineTo(x,y);else ctx.moveTo(x,y);begun=true;});ctx.stroke();});
+      values.forEach((value,index)=>{const v=number(value[key]);if(v===null){begun=false;return;}if(value.gaps>0||index&&value.at-values[index-1].at>gapMs)begun=false;const x=left+fraction(value,index)*plotWidth,y=top+plotHeight-Math.min(v/maximum,1)*plotHeight;if(begun)ctx.lineTo(x,y);else ctx.moveTo(x,y);begun=true;});ctx.stroke();});
   };
   const observer=new ResizeObserver(redraw);observer.observe(box);
   const themeObserver=new MutationObserver(redraw);themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
   canvas.addEventListener('pointermove',event=>{if(!values.length)return;const width=canvas.getBoundingClientRect().width,at=Math.max(0,Math.min(1,(event.offsetX-64)/Math.max(1,width-72))),sample=values.reduce((best,value,index)=>Math.abs(fraction(value,index)-at)<Math.abs(fraction(best,values.indexOf(best))-at)?value:best,values[0]);tip.textContent=time(sample.at)+' · '+series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');tip.hidden=false;});
   canvas.addEventListener('pointerleave',()=>{tip.hidden=true;});
-  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;ceiling.textContent=format(maximum);startLabel.textContent=values.length?time(values[0].at):'';endLabel.textContent=values.length>1?time(values.at(-1).at):'';windowLabel.textContent=values.length>1?'近 '+Math.max(1,Math.round((values.at(-1).at-values[0].at)/1000))+' 秒':'等待采样…';canvas.setAttribute('aria-label',label+'，'+windowLabel.textContent+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
+  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;ceiling.textContent=format(maximum);startLabel.textContent=values.length?time(values[0].at):'';endLabel.textContent=values.length>1?time(values.at(-1).at):'';windowLabel.textContent=values.length>1?'近 '+rangeLabel(Math.max(1,Math.round((values.at(-1).at-values[0].at)/1000))):'等待采样…';canvas.setAttribute('aria-label',label+'，'+windowLabel.textContent+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
 }
 
 export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInfo=()=>{}}={}){
@@ -76,6 +77,33 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   const fields=Object.fromEntries([...page.querySelectorAll('[data-field]')].map(node=>[node.dataset.field,node]));
   const put=(key,value)=>{fields[key].textContent=value??'—';};
   const trafficChart=chart('流量速率',[['total','总量','--brand'],['down','下载','--down'],['up','上传','--up']],value=>formatBytes(value,true));
+  const historySection=make('section',undefined,'glass overview-history');historySection.setAttribute('aria-label','运行历史');
+  const historyHeading=make('div',undefined,'overview-history-heading'),historyTitle=make('h2','运行历史'),historyControls=make('div',undefined,'overview-history-controls');
+  const historyMetric=make('select'),historyRange=make('select');historyMetric.setAttribute('aria-label','历史指标');historyRange.setAttribute('aria-label','历史时间范围');
+  for(const[value,label]of [['traffic','流量速率'],['cpu','CPU 占用'],['memory','内存使用'],['failure','观测连接失败率'],['latency','默认出口检测延迟']]){const option=make('option',label);option.value=value;historyMetric.append(option);}
+  for(const[value,label]of [['86400','近 24 小时'],['3600','近 1 小时']]){const option=make('option',label);option.value=value;historyRange.append(option);}
+  historyControls.append(historyMetric,historyRange);historyHeading.append(historyTitle,historyControls);
+  const historyStatus=make('p','正在读取历史采集状态…','overview-history-status'),historyStats=make('div',undefined,'overview-history-stats');historyStatus.setAttribute('role','status');
+  const historyChartHost=make('div'),historyNote=make('p','流量按已覆盖的计数器增量汇总；连接失败率仅统计观测到的 TCP 建连结果，不代表网站成功率。延迟来自默认出口最近的检测，未检测时显示缺口。','overview-history-note');
+  historySection.append(historyHeading,historyStatus,historyStats,historyChartHost,historyNote);page.querySelector('.overview-traffic').after(historySection);
+  let persistedHistory=null,persistedChart=null;
+  const historicMetrics={traffic:{series:[['download_rate','下载','--down'],['upload_rate','上传','--up']],format:value=>formatBytes(value,true)},
+    cpu:{series:[['cpu_percent','整机 CPU','--brand']],format:percent,max:100},memory:{series:[['memory_bytes','整机已用内存','--brand']],format:formatBytes},
+    failure:{series:[['failure_percent','观测连接失败率','--err']],format:percent,max:100},latency:{series:[['latency_ms','最近检测延迟','--brand']],format:value=>number(value)===null?'—':value.toFixed(1)+' ms'}};
+  function renderHistory(){
+    const value=persistedHistory,states={disabled:'历史采集未开启；可在“设置 → 维护与 API”开启。',waiting:'采集已开启，等待首批指标。',stale:'采集暂时中断，以下为已保存的数据。',running:'历史采集正在运行。'};
+    historyStatus.textContent=value?states[value.collector_state]||'历史状态暂不可用。':'历史状态暂不可用；请稍后刷新。';
+    if(value?.status==='unavailable')historyStatus.textContent='暂时无法读取历史数据库，请稍后刷新。';
+    if(number(value?.last_sample_at)!==null)historyStatus.textContent+=' 最近采样 '+new Date(value.last_sample_at*1000).toLocaleString('zh-CN')+'。';
+    const points=list(value?.points).filter(row=>number(row.at)!==null&&row.at*1000>=Date.now()-Number(historyRange.value)*1000).map(row=>({...row,at:row.at*1000}));
+    const sum=key=>points.reduce((total,row)=>total+(number(row[key])??0),0),covered=sum('coverage_seconds'),total=sum('connected')+sum('failed');
+    historyStats.replaceChildren(...[['已覆盖流量',formatBytes(sum('download_bytes')+sum('upload_bytes'))],['已覆盖时长',Math.round(covered/60)+' 分钟'],['观测连接结果',String(total)+' 次'],['连接记录容量',(value?.connection_rows??0)+' / '+(value?.capacity??100000)]].map(([label,text])=>{const node=make('div');node.append(make('small',label),make('strong',points.length||label==='连接记录容量'?text:'—'));return node;}));
+    const config=historicMetrics[historyMetric.value];persistedChart?.dispose();historyChartHost.replaceChildren();
+    if(!points.length){historyChartHost.append(make('p','当前时间范围没有指标；开启前和采集中断期间的数据不会补成零。','overview-history-empty'));persistedChart=null;return;}
+    persistedChart=chart('运行历史',config.series,config.format,450000);historyChartHost.append(persistedChart.node);persistedChart.update(points,config.max);
+    if(points.every(row=>config.series.every(([key])=>number(row[key])===null)))historyChartHost.prepend(make('p',historyMetric.value==='latency'?'暂无近期默认出口检测；采集不会主动发起测速。':'当前指标尚无有效采样。','overview-history-note'));
+  }
+  historyMetric.onchange=renderHistory;historyRange.onchange=renderHistory;
   const cpuSeries=[['cpu','整机','--brand'],['cpuSb','LovestGateWay','--down'],['cpuCore','出站核心','--up']],cpuChart=chart('CPU 占用',cpuSeries,percent);
   const memorySeries=[['memOther','系统组件','--brand'],['memSb','LovestGateWay','--down'],['memCore','出站核心','--up']],memoryChart=chart('内存占用',memorySeries,formatBytes);
   for(const [key,graphic]of [['traffic',trafficChart],['cpu',cpuChart],['memory',memoryChart]])page.querySelector('[data-chart="'+key+'"]').append(graphic.node);
@@ -151,7 +179,8 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   async function refresh(full=true){
     clearTimeout(timer);controller?.abort();const current=++sequence,active=new AbortController();controller=active;const timeout=setTimeout(()=>active.abort(),10000);button.disabled=true;paused=false;
     try{
-      const [value,geo]=await Promise.all([request(full?'/sniffbox/info':'/sniffbox/info/dynamic',active.signal),full?request('/sniffbox/geo',active.signal).catch(()=>null):null]);if(disposed||current!==sequence)return;
+      const [value,geo,saved]=await Promise.all([request(full?'/sniffbox/info':'/sniffbox/info/dynamic',active.signal),full?request('/sniffbox/geo',active.signal).catch(()=>null):null,full?request('/sniffbox/settings/status',active.signal).catch(error=>{if(error.unauthorized)throw error;return null;}):null]);if(disposed||current!==sequence)return;
+      if(full){persistedHistory=saved?.history||null;renderHistory();}
       if(full){const version=geo?.version||list(geo?.files).find(file=>typeof file?.version==='string')?.version;put('geo',version?'GEO '+String(version).slice(0,10):'');}
       if(full){lastFull=performance.now();onInfo(value);}else{
         const boot=value.integration?.data?.boot_id??value.integration?.boot_id;
@@ -165,5 +194,5 @@ export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInf
   const visibility=()=>{if(document.hidden){clearTimeout(timer);controller?.abort();sequence++;button.disabled=false;}else if(!disposed&&!paused)refresh();};document.addEventListener('visibilitychange',visibility);
   if(initialInfo)accept(initialInfo,false);else render();
   if(!document.hidden)refresh();const clockTimer=setInterval(clock,1000);
-  return {refresh,dispose(){if(!paused&&authIdentity===sessionContext())overviewCache={auth:authIdentity,identity:[currentBoot(),data.version,data.mode,data.clash_version,data.integration?.core?.start_time].join('|'),at:Date.now(),history:history.slice(-40),poolHistory:poolHistory.slice(-40),previous,cloudflaredSeen};else overviewCache=null;disposed=true;sequence++;clearTimeout(timer);clearInterval(clockTimer);controller?.abort();document.removeEventListener('visibilitychange',visibility);trafficChart.dispose();cpuChart.dispose();memoryChart.dispose();host.replaceChildren();}};
+  return {refresh,dispose(){if(!paused&&authIdentity===sessionContext())overviewCache={auth:authIdentity,identity:[currentBoot(),data.version,data.mode,data.clash_version,data.integration?.core?.start_time].join('|'),at:Date.now(),history:history.slice(-40),poolHistory:poolHistory.slice(-40),previous,cloudflaredSeen};else overviewCache=null;disposed=true;sequence++;clearTimeout(timer);clearInterval(clockTimer);controller?.abort();document.removeEventListener('visibilitychange',visibility);trafficChart.dispose();cpuChart.dispose();memoryChart.dispose();persistedChart?.dispose();host.replaceChildren();}};
 }
