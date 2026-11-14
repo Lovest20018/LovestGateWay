@@ -31,6 +31,7 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
         if(!sessions.authorized(request))return reply({error:'LOGIN_REQUIRED'},401);
         if(!['GET','HEAD'].includes(method)&&denyMutation)return reply({error:'LOGIN_REQUIRED'},401);
         if(target==='/sniffbox/info'||target==='/sniffbox/info/dynamic')return reply({mode:infoMode,version:'fixture',clash_version:'v1.19.33',clash_meta:true,timestamp:1793890000,memory:{total:1024**3,available:512*1024**2},traffic:{downloadTotal:1024,uploadTotal:512}});
+        if(target==='/sniffbox/settings/status')return reply({history:{status:'no_records',collector_state:'disabled',enabled:false,points:[],connection_rows:0,capacity:100000}});
         if(target==='/rules'){
           if(holdRead)await new Promise(resolve=>heldReads.push(resolve));
           return reply(malformedRules?{rules:null}:{rules:data.rules},ruleReadStatus);

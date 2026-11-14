@@ -39,6 +39,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
       if(!target.startsWith('/ui')){
         if(!sessions.authorized(request))return reply({error:'LOGIN_REQUIRED'},401);
         if(target==='/sniffbox/info'||target==='/sniffbox/info/dynamic')return reply({mode:infoMode,version:'fixture',clash_version:'v1.19.33',clash_meta:true,timestamp:1793890000,traffic:{downloadTotal:1024,uploadTotal:512},connections:{active:0},memory:{total:1024**3,available:512*1024**2}});
+        if(target==='/sniffbox/settings/status')return reply({history:{status:'no_records',collector_state:'disabled',enabled:false,points:[],connection_rows:0,capacity:100000}});
         if(target==='/sniffbox/geo')return reply({files:[]});
         if(target==='/sniffbox/proxies'){
           if(holdRead)await new Promise(resolve=>{releaseRead=resolve;heldReads.push(resolve);});
