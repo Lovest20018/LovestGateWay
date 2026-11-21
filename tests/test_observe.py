@@ -131,6 +131,36 @@ class ObserveTests(unittest.TestCase):
         self.assertEqual(emit.call_count, 2)
         self.assertNotIn('private', str(emit.call_args_list))
 
+    def test_step_recovery_distinguishes_brief_startup_from_a_persistent_failure(self):
+        clock, emit, recover = Mock(return_value=0), Mock(), Mock()
+        report = observe.ErrorReporter(clock, emit, recover)
+        unavailable = ApiError(503, 'CORE_UNAVAILABLE')
+        report('sample', unavailable)
+        clock.return_value = 12
+        report.recovered('sample')
+        emit.assert_not_called()
+        self.assertEqual(recover.call_args.args[1:], ('sample', 'CORE_UNAVAILABLE', 12))
+        report('sample', unavailable)
+        clock.return_value = 32
+        report('sample', unavailable)
+        self.assertEqual(emit.call_args.args[1:], ('sample', 'CORE_UNAVAILABLE', 20))
+        clock.return_value = 36
+        report('sample', unavailable)
+        emit.assert_called_once()
+        report.recovered('sample')
+        self.assertEqual(recover.call_args.args[1:], ('sample', 'CORE_UNAVAILABLE', 24))
+
+    def test_collector_projects_the_internal_traffic_generation(self):
+        class TrafficCore(Core):
+            def request(self, path, body=None):
+                result = super().request(path, body)
+                if path == '/sniffbox/info':
+                    result['traffic'] = {'downloadTotal': 24, 'uploadTotal': 8, 'resetGeneration': 2}
+                return result
+        writer = Mock()
+        observe.collect_once(TrafficCore('free'), writer, 30, Mock())
+        self.assertEqual(writer.store.call_args.kwargs['metrics']['reset_generation'], 2)
+
     def test_failed_identity_sample_sleeps_instead_of_spinning(self):
         class StopLoop(Exception): pass
         core, writer = Core(), Mock()

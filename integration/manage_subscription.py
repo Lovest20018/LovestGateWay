@@ -1,5 +1,6 @@
 """Fetch PPsub nodes in isolation, then publish and verify them with rollback."""
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -11,6 +12,8 @@ from manage_backup import BackupStore
 
 JOURNAL = 'var/lib/paopaogw/admin/transaction.json'
 from manage_model import load_settings
+
+log = logging.getLogger('paopaogw.subscription')
 
 
 def canonical_yaml(text):
@@ -33,20 +36,32 @@ def canonical_yaml(text):
     return canonical(documents[0], set())
 
 
-def candidate_matches_runtime(system, pid, candidate, *, runtime=None):
-    """Only skip a restart when the complete validated candidate equals live YAML."""
+def compare_runtime_candidate(system, pid, candidate, *, runtime=None):
+    """Compare the complete effective configs while the running source stays stable."""
     try:
         current = system.command('systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip()
-        if current != pid: return False
+        if current != pid: return 'runtime_changed_during_comparison'
         running = runtime if runtime is not None else Path('/proc') / pid / 'root/tmp/clash.yaml'
-        if not 0 < running.stat().st_size <= 2 * 1024 * 1024: return False
+        if not 0 < running.stat().st_size <= 2 * 1024 * 1024: return 'runtime_uncomparable'
         original = running.read_bytes()
         same = canonical_yaml(original.decode()) == canonical_yaml(candidate.read_text(encoding='utf-8'))
-        # An external reload or restart during comparison must remain conservative.
-        return same and running.read_bytes() == original and system.command(
-            'systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip() == pid
+        if running.read_bytes() != original or system.command(
+                'systemctl', 'show', 'paopaogw', '--property=MainPID', '--value').stdout.strip() != pid:
+            return 'runtime_changed_during_comparison'
+        return 'running_config_equivalent' if same else 'effective_config_changed'
     except Exception:
-        return False
+        return 'runtime_uncomparable'
+
+
+def render_effective_candidate(layout, ini, target):
+    import yaml
+    from clash_policy import read_effective_policy
+    from clash_ppsub import source_identity
+
+    path = layout.path('etc/paopaogw/files/clash-policy.json')
+    policy = json.loads(path.read_bytes()) if path.is_file() else None
+    _, effective = read_effective_policy(target, policy, source_identity(ini))
+    target.write_text(yaml.safe_dump(effective, allow_unicode=True, sort_keys=False), encoding='utf-8')
 
 
 def payload_content(raw):
@@ -82,10 +97,10 @@ def payload_content(raw):
     return text
 
 
-def refresh_nodes(layout, system, names=None, progress=None):
+def refresh_nodes(layout, system, names=None, progress=None, *, trigger='manual'):
     with operation_lock(layout):
         require_idle(layout)
-        return _refresh_nodes(layout, system, names, progress)
+        return _refresh_nodes(layout, system, names, progress, trigger)
 
 
 def rollback_subscription(layout, system, journal):
@@ -109,10 +124,11 @@ def rollback_subscription(layout, system, journal):
     write_json(layout, JOURNAL, journal)
 
 
-def _refresh_nodes(layout, system, names=None, progress=None):
+def _refresh_nodes(layout, system, names, progress, trigger):
     from manage_subscription_schedule import providers, source_path, record_attempt, record_results, identity
     progress = progress or (lambda stage: None)
     settings = load_settings(layout)
+    ini = settings['ini']
     configured = providers(layout)
     selected = [row['name'] for row in configured] if names is None else names
     if (not isinstance(selected, list) or not selected or any(not isinstance(n, str) for n in selected)
@@ -141,11 +157,14 @@ def _refresh_nodes(layout, system, names=None, progress=None):
         merged = work / 'validated.yaml'
         env = dict(os.environ, PPGW_SUB_CACHE_DIR=str(stage), PPGW_SUB_CACHE_ONLY='0',
                    PPGW_SUB_REFRESH_NAMES=json.dumps(selected, ensure_ascii=False),
-                   ppgw_retry_dir=str(work / 'retry'), dns_burn='no')
+                   ppgw_retry_dir=str(work / 'retry'), dns_burn='yes' if ini['dns_burn'] else 'no',
+                   dns_ip=ini['dns_ip'], dns_port=str(ini['dns_port']), ex_dns=ini['ex_dns'])
         prefix = ['nsenter', '-t', pid, '-m', '--']
         code = layout.path('usr/local/lib/paopaogw/bin')
         record_attempt(layout, configured, selected)
         phase = 'fetching'
+        action, reason, outcome = 'none', 'refresh_failed', 'failed'
+        fresh_count = 0
         try:
             progress('fetching')
             # No controller script runs in another service's cgroup. The live
@@ -160,6 +179,7 @@ def _refresh_nodes(layout, system, names=None, progress=None):
             subprocess.run(prefix + [str(code / 'sniffbox'), 'ppgw', '-input', str(output),
                 '-input', '/tmp/clash_base.yaml', '-output', str(merged)],
                 check=True, timeout=20, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            render_effective_candidate(layout, ini, merged)
             subprocess.run(prefix + [str(code / 'clash'), '-t', '-d', '/etc/config/clash', '-f', str(merged)],
                 check=True, timeout=45, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             status = json.loads((stage / 'status.json').read_bytes())
@@ -172,13 +192,17 @@ def _refresh_nodes(layout, system, names=None, progress=None):
                 if row['name'] not in selected and row.get('fetched_at') == old.get('fetched_at'):
                     row['update_failed'] = old.get('update_failed', False)
             status['subscriptions'] = rows
+            fresh_count = sum(row['name'] in selected and row.get('source') == 'fresh' for row in rows)
             if not rows or not any(row.get('nodes', 0) > 0 for row in rows):
+                reason = 'nodes_unavailable'
                 raise ManagementError('SUBSCRIPTION_NODES_UNAVAILABLE')
-            if not any(row['name'] in selected and row.get('source') == 'fresh' for row in rows):
+            if not fresh_count:
                 # Every download failed: no restart or cache replacement needed.
+                reason = 'fetch_failed_kept_cache'
                 atomic_write(layout, 'var/lib/paopaogw/subscriptions/status.json',
                              (json.dumps(status, ensure_ascii=False) + '\n').encode())
                 record_results(layout, configured, selected, rows)
+                outcome = 'retained'
                 return rows
             changed = False
             by_name = {row['name']: row for row in rows}
@@ -193,8 +217,8 @@ def _refresh_nodes(layout, system, names=None, progress=None):
                 old_row = old_rows.get(provider['name'], {})
                 row['node_delta'] = row.get('nodes', 0) - (old_row.get('nodes', 0) if filename in original else 0)
                 changed = changed or not same
-            if changed and candidate_matches_runtime(system, pid, merged):
-                changed = False
+            reason = compare_runtime_candidate(system, pid, merged) if changed else 'subscription_unchanged'
+            changed = reason not in {'subscription_unchanged', 'running_config_equivalent'}
             for row in rows:
                 row['core_action'] = 'restart' if changed else 'none'
             updates = {'var/lib/paopaogw/subscriptions/' + target.name: target.read_bytes()
@@ -218,14 +242,18 @@ def _refresh_nodes(layout, system, names=None, progress=None):
             # the snapshot without a checksum conflict against startup metadata.
             write_json(layout, JOURNAL, journal)
             published = True
+            phase = 'saving'
             progress('saving')
             for path, raw in updates.items():
                 if path != status_path: atomic_write(layout, path, raw)
             journal['phase'] = 'applying'
             write_json(layout, JOURNAL, journal)
             if changed:
+                phase = 'applying'
                 progress('applying')
+                action = 'restart'
                 system.command('systemctl', 'restart', 'paopaogw')
+                phase = 'verifying'
                 progress('verifying')
                 running = system.wait(settings)
                 if isinstance(running, dict):
@@ -238,6 +266,7 @@ def _refresh_nodes(layout, system, names=None, progress=None):
             record_results(layout, configured, selected, rows)
             journal['phase'] = 'complete'
             write_json(layout, JOURNAL, journal)
+            outcome = 'applied' if changed else 'cached'
             return rows
         except Exception:
             if published:
@@ -245,6 +274,7 @@ def _refresh_nodes(layout, system, names=None, progress=None):
                 try:
                     rollback_subscription(layout, system, journal)
                 except Exception:
+                    outcome = 'rollback_unconfirmed'
                     # Restored cache bytes do not prove that forwarding recovered.
                     # Keep this distinction even if writing provider status fails.
                     try:
@@ -252,5 +282,10 @@ def _refresh_nodes(layout, system, names=None, progress=None):
                     except Exception:
                         pass
                     raise ManagementError('SUBSCRIPTION_ROLLBACK_UNCONFIRMED') from None
+                outcome = 'rolled_back'
             record_results(layout, configured, selected, [], error='APPLY_FAILED_ROLLED_BACK' if published else 'FETCH_FAILED' if phase == 'fetching' else 'VALIDATION_FAILED')
             raise
+        finally:
+            level = logging.INFO if outcome in {'applied', 'cached'} else logging.WARNING
+            log.log(level, 'PPsub refresh trigger=%s phase=%s action=%s reason=%s outcome=%s requested=%d fresh=%d',
+                    trigger, phase, action, reason, outcome, len(selected), fresh_count)

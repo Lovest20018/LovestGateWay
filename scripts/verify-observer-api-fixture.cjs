@@ -38,6 +38,7 @@ const fixture = JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-
             if (target.startsWith('/sniffbox/settings/')) {
               assert.equal(sessions.authorized(request),true);
               if (target.endsWith('/config')) data = model;
+              else if (target.endsWith('/gateway-update')) data = {installed:{version:'0.2.6'},candidate:null,available:false,operation:null};
               else if (target.endsWith('/observer-token')) {
                 assert.equal(request.method(),'POST'); assert.deepEqual(request.postDataJSON(),{});
                 reveals++; data = {token};
@@ -80,6 +81,9 @@ const fixture = JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-
         await page.goto(origin + '/ui/#/settings'); await maintenance();
         assert.equal(await toggle().isChecked(),false);
         await page.getByText('API 已关闭：不监听端口',{exact:true}).waitFor();
+        const address = page.locator('.observer-api-address');
+        assert.equal(await address.locator('code').textContent(),'http://127.0.0.1:8788');
+        assert.match(await address.innerText(),/当前地址仅限本机/);
         assert.equal(reveals,0);
         await page.getByRole('button',{name:'查看当前 Token',exact:true}).click();
         await page.waitForFunction(expected => document.querySelector('#observer-api-current-token')?.value === expected,token);
@@ -89,9 +93,18 @@ const fixture = JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-
         await page.getByRole('button',{name:'生成新 Token',exact:true}).click();
         const replacement = await page.getByLabel('更换 API Token',{exact:true}).inputValue();
         assert.match(replacement,/^[0-9a-f]{64}$/);
-        await page.getByLabel('API 监听地址',{exact:true}).fill('192.0.2.10');
-        await page.getByLabel('API 监听地址',{exact:true}).press('Tab');
+        const listen = page.getByLabel('API 监听地址',{exact:true});
+        const port = page.getByLabel('API 端口',{exact:true});
+        await listen.fill('0.0.0.0'); await listen.press('Tab');
+        await port.fill('18788'); await port.press('Tab');
+        assert.equal(await address.locator('code').textContent(),'http://网关局域网IP:18788');
+        assert.match(await address.innerText(),/网关的实际局域网 IP/);
+        await port.fill('8788'); await port.press('Tab');
+        await listen.fill('192.0.2.10'); await listen.press('Tab');
         await toggle().check(); await page.getByLabel('API 历史采集',{exact:true}).check();
+        await address.getByText('API 服务根地址',{exact:true}).waitFor();
+        assert.equal(await address.locator('code').textContent(),'http://192.0.2.10:8788');
+        assert.match(await address.innerText(),/自动补全版本路径的客户端.*\/api\/v1\/instance/);
         await save(); await saved();
         assert.deepEqual(changes.at(-1),{api:{read_token:replacement,listen:'192.0.2.10',enabled:true},maintenance:{history_enabled:true}});
         assert.equal(await toggle().isChecked(),true);

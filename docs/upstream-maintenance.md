@@ -9,10 +9,10 @@ LovestGateWay 保持为 [kkkgo/PaoPaoGateWay](https://github.com/kkkgo/PaoPaoGat
 | 字段 | 含义 | 当前记录 |
 | --- | --- | --- |
 | `merged_base` | 确实进入本项目 Git 祖先链的上游基线 | `4a5757e93a46669a54c9e5864d7b4a8d5484da76` |
-| `reviewed_head` | 已完成逐项判断的上游提交，不表示全部采用 | `f45e3d9f523c3a09c2093cc95e31b5f42c8458dc` |
-| `reviewed_release` | 已审查的上游稳定发布 | `20261030-f45e3d9` |
+| `reviewed_head` | 已完成逐项判断的上游提交 | `8a165c2b1dcbb3f21426791e155ec88e4c5e9a84` |
+| `reviewed_release` | 已审查的上游稳定发布 | `20261120-8a165c2` |
 
-`f45e3d9` 的规则格式自动识别后端已移植；本项目继续维护自己的面板源码，不采用该提交的面板 bundle 和离线编辑器；`Cargo.lock` 调整暂缓，需单独检查依赖兼容和安全影响。详情保存在台账 `decisions`，暂缓事项不会因为上游检查显示“无新版本”而消失。
+`f45e3d9` 的规则格式自动识别后端已移植。`8a165c2` 的活跃连接保留与流量清零修复随 LovestGateWay v0.2.7 交付。日志补读、ETag、连接快照序列化和依赖更新留待单独评审。完整取舍记录在台账的 `decisions` 中。
 
 ## 自动发现
 
@@ -35,7 +35,7 @@ LovestGateWay 保持为 [kkkgo/PaoPaoGateWay](https://github.com/kkkgo/PaoPaoGat
 
 ```sh
 git fetch --no-tags upstream main
-python3 scripts/check-upstream.py --release-tag 20261030-f45e3d9 \
+python3 scripts/check-upstream.py --release-tag 20261120-8a165c2 \
   --output dist/upstream-report.md --json-output dist/upstream-status.json
 ```
 

@@ -107,8 +107,10 @@ class HistoryWriter:
         elapsed = now - previous.get('at', now)
         uptime = number(sample.get('outbound_uptime'))
         previous_uptime = number(previous.get('outbound_uptime'))
+        reset_generation = sample.get('reset_generation')
         same_outbound = uptime is None or previous_uptime is None or uptime >= previous_uptime
-        valid = (previous.get('boot') == boot and 0 < elapsed <= 10 and down is not None and up is not None
+        valid = (previous.get('boot') == boot and previous.get('reset_generation') == reset_generation
+                 and 0 < elapsed <= 10 and down is not None and up is not None
                  and previous.get('down') is not None and previous.get('up') is not None
                  and down >= previous['down'] and up >= previous['up'] and same_outbound)
         cpu, memory, active, latency = [number(sample.get(key)) for key in ('cpu', 'memory', 'active', 'latency_ms')]
@@ -122,7 +124,9 @@ class HistoryWriter:
                    'cpu=cpu+excluded.cpu,cpu_n=cpu_n+excluded.cpu_n,memory=memory+excluded.memory,memory_n=memory_n+excluded.memory_n,'
                    'active=active+excluded.active,active_n=active_n+excluded.active_n,latency=latency+excluded.latency,'
                    'latency_n=latency_n+excluded.latency_n,connected=connected+excluded.connected,failed=failed+excluded.failed,gaps=gaps+excluded.gaps', data)
-        db.execute("INSERT OR REPLACE INTO collector_state VALUES ('sample',?)", (json.dumps({'boot': boot, 'at': now, 'down': down, 'up': up, 'outbound_uptime': uptime}),))
+        db.execute("INSERT OR REPLACE INTO collector_state VALUES ('sample',?)", (json.dumps({
+            'boot': boot, 'at': now, 'down': down, 'up': up, 'outbound_uptime': uptime,
+            'reset_generation': reset_generation}),))
         if sample.get('latency_checked'): self._latency_minute = int(now // 60)
 
 

@@ -14,6 +14,10 @@ test('traffic rates require two valid monotonic samples and reset on core or cou
   assert.equal(trafficSample(next,{downloadTotal:2,uploadTotal:1},3000,'first').downRate,null);
   assert.equal(trafficSample(next,{downloadTotal:4096,uploadTotal:900},3000,'second').downRate,null);
   assert.equal(trafficSample(next,{downloadTotal:1},3000,'first'),null);
+  const beforeClear=trafficSample(null,{downloadTotal:2048,uploadTotal:768,resetGeneration:0},2000,'first');
+  const afterClear=trafficSample(beforeClear,{downloadTotal:4096,uploadTotal:900,resetGeneration:1},3000,'first');
+  assert.equal(afterClear.downRate,null);
+  assert.equal(trafficSample(afterClear,{downloadTotal:4196,uploadTotal:950,resetGeneration:1},4000,'first').downRate,100);
   for(const bad of [null,undefined,-1,Infinity,NaN,'1'])assert.equal(formatBytes(bad),'—');
   assert.equal(formatBytes(0,true),'0.0 B/s');assert.equal(formatBytes(1024),'1.0 KB');
 });

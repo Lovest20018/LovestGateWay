@@ -117,6 +117,7 @@ class ProviderScheduleTests(unittest.TestCase):
              patch.object(manager, 'refresh_nodes_worker') as worker:
             manager.scheduled_tick()
             self.assertEqual(worker.call_args.args[0]['providers'], ['ProviderB', 'ProviderC'])
+            self.assertEqual(worker.call_args.kwargs['trigger'], 'scheduled')
             manager.scheduled_tick()
             self.assertEqual(worker.call_count, 1)
             manager.operation = None

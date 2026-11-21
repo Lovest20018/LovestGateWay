@@ -8,6 +8,19 @@ import history_store as history
 
 
 class HistoryTests(unittest.TestCase):
+    def test_reset_generation_breaks_the_delta_even_if_new_totals_are_higher(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'metrics.sqlite3'
+            with history.HistoryWriter(path) as writer:
+                writer.store('boot', [], now=600, metrics={'download': 100, 'upload': 1})
+                writer.store('boot', [], now=601, metrics={'download': 150, 'upload': 2, 'reset_generation': 0})
+                writer.store('boot', [], now=602, metrics={'download': 1000, 'upload': 50, 'reset_generation': 1})
+            with history.HistoryWriter(path) as writer:
+                writer.store('boot', [], now=603, metrics={'download': 1100, 'upload': 55, 'reset_generation': 1})
+            result = history.metrics_summary(path, now=603)
+            self.assertEqual((result['download_bytes'], result['upload_bytes'], result['coverage_seconds']), (100, 5, 1))
+            self.assertEqual(result['points'][0]['gaps'], 2)
+
     def test_outbound_restart_and_large_counters_do_not_create_false_traffic(self):
         with tempfile.TemporaryDirectory() as temporary:
             path=Path(temporary)/'metrics.sqlite3';base=2**60

@@ -12,8 +12,9 @@ export const modeLabel=data=>data?.ppsub?'原生 PPsub':({free:'直连',socks5:'
 export function trafficSample(previous,traffic,at,boot=''){
   const down=number(traffic?.downloadTotal),up=number(traffic?.uploadTotal);
   if(down===null||up===null)return null;
-  const sample={down,up,at,boot,downRate:null,upRate:null};
-  if(previous&&previous.boot===boot&&at>previous.at&&down>=previous.down&&up>=previous.up){
+  const resetGeneration=number(traffic.resetGeneration);
+  const sample={down,up,at,boot,resetGeneration,downRate:null,upRate:null};
+  if(previous&&previous.boot===boot&&previous.resetGeneration===resetGeneration&&at>previous.at&&down>=previous.down&&up>=previous.up){
     const seconds=Math.max(.2,(at-previous.at)/1000);
     sample.downRate=(down-previous.down)/seconds;sample.upRate=(up-previous.up)/seconds;
   }

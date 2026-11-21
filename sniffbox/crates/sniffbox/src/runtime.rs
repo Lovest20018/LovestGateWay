@@ -13,7 +13,7 @@ use sb_stats::{
 };
 use sb_web::{AdminAcl, AdminHandle, TokenHandle, admin_handle, derive_secret, token_handle};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -82,6 +82,9 @@ pub struct SharedState {
     pub traffic: Arc<TrafficCache>,
 
     pub agg: Arc<AggTable>,
+
+    // Serializes accounting and resets. Packet forwarding increments record counters atomically.
+    traffic_generation: Mutex<u64>,
 
     pub pplog: Option<crate::pplog::PplogHandle>,
 
@@ -183,6 +186,7 @@ impl SharedState {
             conn_table: ConnTable::new(),
             traffic: Arc::new(TrafficCache::new()),
             agg: Arc::new(AggTable::new(agg_window(cfg))),
+            traffic_generation: Mutex::new(0),
             pplog: None,
             peek_pool: Arc::new(PeekBufPool::with_defaults()),
             sniff_neg: Arc::new(SniffNegCache::default()),
@@ -210,11 +214,65 @@ impl SharedState {
         }
     }
 
-    pub fn account_delta(&self, rec: &ConnRecord, down: u64, up: u64) {
+    pub(crate) fn lock_traffic(&self) -> MutexGuard<'_, u64> {
+        self.traffic_generation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn settle_traffic(&self, rec: &ConnRecord) -> bool {
+        let (up, down) = rec.drain_delta();
+        if up == 0 && down == 0 {
+            return false;
+        }
         self.traffic.add_totals(down, up);
         if rec.inbound == InboundKind::Cloudflared {
             self.cf_traffic.add(down, up);
         }
+        true
+    }
+
+    pub(crate) fn finish_connection(&self, rec: &ConnRecord) {
+        let _traffic = self.lock_traffic();
+        self.settle_traffic(rec);
+        self.conn_table.close(rec.id);
+    }
+
+    pub(crate) fn flush_traffic(&self) {
+        let _traffic = self.lock_traffic();
+        for rec in self.conn_table.snapshot_and_reap() {
+            if self.settle_traffic(&rec) {
+                self.conn_table.touch(rec.id);
+                if let Some(p) = &self.pplog
+                    && rec.closed_ms.load(Ordering::Relaxed) == 0
+                {
+                    p.emit(crate::pplog::Event::Update {
+                        id: rec.id.0,
+                        up: rec.upload.load(Ordering::Relaxed),
+                        down: rec.download.load(Ordering::Relaxed),
+                    });
+                }
+            }
+            if self.stats_enabled() {
+                let (up, down) = rec.fold_delta();
+                self.agg.fold(&rec, up, down);
+            }
+        }
+    }
+
+    pub(crate) fn clear_traffic_stats(&self, monthly: bool) {
+        let mut generation = self.lock_traffic();
+        self.conn_table.remove_closed();
+        for rec in self.conn_table.snapshot() {
+            rec.rebase_cursors();
+        }
+        self.traffic.clear();
+        self.agg.clear();
+        if monthly {
+            self.node_dist.clear();
+            self.cf_traffic.clear();
+        }
+        *generation = generation.wrapping_add(1);
     }
 
     pub fn splice_copy(&self) -> bool {
@@ -368,12 +426,11 @@ impl sb_web::TrafficSource for WebTraffic {
         self.shared.agg.snapshot_json()
     }
     fn totals(&self) -> (u64, u64) {
+        let _traffic = self.shared.lock_traffic();
         self.shared.traffic.totals()
     }
     fn clear(&self) {
-        self.shared.conn_table.clear();
-        self.shared.traffic.clear();
-        self.shared.agg.clear();
+        self.shared.clear_traffic_stats(false);
     }
 }
 
@@ -920,8 +977,7 @@ impl WebInfo {
             .then(|| freqs_mhz.iter().map(|&m| m as u64).sum::<u64>() / freqs_mhz.len() as u64);
         let temp = sysinfo::cpu_temp();
 
-        let all = self.shared.conn_table.snapshot();
-        let (down_total, up_total) = live_totals(&self.shared, &all);
+        let (all, (down_total, up_total), generation) = traffic_snapshot(&self.shared);
         let conns = self.conn_stats(&all);
         let mapped = self.shared.fakeip.as_ref().map(|p| p.len());
 
@@ -974,6 +1030,7 @@ impl WebInfo {
             "traffic": {
                 "downloadTotal": down_total,
                 "uploadTotal": up_total,
+                "resetGeneration": generation,
             },
             "fakeip": { "mapped": mapped },
             "connections": conns,
@@ -1069,9 +1126,15 @@ fn live_totals(shared: &SharedState, all: &[Arc<ConnRecord>]) -> (u64, u64) {
     (down, up)
 }
 
-fn connections_snapshot(shared: &SharedState) -> String {
+fn traffic_snapshot(shared: &SharedState) -> (Vec<Arc<ConnRecord>>, (u64, u64), u64) {
+    let generation = shared.lock_traffic();
     let all = shared.conn_table.snapshot();
-    let (down, up) = live_totals(shared, &all);
+    let totals = live_totals(shared, &all);
+    (all, totals, *generation)
+}
+
+fn connections_snapshot(shared: &SharedState) -> String {
+    let (all, (down, up), _) = traffic_snapshot(shared);
     let conns: Vec<serde_json::Value> = all
         .iter()
         .filter(|r| r.closed_ms.load(Ordering::Relaxed) == 0)
@@ -1302,8 +1365,7 @@ mod tests {
         rec.download.store(200_000_000, Ordering::Relaxed);
         assert_eq!(dyn_totals().0, 200_000_000);
 
-        let (u, d) = rec.drain_delta();
-        shared.traffic.add_totals(d, u);
+        shared.flush_traffic();
         assert_eq!(shared.traffic.totals(), (200_000_000, 2_000_000));
         assert_eq!(
             dyn_totals(),
@@ -1335,8 +1397,7 @@ mod tests {
         tunnel.upload.store(300, Ordering::Relaxed);
         user.download.store(50_000, Ordering::Relaxed);
         for rec in [&tunnel, &user] {
-            let (u, d) = rec.drain_delta();
-            shared.account_delta(rec, d, u);
+            shared.finish_connection(rec);
         }
         assert_eq!(
             shared.cf_traffic.totals(),
@@ -1349,8 +1410,7 @@ mod tests {
         drop(tunnel);
         let again = mk(InboundKind::Cloudflared, 3333);
         again.download.store(1, Ordering::Relaxed);
-        let (u, d) = again.drain_delta();
-        shared.account_delta(&again, d, u);
+        shared.finish_connection(&again);
         assert_eq!(shared.cf_traffic.totals(), (701, 300));
 
         shared.cf_traffic.clear();

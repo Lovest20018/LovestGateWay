@@ -22,6 +22,8 @@ def run(command, **kwargs):
             (stage / (identity(row) + '.json')).write_text(json.dumps({'raw_yaml': 'new ' + row['name']}))
         (stage / 'status.json').write_text(json.dumps({'subscriptions': [
             {'name': row['name'], 'source': 'fresh', 'nodes': 1} for row in rows]}))
+    elif '-input' in command:
+        Path(command[command.index('-output') + 1]).write_text('proxies: []\n')
     return SimpleNamespace(returncode=0)
 
 def publish(layout, path, raw, *args, **kwargs):

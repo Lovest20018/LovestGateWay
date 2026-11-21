@@ -38,18 +38,10 @@ pub async fn run_housekeeping(shared: Arc<SharedState>, mut shutdown: watch::Rec
 fn flush_once(shared: &SharedState, clean_state: &mut CleanState) {
     let max_rec = shared.max_rec();
     let net_cleanday = shared.net_cleanday();
-    drain_local(shared);
-
-    let _ = shared
-        .conn_table
-        .sweep_recency(0, Duration::from_secs(86_400));
+    shared.flush_traffic();
 
     maybe_clean(net_cleanday, clean_state, || {
-        shared.conn_table.clear();
-        shared.traffic.clear();
-        shared.agg.clear();
-        shared.node_dist.clear();
-        shared.cf_traffic.clear();
+        shared.clear_traffic_stats(true);
     });
 
     shared.sniff_neg.gc();
@@ -70,41 +62,12 @@ fn flush_once(shared: &SharedState, clean_state: &mut CleanState) {
     }
 }
 
-fn drain_local(shared: &SharedState) {
-    for rec in shared.conn_table.snapshot() {
-
-        let (du, dd) = rec.drain_delta();
-        if du != 0 || dd != 0 {
-
-            shared.conn_table.touch(rec.id);
-
-            shared.account_delta(&rec, dd, du);
-
-            if let Some(p) = &shared.pplog
-                && rec.closed_ms.load(Ordering::Relaxed) == 0
-            {
-                p.emit(crate::pplog::Event::Update {
-                    id: rec.id.0,
-                    up: rec.upload.load(Ordering::Relaxed),
-                    down: rec.download.load(Ordering::Relaxed),
-                });
-            }
-        }
-
-        if shared.stats_enabled() {
-            let (fu, fd) = rec.fold_delta();
-            if fu != 0 || fd != 0 {
-                shared.agg.fold(&rec, fu, fd);
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Config, StatsCfg};
     use sb_stats::types::{ConnRecord, SniffedProto};
+    use sb_web::{ConnectionsSource, TrafficSource};
 
     fn shared_net_rec_off() -> Arc<SharedState> {
         Arc::new(SharedState::new(&Config::default()))
@@ -211,10 +174,10 @@ mod tests {
         shared.conn_table.insert(Arc::clone(&r));
         r.upload.store(500, Ordering::Relaxed);
         r.download.store(1000, Ordering::Relaxed);
-        drain_local(&shared);
+        shared.flush_traffic();
         assert_eq!(shared.traffic.totals(), (1000, 500));
 
-        drain_local(&shared);
+        shared.flush_traffic();
         assert_eq!(shared.traffic.totals(), (1000, 500));
     }
 
@@ -232,11 +195,77 @@ mod tests {
         r.add_up(900);
         r.add_down(1_073_741_824);
 
-        let (du, dd) = r.drain_delta();
-        shared.traffic.add_totals(dd, du);
-        shared.conn_table.close(r.id);
+        shared.finish_connection(&r);
 
-        drain_local(&shared);
+        shared.flush_traffic();
         assert_eq!(shared.traffic.totals(), (1_073_741_824, 900));
+    }
+
+    #[test]
+    fn clearing_keeps_live_connections_and_counts_only_new_bytes() {
+        for monthly in [false, true] {
+            let shared = shared_net_rec_on();
+            let traffic = crate::runtime::WebTraffic {
+                shared: Arc::clone(&shared),
+            };
+            let connections = crate::runtime::WebConnections {
+                shared: Arc::clone(&shared),
+            };
+            let live = rec_with_bytes(1, 100, 200);
+            let closed = rec_with_bytes(2, 10, 20);
+            shared.conn_table.insert(Arc::clone(&live));
+            shared.flush_traffic();
+            shared.conn_table.insert(Arc::clone(&closed));
+            shared.finish_connection(&closed);
+            live.add_down(400);
+
+            if monthly {
+                shared.clear_traffic_stats(true);
+            } else {
+                traffic.clear();
+            }
+
+            assert_eq!(traffic.totals(), (0, 0));
+            assert!(shared.conn_table.get(closed.id).is_none());
+            let view: serde_json::Value =
+                serde_json::from_str(&connections.connections_json()).unwrap();
+            assert_eq!(view["connections"][0]["id"], "1");
+            assert_eq!(view["connections"][0]["download"], 600);
+            assert_eq!(view["downloadTotal"], 0);
+            assert_eq!(*shared.lock_traffic(), 1);
+
+            live.add_down(7);
+            live.add_up(5);
+            shared.flush_traffic();
+            assert_eq!(traffic.totals(), (7, 5));
+            let rows: serde_json::Value = serde_json::from_str(&traffic.snapshot_json()).unwrap();
+            assert_eq!(rows[0]["down"], 7);
+            assert_eq!(rows[0]["up"], 5);
+            assert_eq!(rows[0]["conns"], 1);
+        }
+    }
+
+    #[test]
+    fn accounting_and_close_cannot_restore_pre_clear_traffic() {
+        let shared = shared_net_rec_on();
+        let rec = rec_with_bytes(1, 100, 200);
+        shared.conn_table.insert(Arc::clone(&rec));
+        let barrier = std::sync::Barrier::new(3);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                barrier.wait();
+                shared.finish_connection(&rec);
+            });
+            scope.spawn(|| {
+                barrier.wait();
+                shared.flush_traffic();
+            });
+            barrier.wait();
+            shared.clear_traffic_stats(false);
+        });
+        shared.flush_traffic();
+        assert_eq!(shared.traffic.totals(), (0, 0));
+        assert!(shared.conn_table.is_empty());
+        assert!(shared.agg.is_empty());
     }
 }

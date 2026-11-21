@@ -108,9 +108,7 @@ impl AggTable {
     pub fn rebuild(&self, max_rows: usize) {
         let mut rows = self.lock();
         prune_rows(&mut rows, self.window, max_rows);
-        let json = serialize(&rows);
-        drop(rows);
-        self.json.store(Arc::new(json));
+        self.json.store(Arc::new(serialize(&rows)));
     }
 
     pub fn prune(&self, max_rows: usize) {
@@ -123,7 +121,8 @@ impl AggTable {
     }
 
     pub fn clear(&self) {
-        self.lock().clear();
+        let mut rows = self.lock();
+        rows.clear();
         self.json.store(Arc::new("[]".to_string()));
     }
 

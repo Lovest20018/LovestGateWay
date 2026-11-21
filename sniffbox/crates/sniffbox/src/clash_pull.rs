@@ -82,9 +82,10 @@ async fn run(
                     Ok(json) => {
                         if nodes_enabled {
                             let conns = parse_connections(&json);
+                            let active = gate.check();
+                            let _traffic = shared.lock_traffic();
                             accumulate(&shared.node_dist, &mut last, &conns);
                             shared.node_dist.rebuild();
-                            let active = gate.check();
                             if !active.is_empty() {
                                 mirror_direct_inbounds(&shared, &mut mirror, &conns, &active);
                             } else if !mirror.is_empty() {

@@ -127,35 +127,24 @@ impl ConnTable {
         self.sweep_with_close_grace(stale_after, Duration::from_secs(5))
     }
 
-    pub fn sweep_recency(&self, max_closed: usize, active_stale_after: Duration) -> usize {
-        let now = self.now_ms();
-        let stale_h = active_stale_after.as_millis() as u64;
-        let mut closed: Vec<(ConnId, u64)> = Vec::new();
-        let mut stale_active: Vec<ConnId> = Vec::new();
-        for e in self.inner.iter() {
-            let r = e.value();
-            let last_seen = r.last_seen_ms.load(Ordering::Relaxed);
-            let closed_ms = r.closed_ms.load(Ordering::Relaxed);
-            if closed_ms != 0 {
-                closed.push((*e.key(), last_seen));
-            } else if now.saturating_sub(last_seen) > stale_h {
-                stale_active.push(*e.key());
+    /// Return retired records too so the caller can settle their final bytes.
+    pub fn snapshot_and_reap(&self) -> Vec<Arc<ConnRecord>> {
+        let mut records = Vec::new();
+        self.inner.retain(|_, rec| {
+            let orphan = Arc::strong_count(rec) == 1;
+            let closed = rec.closed_ms.load(Ordering::Relaxed) != 0;
+            if orphan && !closed {
+                rec.closed_ms.store(self.now_ms().max(1), Ordering::Relaxed);
             }
-        }
+            records.push(Arc::clone(rec));
+            !orphan && !closed
+        });
+        records
+    }
 
-        closed.sort_unstable_by_key(|c| std::cmp::Reverse(c.1));
-        let mut removed = 0;
-        if closed.len() > max_closed {
-            for (id, _) in &closed[max_closed..] {
-                self.inner.remove(id);
-                removed += 1;
-            }
-        }
-        for id in &stale_active {
-            self.inner.remove(id);
-            removed += 1;
-        }
-        removed
+    pub fn remove_closed(&self) {
+        self.inner
+            .retain(|_, rec| rec.closed_ms.load(Ordering::Relaxed) == 0);
     }
 
     pub fn sweep_with_close_grace(&self, stale_after: Duration, closed_grace: Duration) -> usize {
@@ -261,19 +250,21 @@ mod tests {
         assert!(t.get(ConnId(1)).is_some());
     }
 
-    #[tokio::test]
-    async fn sweep_recency_drops_closed_keeps_active() {
+    #[test]
+    fn snapshot_and_reap_keeps_owned_connections_and_returns_retired_records() {
         let t = ConnTable::new();
         t.insert(rec(1));
-        t.insert(rec(2));
+        let live = rec(2);
+        t.insert(Arc::clone(&live));
+        t.insert(rec(3));
         t.close(ConnId(1));
-        let removed = t.sweep_recency(0, Duration::from_secs(86_400));
-        assert_eq!(removed, 1);
-        assert!(
-            t.get(ConnId(1)).is_none(),
-            "closed record dropped (max_closed=0)"
-        );
-        assert!(t.get(ConnId(2)).is_some(), "active record kept");
+
+        let records = t.snapshot_and_reap();
+        assert_eq!(records.len(), 3);
+        assert_eq!(t.len(), 1);
+        assert!(t.get(live.id).is_some());
+        assert!(t.get(ConnId(1)).is_none());
+        assert!(t.get(ConnId(3)).is_none());
     }
 
     #[tokio::test]

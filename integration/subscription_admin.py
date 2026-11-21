@@ -14,6 +14,7 @@ import subprocess
 import threading
 import time
 from functools import wraps
+import logging
 from manage_common import Layout, ManagementError, require_idle, operation_lock as management_lock
 from urllib.parse import urlsplit
 from gateway_api import CoreClient, ApiError
@@ -302,8 +303,8 @@ class Admin:
             return dict(self.operation)
 
     @managed_worker
-    def refresh_nodes_worker(self, body):
-        from manage_model import settings_revision, load_settings
+    def refresh_nodes_worker(self, body, *, trigger='manual'):
+        from manage_model import settings_revision
         from manage_runtime import System
         try:
             layout = management_layout()
@@ -313,13 +314,20 @@ class Admin:
             from manage_subscription import refresh_nodes
             def progress(stage):
                 with self.lock: self.operation.update(stage=stage)
-            rows = refresh_nodes(layout, System(layout), body.get('providers'), progress=progress)
+            rows = refresh_nodes(layout, System(layout), body.get('providers'), progress=progress, trigger=trigger)
             selected = set(body.get('providers', [row['name'] for row in rows]))
             rows = [row for row in rows if row['name'] in selected]
             failed = [row['name'] for row in rows if row.get('update_failed') and row.get('nodes', 0) > 0]
             missing = [row['name'] for row in rows if not row.get('nodes')]
             unchanged = all(row.get('result') == 'unchanged' for row in rows)
-            message = ('更新完成；以下提供商获取失败，已保留原节点：' + '、'.join(failed)) if failed else ('订阅内容未变，无需重新加载。' if unchanged else '订阅节点已更新并加载；重启继续使用已保存节点。')
+            if failed:
+                message = '更新完成；以下提供商获取失败，已保留原节点：' + '、'.join(failed)
+            elif unchanged:
+                message = '订阅内容未变，无需重新加载。'
+            elif all(row.get('core_action') == 'none' for row in rows):
+                message = '订阅缓存已更新，运行配置相同，网关继续转发。'
+            else:
+                message = '订阅节点已更新并加载，重启后继续使用已保存节点。'
             if missing: message += '；以下提供商尚无可用节点：' + '、'.join(missing)
             with self.lock: self.operation.update(status='unchanged' if unchanged else 'applied', message=message, retained_subscriptions=failed,
                                                   outcome='retained' if failed else 'unchanged' if unchanged else 'updated')
@@ -349,7 +357,7 @@ class Admin:
                         'settings_revision': settings_revision(layout)}
                 self.operation = {'id': 'scheduled_' + str(time.time_ns()), 'kind': 'refresh_nodes',
                                   'status': 'applying', 'message': '正在按机场计划更新订阅节点…'}
-            self.refresh_nodes_worker(body)
+            self.refresh_nodes_worker(body, trigger='scheduled')
 
     def schedule_loop(self):
         while True:
@@ -719,6 +727,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     server = ThreadingHTTPServer(('127.0.0.1', 8789), Handler)
     server.admin = Admin()
     threading.Thread(target=server.admin.schedule_loop, daemon=True).start()

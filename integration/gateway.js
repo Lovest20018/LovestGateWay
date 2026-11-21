@@ -468,9 +468,11 @@
       const connection = el('div', {class:'observer-api-address', 'aria-live':'polite'});
       function showAddress() {
         const host = valueOf('api','listen'), port = valueOf('api','port');
-        connection.replaceChildren(el('strong', {text:valueOf('api','enabled') ? '启用后的 API 连接地址' : 'API 已关闭：不监听端口'}),
+        const scope = host.startsWith('127.') ? '当前地址仅限本机。' :
+          host === '0.0.0.0' ? '监听全部 IPv4 网卡，请使用网关的实际局域网 IP。' : '';
+        connection.replaceChildren(el('strong', {text:valueOf('api','enabled') ? 'API 服务根地址' : 'API 已关闭：不监听端口'}),
           el('code', {text:`http://${host === '0.0.0.0' ? '网关局域网IP' : host}:${port}`}),
-          el('small', {text:host.startsWith('127.') ? '仅限本机。其他设备连接时，请改为网关的局域网 IP。' : host === '0.0.0.0' ? '监听全部 IPv4 网卡；客户端请填写网关的实际局域网 IP。' : '将此地址与专用 Token 一起填入观测客户端。'}));
+          el('small', {text:scope + '自动补全版本路径的客户端请填写此根地址和专用 Token。直接调用实例接口时追加 /api/v1/instance。'}));
       }
       const toggle = field('api','enabled',{wide:true});
       toggle.querySelector('input').addEventListener('change', showAddress);

@@ -44,6 +44,14 @@ def merge_policy(document, policy, identity):
     return apply_features(result, policy.get('features') or {})
 
 
+def read_effective_policy(target, policy, identity):
+    document = yaml.safe_load(target.read_bytes())
+    if not isinstance(document, dict):
+        raise ValueError('INVALID_CLASH_DOCUMENT')
+    effective = merge_policy(document, policy, identity) if policy else document
+    return document, effective
+
+
 def build_policy(before, after, existing, identity, renames):
     policy = deepcopy(existing) if existing and existing.get('source_identity') == identity else {
         'schema': 1, 'source_identity': identity, 'sections': {}, 'reference_renames': {}}
@@ -64,9 +72,7 @@ def apply_candidate(target, identity, policy, key, validate):
     try: old = json.loads((STATE / 'policy-status.json').read_bytes())
     except (OSError, ValueError): pass
     try:
-        document = yaml.safe_load(target.read_bytes())
-        if not isinstance(document, dict): raise ValueError('INVALID_CLASH_DOCUMENT')
-        result = merge_policy(document, policy, identity) if policy else deepcopy(document)
+        document, result = read_effective_policy(target, policy, identity)
         descriptor = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, 'w') as stream:
             yaml.safe_dump(result, stream, allow_unicode=True, sort_keys=False)

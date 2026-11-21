@@ -927,11 +927,7 @@ impl UdpAssocRecords {
     fn close(&self) {
         let g = self.inner.lock();
         for r in g.by_target.values() {
-            let (du, dd) = r.drain_delta();
-            if du != 0 || dd != 0 {
-                self.shared.traffic.add_totals(dd, du);
-            }
-            self.shared.conn_table.close(r.id);
+            self.shared.finish_connection(r);
             if let Some(p) = &self.shared.pplog {
                 p.close(r);
             }

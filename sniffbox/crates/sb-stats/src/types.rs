@@ -247,6 +247,17 @@ impl ConnRecord {
             drain_one(&self.download, &self.last_folded_down),
         )
     }
+
+    /// Rebase both consumers on the same byte counts within the accounting lock.
+    pub fn rebase_cursors(&self) {
+        let up = self.upload.load(Ordering::Relaxed);
+        let down = self.download.load(Ordering::Relaxed);
+        self.last_drained_up.store(up, Ordering::Relaxed);
+        self.last_drained_down.store(down, Ordering::Relaxed);
+        self.last_folded_up.store(up, Ordering::Relaxed);
+        self.last_folded_down.store(down, Ordering::Relaxed);
+        self.agg_counted.store(false, Ordering::Relaxed);
+    }
 }
 
 fn drain_one(cur: &AtomicU64, last: &AtomicU64) -> u64 {

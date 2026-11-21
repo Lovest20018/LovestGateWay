@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_common import Layout, ManagementError
-from manage_model import validate
-from manage_subscription import refresh_nodes, payload_content, candidate_matches_runtime
+from manage_model import load_settings, validate
+from manage_subscription import refresh_nodes, payload_content, compare_runtime_candidate
 
 
 class SubscriptionCacheTransactionTests(unittest.TestCase):
@@ -18,14 +18,17 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
             running, candidate = Path(temporary) / 'running.yaml', Path(temporary) / 'candidate.yaml'
             running.write_text('proxies: [{name: A, password: yes, port: 443}]\nrules: [MATCH,A]\n')
             system = SimpleNamespace(command=lambda *args: SimpleNamespace(stdout='123'))
-            def same(text):
+            def compare(text):
                 candidate.write_text(text)
-                return candidate_matches_runtime(system, '123', candidate, runtime=running)
-            self.assertTrue(same('rules: [MATCH,A]\nproxies: [{port: 443, password: yes, name: A}]\n'))
+                return compare_runtime_candidate(system, '123', candidate, runtime=running)
+            self.assertEqual(compare('rules: [MATCH,A]\nproxies: [{port: 443, password: yes, name: A}]\n'),
+                             'running_config_equivalent')
             for text in ('proxies: [{name: A, password: true, port: 443}]\nrules: [MATCH,A]\n',
-                         'proxies: [{name: A, password: yes, port: 443}]\nrules: [MATCH,DIRECT]\n',
-                         'proxies: []\nproxies: []\n'):
-                self.assertFalse(same(text))
+                         'proxies: [{name: A, password: yes, port: 443}]\nrules: [MATCH,DIRECT]\n'):
+                self.assertEqual(compare(text), 'effective_config_changed')
+            self.assertEqual(compare('proxies: []\nproxies: []\n'), 'runtime_uncomparable')
+            system.command = lambda *args: SimpleNamespace(stdout='124')
+            self.assertEqual(compare('proxies: []\n'), 'runtime_changed_during_comparison')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -167,15 +170,23 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
 
     def test_total_download_failure_keeps_nodes_without_restarting(self):
         self.rows[0].update(source='cache', update_failed=True)
-        with patch('manage_subscription.subprocess.run', side_effect=self.execute):
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute), \
+                self.assertLogs('paopaogw.subscription', level='INFO') as events:
             rows = refresh_nodes(self.layout, self.system)
+        self.assertIn('trigger=manual', events.output[0])
+        self.assertIn('action=none reason=fetch_failed_kept_cache outcome=retained', events.output[0])
         self.assertTrue(rows[0]['update_failed'])
         self.assertEqual((self.cache / self.filename).read_bytes(), self.original)
         self.assertFalse(any('restart' in cmd for cmd in self.commands))
 
     def test_new_nodes_publish_only_after_validation_and_survive_readiness(self):
-        with patch('manage_subscription.subprocess.run', side_effect=self.execute):
+        running = self.layout.root / 'running.yaml'
+        running.write_text('geodata-mode: true\nproxies: [{name: A}]\n')
+        with patch('manage_subscription.subprocess.run', side_effect=self.execute), \
+                patch('manage_subscription.compare_runtime_candidate', side_effect=lambda *args: compare_runtime_candidate(*args, runtime=running)), \
+                self.assertLogs('paopaogw.subscription', level='INFO') as events:
             rows = refresh_nodes(self.layout, self.system)
+        self.assertIn('action=restart reason=effective_config_changed outcome=applied', events.output[0])
         self.assertEqual(rows[0]['result'], 'updated')
         self.assertEqual(rows[0]['name'], self.rows[0]['name'])
         self.assertIn(b'new valid nodes', (self.cache / self.filename).read_bytes())
@@ -183,10 +194,34 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
         self.assertEqual(self.commands.count(('systemctl', 'restart', 'paopaogw')), 1)
 
     def test_equivalent_generated_candidate_publishes_cache_without_restart(self):
-        with patch('manage_subscription.subprocess.run', side_effect=self.execute), \
-             patch('manage_subscription.candidate_matches_runtime', return_value=True) as compare:
-            rows = refresh_nodes(self.layout, self.system)
-        compare.assert_called_once()
+        from clash_ppsub import source_identity
+        config = self.layout.path('etc/paopaogw/files/ppgw.ini')
+        config.write_text('#paopao-gateway\nmode=suburl\ndns_ip=192.0.2.53\ndns_port=5304\n'
+                          'suburl=ppsub@http://127.0.0.1/ppsub.json\ndns_burn=yes\nex_dns=192.0.2.54:53\n')
+        config.with_name('clash-policy.json').write_text(json.dumps({
+            'schema': 1, 'source_identity': source_identity(load_settings(self.layout)['ini']),
+            'sections': {'rules': ['MATCH,DIRECT']}, 'reference_renames': {}}))
+        running = self.layout.root / 'running.yaml'
+        running.write_text('geodata-mode: true\nproxies: []\nrules:\n- MATCH,DIRECT\n')
+
+        def execute(command, **kwargs):
+            if '-ppsub' in command:
+                env = kwargs['env']
+                self.assertEqual((env['dns_burn'], env['dns_ip'], env['dns_port'], env['ex_dns']),
+                                 ('yes', '192.0.2.53', '5304', '192.0.2.54:53'))
+            result = self.execute(command, **kwargs)
+            if '-input' in command:
+                Path(command[-1]).write_text('geodata-mode: yes\nproxies: []\nrules:\n- MATCH,REJECT\n')
+            if '-f' in command:
+                self.assertIn('MATCH,DIRECT', Path(command[-1]).read_text())
+            return result
+
+        with patch('manage_subscription.subprocess.run', side_effect=execute), \
+                patch('manage_subscription.compare_runtime_candidate', side_effect=lambda *args: compare_runtime_candidate(*args, runtime=running)), \
+                self.assertLogs('paopaogw.subscription', level='INFO') as events:
+            rows = refresh_nodes(self.layout, self.system, trigger='scheduled')
+        self.assertIn('trigger=scheduled', events.output[0])
+        self.assertIn('action=none reason=running_config_equivalent outcome=cached', events.output[0])
         self.assertEqual(rows[0]['core_action'], 'none')
         self.assertIn(b'new valid nodes', (self.cache / self.filename).read_bytes())
         self.assertFalse(any('restart' in command for command in self.commands))

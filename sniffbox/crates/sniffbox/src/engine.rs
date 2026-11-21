@@ -264,12 +264,7 @@ pub async fn serve_established(
         shared.socks_src_index.remove(&sp);
     }
 
-    let (du, dd) = rec.drain_delta();
-    if du != 0 || dd != 0 {
-        shared.account_delta(&rec, dd, du);
-    }
-
-    shared.conn_table.close(rec.id);
+    shared.finish_connection(&rec);
     shared.observations.finish(&rec);
     if let Some(p) = &shared.pplog {
         p.close(&rec);

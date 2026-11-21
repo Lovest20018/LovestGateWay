@@ -11,18 +11,31 @@ from history_store import HistoryWriter
 
 
 class ErrorReporter:
-    def __init__(self, clock=time.monotonic, emit=None):
+    def __init__(self, clock=time.monotonic, emit=None, recover=None):
         self.clock = clock
-        self.emit = emit or logging.getLogger('paopaogw.history').warning
-        self.next_report = {}
+        logger = logging.getLogger('paopaogw.history')
+        self.emit = emit or logger.warning
+        self.recover = recover or logger.info
+        self.failures = {}
 
     def __call__(self, stage, error):
         code = error.code if isinstance(error, ApiError) else 'COLLECTION_FAILED'
         if not re.fullmatch(r'[A-Z_]{3,64}', str(code)): code = 'COLLECTION_FAILED'
         now = self.clock()
-        if now < self.next_report.get((stage, code), 0): return
-        self.next_report[stage, code] = now + 60
-        self.emit('history sample failed: stage=%s code=%s', stage, code)
+        started, _, next_report = self.failures.get(stage, (now, None, now))
+        elapsed = now - started
+        transitioning = code in {'CORE_UNAVAILABLE', 'CORE_IDENTITY_CHANGED'} and elapsed < 20
+        if now >= next_report and not transitioning:
+            self.emit('history sample failed: stage=%s code=%s elapsed_s=%d', stage, code, int(elapsed))
+            next_report = now + 60
+        self.failures[stage] = (started, code, next_report)
+
+    def recovered(self, stage):
+        failure = self.failures.pop(stage, None)
+        if failure:
+            started, code, _ = failure
+            self.recover('history sample resumed: stage=%s code=%s elapsed_s=%d',
+                         stage, code, int(self.clock() - started))
 
 
 def selected_latency(client, now):
@@ -65,6 +78,7 @@ def collect_once(client, writer, retention_days, report):
     batches = [('sniffbox_lifecycle', rows)]
     cpu, memory, traffic, connections = [info.get(key) or {} for key in ('cpu', 'memory', 'traffic', 'connections')]
     sample = {'download': traffic.get('downloadTotal'), 'upload': traffic.get('uploadTotal'),
+              'reset_generation': traffic.get('resetGeneration'),
               'cpu': cpu.get('usage'), 'active': connections.get('active'), 'gap': bool(gap),
               'outbound_uptime': memory.get('clash_uptime') if info.get('mode') in {'yaml', 'suburl'} else memory.get('ovpn_uptime')}
     total, available = metric_number(memory.get('total')), metric_number(memory.get('available'))
@@ -80,9 +94,12 @@ def collect_once(client, writer, retention_days, report):
         except Exception as error:
             # Keep successful native samples; failed reads are never empty snapshots.
             report('mihomo', error)
+        else:
+            report.recovered('mihomo')
         if writer.metric_due():
             try: sample['latency_ms'] = selected_latency(client, time.time())
             except Exception as error: report('latency', error)
+            else: report.recovered('latency')
             sample['latency_checked'] = True
     # Optional snapshots can span a restart even when every native page matched.
     latest = client.request('/sniffbox/info/dynamic')
@@ -104,6 +121,7 @@ def main():
                 if config.get('history_enabled', False):
                     if writer is None: writer = HistoryWriter()
                     collect_once(client, writer, max(1, min(365, int(config.get('history_retention_days', 30)))), report)
+                    report.recovered('sample')
                 elif writer is not None:
                     writer.close(); writer = None
             except Exception as error:
@@ -116,4 +134,5 @@ def main():
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
     main()
