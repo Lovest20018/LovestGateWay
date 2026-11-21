@@ -14,6 +14,7 @@ from manage_subscription_schedule import providers, identity
 layout = Layout(sys.argv[1])
 point = sys.argv[2]
 rows = providers(layout)
+provider_paths = {f'var/lib/paopaogw/subscriptions/{identity(row)}.json' for row in rows}
 
 def run(command, **kwargs):
     if '-ppsub' in command:
@@ -28,7 +29,7 @@ def run(command, **kwargs):
 
 def publish(layout, path, raw, *args, **kwargs):
     atomic_write(layout, path, raw, *args, **kwargs)
-    if point == 'first_provider' and path.startswith('var/lib/paopaogw/subscriptions/') and len(Path(path).stem) == 64:
+    if point == 'first_provider' and path in provider_paths:
         os._exit(77)
 
 def progress(stage):
@@ -37,5 +38,7 @@ def progress(stage):
         os._exit(77)
 
 system = SimpleNamespace(command=lambda *args: SimpleNamespace(stdout='123'), wait=lambda _: None)
-with patch('manage_subscription.subprocess.run', side_effect=run), patch('manage_subscription.atomic_write', side_effect=publish):
+with patch('manage_subscription.subprocess.run', side_effect=run), \
+        patch('manage_subscription.atomic_write', side_effect=publish), \
+        patch('manage_subscription.compare_runtime_candidate', return_value='effective_config_changed'):
     refresh_nodes(layout, system, progress=progress)
