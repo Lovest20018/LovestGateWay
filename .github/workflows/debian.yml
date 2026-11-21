@@ -43,6 +43,7 @@ jobs:
           node frontend/build.mjs --output dist/browser-ui
           node scripts/verify-management-auth-fixture.cjs dist/browser-ui
           node scripts/verify-settings-fixture.cjs dist/browser-ui
+          node scripts/verify-observer-api-fixture.cjs dist/browser-ui
           node scripts/verify-gateway-update-fixture.cjs dist/browser-ui
           node scripts/verify-overview-fixture.cjs dist/browser-ui --evidence=dist/browser-evidence/overview
           node scripts/verify-proxies-fixture.cjs dist/browser-ui --evidence=dist/browser-evidence/proxies
@@ -58,6 +59,7 @@ jobs:
             dist/management-auth-evidence/
             dist/*browser-evidence.json
             dist/settings-*.png
+            dist/observer-api-*.png
             dist/password-settings-*.png
             dist/mihomo-manual-*.png
           if-no-files-found: ignore

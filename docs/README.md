@@ -2,7 +2,7 @@
 
 适用于 LovestGateWay Debian 正式版。首次使用从安装指南开始；日常设置通过 Web 完成。
 
-当前版本：[v0.2.6](releases/0.2.6.md) · [更新记录](../CHANGELOG.md) · [正式安装包](https://github.com/Lovest20018/LovestGateWay/releases/latest)
+版本 [v0.2.7](releases/0.2.7.md) · [更新记录](../CHANGELOG.md) · [正式安装包](https://github.com/Lovest20018/LovestGateWay/releases/latest)
 
 | 需求 | 文档 |
 | --- | --- |
@@ -27,7 +27,7 @@
 - [Debian 运行机制](reference/debian-runtime.md)
 - [Mihomo 热加载边界](mihomo-reload-assessment.md) · [新连接窗口](mihomo-selection-window.md)
 - [节点选择保留](node-selection-persistence.md) · [浏览器管理会话](browser-sessions.md)
-- [UI 优化结果](ui-optimization-plan.md) · [页面布局整理](ui-layout-review.md)
+- [UI 优化与逐页布局](ui-optimization-plan.md)
 
 <details>
 <summary>历史设计与上游资料</summary>
