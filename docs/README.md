@@ -2,7 +2,7 @@
 
 适用于 LovestGateWay Debian 正式版。首次使用从安装指南开始；日常设置通过 Web 完成。
 
-版本 [v0.2.7](releases/0.2.7.md) · [更新记录](../CHANGELOG.md) · [正式安装包](https://github.com/Lovest20018/LovestGateWay/releases/latest)
+版本 [v0.2.8](releases/0.2.8.md) · [更新记录](../CHANGELOG.md) · [正式安装包](https://github.com/Lovest20018/LovestGateWay/releases/latest)
 
 | 需求 | 文档 |
 | --- | --- |

@@ -12,7 +12,7 @@ LovestGateWay 保持为 [kkkgo/PaoPaoGateWay](https://github.com/kkkgo/PaoPaoGat
 | `reviewed_head` | 已完成逐项判断的上游提交 | `8a165c2b1dcbb3f21426791e155ec88e4c5e9a84` |
 | `reviewed_release` | 已审查的上游稳定发布 | `20261120-8a165c2` |
 
-`f45e3d9` 的规则格式自动识别后端已移植。`8a165c2` 的活跃连接保留与流量清零修复随 LovestGateWay v0.2.7 交付。日志补读、ETag、连接快照序列化和依赖更新留待单独评审。完整取舍记录在台账的 `decisions` 中。
+`f45e3d9` 的规则格式自动识别后端已移植。`8a165c2` 的活跃连接保留与流量清零修复随 LovestGateWay v0.2.7 交付。v0.2.8 适配了日志补读、ETag、连接快照、登录来源归并和 Rust 依赖更新。完整取舍记录在台账的 `decisions` 中。
 
 ## 自动发现
 

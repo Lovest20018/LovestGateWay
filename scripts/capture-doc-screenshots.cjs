@@ -22,7 +22,7 @@ const historyPoints=Array.from({length:288},(_,i)=>{
     download_rate:download,upload_rate:upload,cpu_percent:12+Math.sin(i*.2)*4,memory_bytes:(1.1+Math.sin(i*.1)*.05)*1024**3,
     connected:120,failed:i%11===0?1:0,failure_percent:i%11===0?100/121:0,latency_ms:28+Math.sin(i*.15)*5,gaps:0};
 });
-const info={version:'0.2.7 · 演示',clash_version:'v1.19.33',clash_meta:true,mode:'suburl',kernel:'6.1',
+const info={version:'0.2.8 · 演示',clash_version:'v1.19.34',clash_meta:true,mode:'suburl',kernel:'6.1',
   timestamp:demoAt,uptime:90061,integration:{data:{boot_id:'documentation-demo'}},
   memory:{total:4*1024**3,available:2.9*1024**3,sniffbox_rss:42*1024**2,sniffbox_uptime:90000,clash_rss:86*1024**2,clash_uptime:90000},
   cpu:{model:'4 核虚拟处理器',cores:4,freq_min:800,freq_max:3200,usage:12.5,per_core:[10,15,20,5],freq:2400,temp:46.5,sniffbox:2.5,clash:3.5},
