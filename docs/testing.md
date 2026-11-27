@@ -4,6 +4,8 @@
 
 ## 本地检查
 
+在 Debian 上运行本节 Python 检查前，安装 `python3-yaml` 和 `python3-jsonschema`。
+
 ```sh
 python3 -m unittest discover -s tests -v
 node --test frontend/tests/*.test.mjs
@@ -17,7 +19,7 @@ node --check integration/ppsub_panel.js
 
 浏览器会话使用真实 Rust HTTP 测试核对登录、限速、同源边界、远端永久 Bearer 拒绝和 Cookie 撤销；实际 SSE socket 覆盖注销、改密和到期后断开。`node scripts/verify-browser-sessions.cjs dist/test-ui` 额外核对刷新恢复、HttpOnly、旧凭据清理、偏好保留和注销失败重试。其合成 API 不替代服务端认证测试，接口约定见[浏览器管理会话](browser-sessions.md)。
 
-API 契约校验需要 `jsonschema`，YAML 相关功能需要 `PyYAML`。开发与完整测试使用 Node.js 24，与 CI 和 frontend/package.json 保持一致；单独运行面板构建脚本仍兼容 Node.js 18+；不需要安装 npm 依赖，Node 不属于生产运行依赖。`PPGW_NODE` 可指定构建解释器。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
+`check-api-contract.py` 需要 `PyYAML` 和 `jsonschema`。开发与完整测试使用 Node.js 24，与 CI 和 frontend/package.json 保持一致；单独运行面板构建脚本仍兼容 Node.js 18+；不需要安装 npm 依赖，Node 不属于生产运行依赖。`PPGW_NODE` 可指定构建解释器。确定性样例来自合成核心与实际 HTTP handler，不代表外部网络或真实部署已经通过验收。
 
 受限 Mihomo 热加载的真实连接与完整 Debian 服务验收分别使用 `scripts/verify-mihomo-reload.py` 和 `scripts/verify-mihomo-policy-linux.py`，运行条件与覆盖边界见[热加载说明](mihomo-reload-assessment.md)。只在一次性隔离环境运行失败注入，不对现用配置执行此类实验。
 

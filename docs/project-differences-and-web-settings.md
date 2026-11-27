@@ -30,7 +30,7 @@ FakeIP、透明 TCP/UDP、嗅探、显式 HTTP/SOCKS5 代理、Mihomo 面板、�
 
 上游 [f45e3d9：fix ruleset auto](https://github.com/kkkgo/PaoPaoGateWay/commit/f45e3d9f523c3a09c2093cc95e31b5f42c8458dc) 补充 PPsub 自动格式识别：未知后缀先按 YAML 推测，`.list`/`.conf` 按文本处理；首次未识别的自动规则集在 Mihomo 启动后再检查，更新重试状态及输出摘要。
 
-复用范围包括 `ruleset.rs`、`ppsub/rules.rs`、`ppsub/state.rs`、`ppsub/retry.rs` 和对应命令入口，不包含无关的依赖更新或面板替换。
+规则复用范围包括 `ruleset.rs`、`ppsub/rules.rs`、`ppsub/state.rs`、`ppsub/retry.rs` 和对应命令入口。
 
 ## Web 性能与日志补读
 
@@ -41,7 +41,9 @@ FakeIP、透明 TCP/UDP、嗅探、显式 HTTP/SOCKS5 代理、Mihomo 面板、�
 - 管理登录保持 HttpOnly 会话。失败配额按单个 IPv4 或 IPv6 `/64` 统计，IPv4 映射地址归入对应 IPv4。成功请求不会增加失败次数。
 - 核心日志在网关进程中保留最近最多 2000 行或 4 MiB，`debug`、`trace` 只实时推送。日志页短暂断线后按进程纪元和序号补读，缓存淘汰时提示缺口。Mihomo 日志仍由既有空闲订阅控制，补读范围是网关已经收到并保留的记录。
 
-Cloudflared、上游认证实现、DoH/DoT 与 TLS 改动、上游 Web 制品和 ISO 脚本属于本次移植的排除项。依赖升级另行评审。
+`Cargo.lock` 采用本次评审确认的上游注册表依赖版本，保留本项目的 workspace 依赖声明，并升级 `url` 及其依赖 `form_urlencoded` 以修复 [RUSTSEC-2026-0592](https://rustsec.org/advisories/RUSTSEC-2026-0592.html)。
+
+Cloudflared、上游认证、DoH/DoT 与 TLS 改动、上游 Web 制品和 ISO 脚本的处理决定见[上游台账](../.github/upstream.json)。
 
 ## 实际应用方式
 
