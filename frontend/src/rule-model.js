@@ -27,7 +27,13 @@ export function proxyChain(proxies,start){
   while(chain.length<64){const node=Object.hasOwn(proxies,current)?proxies[current]:null;if(!Array.isArray(node?.all)||typeof node.now!=='string'||!node.now||seen.has(node.now))break;current=node.now;chain.push(current);seen.add(current);}
   return chain;
 }
-export function matchLog(logs,rows){
+function logTarget(chain,names){
+  if(!chain.endsWith(']')||names.includes(chain))return {chain,root:chain,node:''};
+  const named=names.reduce((best,name)=>name&&name.length>best.length&&chain.startsWith(name+'[')?name:best,'');
+  const bracket=named.length||chain.indexOf('[');
+  return bracket>0?{chain,root:chain.slice(0,bracket),node:chain.slice(bracket+1,-1)}:{chain,root:chain,node:''};
+}
+export function matchLog(logs,rows,proxies={}){
   for(const item of Array.isArray(logs)?logs:[]){
     if(typeof item?.payload!=='string')continue;
     const line=item.payload;
@@ -35,11 +41,14 @@ export function matchLog(logs,rows){
     const fallback=/-->\s+\S+\s+doesn't match any rule\s+using\s+(.+?)\s*$/.exec(line);
     const using=/-->\s+\S+\s+using\s+(.+?)\s*$/.exec(line);
     if(!matched&&!fallback&&!using)continue;
-    if(!matched)return {type:'',payload:'',chain:fallback?.[1]||using?.[1],none:!!fallback,row:null};
+    const chain=matched?.[2]||fallback?.[1]||using?.[1];
+    if(!matched)return {type:'',payload:'',...logTarget(chain,Object.keys(proxies)),none:!!fallback,row:null};
     const expression=/^([A-Za-z0-9_-]+)\((.*)\)$/s.exec(matched[1]),type=expression?.[1]||matched[1],payload=expression?.[2]||'';
-    const candidates=rows.filter(row=>ruleType(row.type)===ruleType(type)&&row.payload===payload),targeted=candidates.filter(row=>row.proxy===matched[2]);
-    const row=targeted.length===1?targeted[0]:candidates.length===1?candidates[0]:null;
-    return {type,payload,chain:matched[2],none:false,row};
+    const candidates=rows.filter(row=>row.extra?.disabled!==true&&ruleType(row.type)===ruleType(type)&&row.payload===payload);
+    const target=logTarget(chain,[...Object.keys(proxies),...candidates.map(row=>row.proxy)]);
+    const targeted=candidates.filter(row=>row.proxy===target.root);
+    const row=targeted.length===1?targeted[0]:null;
+    return {type,payload,...target,none:false,row};
   }
   return null;
 }

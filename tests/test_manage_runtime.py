@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
 from manage_common import Layout
 from manage_model import load_settings
-from manage_runtime import System
+from manage_runtime import MihomoPolicyError, System, policy_validation_detail
 
 
 class LiveFixture(Layout):
@@ -54,6 +54,26 @@ class RuntimeTests(unittest.TestCase):
                 settings['service']['PPGW_WEB_LISTEN'] = public
                 bindings.clear(); self.system.preflight_listeners(settings)
                 self.assertEqual(sum(port == 18080 for host, port in bindings), 1)
+
+    def test_policy_validation_uses_bounded_redacted_diagnostics(self):
+        result = SimpleNamespace(returncode=1, stdout='', stderr=(
+            'time=fixture level=fatal msg="Parse config error: rules[3] [DOMAIN,'
+            'https://example.com/private?access=synthetic-secret,missing] error: '
+            'proxy [synthetic-group-secret] not found /etc/test/private.yaml"'
+        ))
+        def command(*args, **options):
+            if args[0] == 'systemctl':
+                return SimpleNamespace(stdout='123')
+            self.assertEqual(args[0], 'nsenter')
+            self.assertFalse(options['check'])
+            self.assertTrue(Path(args[-1]).is_file())
+            return result
+        self.system.command = command
+        with self.assertRaises(MihomoPolicyError) as caught:
+            self.system.validate_policy({'rules': ['MATCH,DIRECT']})
+        self.assertEqual(caught.exception.detail, '第 4 条规则：找不到规则的目标代理或节点组。')
+        self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
+        self.assertEqual(policy_validation_detail('nsenter: /etc/test/private.yaml: failed'), '')
 
     def test_rollback_keeps_the_job_worker_alive_and_restores_other_units(self):
         states = {unit: {'active': True, 'enabled': True} for unit in ('paopaogw', 'paopaogw-settings', 'paopaogw-api')}

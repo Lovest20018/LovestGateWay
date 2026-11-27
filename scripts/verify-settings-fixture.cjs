@@ -135,6 +135,17 @@ async function main() {
     await page.goto(origin + '/ui/gateway.html#/settings');
     await page.locator('.ppgw-management [role=status]').waitFor();
     assert.equal(await page.locator('#notice').isVisible(),false,'a historical failure must not become a current busy alert');
+    const initialTab=page.getByRole('tab',{selected:true});
+    const initialTabName=await initialTab.innerText();
+    await page.getByRole('tab',{name:'高级选项',exact:true}).click();
+    const blockUnknown=page.getByLabel('阻断未知流量',{exact:true});
+    const initialBlock=await blockUnknown.isChecked();
+    await blockUnknown.setChecked(!initialBlock);
+    assert.match(await page.locator('#dirty-count').textContent(),/1 项设置待应用/);
+    await blockUnknown.setChecked(initialBlock);
+    assert.match(await page.locator('#dirty-count').textContent(),/0 项设置待应用/);
+    assert.equal(await page.locator('#savebar').isVisible(),false);
+    await page.getByRole('tab',{name:initialTabName.trim(),exact:true}).click();
     const originalHeading=await page.locator('.ppgw-management [role=status]').textContent();
     const initialReads=configReads;
     managementOffline=true;

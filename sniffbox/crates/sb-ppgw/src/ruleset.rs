@@ -3,6 +3,7 @@
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 pub const RULESET_DIR: &str = "/tmp/rule-set";
@@ -81,20 +82,23 @@ fn url_ext(url: &str) -> Option<&'static str> {
 }
 
 pub fn detect_format(url: &str, bytes: &[u8]) -> Option<&'static str> {
+    detect_format_with_behavior(url, bytes, "classical")
+}
+
+fn detect_format_with_behavior(url: &str, bytes: &[u8], behavior: &str) -> Option<&'static str> {
     if let Some(ext) = url_ext(url) {
         return Some(ext);
     }
     if bytes.starts_with(&ZSTD_MAGIC) {
         return Some("mrs");
     }
-    let text = String::from_utf8_lossy(bytes);
-    if has_yaml_feature(&text) {
+    let text = std::str::from_utf8(bytes)
+        .ok()?
+        .trim_start_matches('\u{feff}');
+    if has_yaml_feature(text) {
         return Some("yaml");
     }
-    if looks_like_text_ruleset(&text) {
-        return Some("text");
-    }
-    None
+    looks_like_text_ruleset(text, behavior).then_some("text")
 }
 
 fn has_yaml_feature(text: &str) -> bool {
@@ -104,7 +108,7 @@ fn has_yaml_feature(text: &str) -> bool {
     })
 }
 
-fn looks_like_text_ruleset(text: &str) -> bool {
+fn looks_like_text_ruleset(text: &str, behavior: &str) -> bool {
     let mut rule_lines = 0usize;
     let mut hits = 0usize;
     for line in text.lines() {
@@ -113,17 +117,43 @@ fn looks_like_text_ruleset(text: &str) -> bool {
             continue;
         }
         rule_lines += 1;
-        let head = l
-            .split(',')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_uppercase();
-        if RULE_TYPES.contains(&head.as_str()) {
-            hits += 1;
-        }
+        let is_rule = match behavior {
+            "domain" => looks_like_domain_rule(l),
+            "ipcidr" => looks_like_cidr_rule(l),
+            _ => {
+                l.split_once(',').is_some_and(|(head, _)| {
+                    RULE_TYPES.contains(&head.trim().to_ascii_uppercase().as_str())
+                }) || l.eq_ignore_ascii_case("MATCH")
+            }
+        };
+        hits += usize::from(is_rule);
     }
     rule_lines > 0 && hits >= 1 && hits * 100 >= rule_lines * 95
+}
+
+fn looks_like_domain_rule(line: &str) -> bool {
+    let line = line.strip_prefix("+.").unwrap_or(line);
+    let line = line.strip_prefix('.').unwrap_or(line);
+    let line = line.strip_suffix('.').unwrap_or(line);
+    line.contains('.')
+        && line.split('.').all(|label| {
+            label == "*"
+                || (!label.is_empty()
+                    && label
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_'))
+        })
+}
+
+fn looks_like_cidr_rule(line: &str) -> bool {
+    let Some((address, length)) = line.split_once('/') else {
+        return false;
+    };
+    match (address.parse::<std::net::IpAddr>(), length.parse::<u8>()) {
+        (Ok(std::net::IpAddr::V4(_)), Ok(length)) => length <= 32,
+        (Ok(std::net::IpAddr::V6(_)), Ok(length)) => length <= 128,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +161,7 @@ pub struct Provider {
     pub name: String,
     pub url: String,
     pub path: String,
+    pub behavior: String,
     pub interval: i64,
 
     pub format: String,
@@ -173,6 +204,7 @@ pub fn parse_providers(content: &str) -> Vec<Provider> {
             name: name.to_string(),
             url: url.to_string(),
             path: path.to_string(),
+            behavior: p["behavior"].as_str().unwrap_or("classical").to_string(),
             interval: p["interval"].as_i64().unwrap_or(0),
             format: p["format"].as_str().unwrap_or("").to_string(),
         });
@@ -256,7 +288,7 @@ fn note_format(
     if !p.format.is_empty() && !is_auto {
         return false;
     }
-    match bytes.and_then(|b| detect_format(&p.url, b)) {
+    match bytes.and_then(|b| detect_format_with_behavior(&p.url, b, &p.behavior)) {
         Some(fmt) => {
             if fmt != p.format {
                 backfills.insert(p.name.clone(), fmt.to_string());
@@ -383,11 +415,42 @@ pub fn prefetch(clash_yaml: &str, dir: &str, auto: &HashSet<String>) -> Prefetch
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct PredetectReport {
-
     pub detected: usize,
 
     pub unknown: usize,
     pub backfilled: usize,
+}
+
+fn predetect_one<F>(provider: &Provider, fetch: &F) -> Option<&'static str>
+where
+    F: Fn(&str, &str) -> Result<Vec<u8>, String>,
+{
+    let detect =
+        |bytes: &[u8]| detect_format_with_behavior(&provider.url, bytes, &provider.behavior);
+    if let Ok(bytes) = std::fs::read(&provider.path)
+        && let Some(format) = detect(&bytes)
+    {
+        return Some(format);
+    }
+
+    static PROBE_ID: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "ppgw_rs_detect_{}_{}",
+        std::process::id(),
+        PROBE_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&dir).ok()?;
+    let path = dir.join("payload");
+    let result = fetch(&provider.url, &path.to_string_lossy());
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_dir(dir);
+    result.ok().and_then(|bytes| detect(&bytes))
 }
 
 pub fn predetect_with<F>(clash_yaml: &str, auto: &HashSet<String>, fetch: F) -> PredetectReport
@@ -405,45 +468,34 @@ where
     if targets.is_empty() {
         return report;
     }
+    let next = AtomicUsize::new(0);
     let fetch = &fetch;
-    let found: Vec<Option<&'static str>> = std::thread::scope(|s| {
-        let handles: Vec<_> = targets
-            .iter()
-            .map(|p| {
-                s.spawn(move || {
-                    if let Ok(bytes) = std::fs::read(&p.path)
-                        && let Some(fmt) = detect_format(&p.url, &bytes)
-                    {
-                        return Some(fmt);
+    let found = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..PREFETCH_CONCURRENCY.min(targets.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut local = Vec::new();
+                    while let Some(p) = targets.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        if let Some(format) = predetect_one(p, fetch) {
+                            local.push((p, format));
+                        }
                     }
-                    let tmp = std::env::temp_dir().join(format!(
-                        "ppgw_rs_detect_{}_{}",
-                        hash16(&p.url),
-                        std::process::id()
-                    ));
-                    let tmp = tmp.to_string_lossy().into_owned();
-                    let got = fetch(&p.url, &tmp);
-                    let _ = std::fs::remove_file(&tmp);
-                    got.ok().and_then(|b| detect_format(&p.url, &b))
+                    local
                 })
             })
             .collect();
         handles
             .into_iter()
-            .map(|h| h.join().ok().flatten())
-            .collect()
+            .flat_map(|h| h.join().unwrap_or_default())
+            .collect::<Vec<_>>()
     });
 
     let mut backfills: HashMap<String, String> = HashMap::new();
-    for (p, fmt) in targets.iter().zip(found) {
-        match fmt {
-            Some(fmt) => {
-                report.detected += 1;
-                if fmt != p.format {
-                    backfills.insert(p.name.clone(), fmt.to_string());
-                }
-            }
-            None => report.unknown += 1,
+    report.detected = found.len();
+    report.unknown = targets.len() - found.len();
+    for (p, fmt) in found {
+        if fmt != p.format {
+            backfills.insert(p.name.clone(), fmt.to_string());
         }
     }
     if let Some(new_content) = backfill_formats(&content, &backfills)
@@ -536,7 +588,6 @@ mod tests {
 
     #[test]
     fn detect_text_tolerates_one_bad_line() {
-
         let mut s = String::new();
         for i in 0..20 {
             s.push_str(&format!("DOMAIN-SUFFIX,d{i}.com\n"));
@@ -546,8 +597,28 @@ mod tests {
     }
 
     #[test]
-    fn detect_none_for_domain_list_and_junk() {
+    fn detect_text_using_provider_behavior_without_assuming_txt_is_text() {
+        let url = "https://example.com/policy.txt";
+        assert_eq!(
+            detect_format_with_behavior(url, b"+.example.com\n*.example.net\n", "domain"),
+            Some("text")
+        );
+        assert_eq!(
+            detect_format_with_behavior(url, b"192.0.2.0/24\n2001:db8::/32\n", "ipcidr"),
+            Some("text")
+        );
+        assert_eq!(
+            detect_format_with_behavior(url, b"payload:\n  - example.com\n", "domain"),
+            Some("yaml")
+        );
+        assert_eq!(
+            detect_format_with_behavior(url, b"192.0.2.0/255\n", "ipcidr"),
+            None
+        );
+    }
 
+    #[test]
+    fn detect_none_for_domain_list_and_junk() {
         assert_eq!(
             detect_format("http://x/noext", b"+.google.com\n+.youtube.com\n"),
             None
@@ -973,6 +1044,33 @@ rule-providers:
         assert_eq!(std::fs::read_to_string(&clash).unwrap(), yaml, "untouched");
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_file(&clash);
+    }
+
+    #[test]
+    fn predetect_shared_urls_have_distinct_destinations_and_bounded_workers() {
+        let dir = tempfile::tempdir().unwrap();
+        let clash = dir.path().join("clash.yaml");
+        let mut yaml = String::from("rule-providers:\n");
+        let mut auto = HashSet::new();
+        for i in 0..(PREFETCH_CONCURRENCY * 3) {
+            let name = format!("provider-{i}");
+            yaml.push_str(&format!("  {name}:\n    type: http\n    url: https://example.com/shared\n    path: unused-{i}\n"));
+            auto.insert(name);
+        }
+        std::fs::write(&clash, yaml).unwrap();
+        let destinations = std::sync::Mutex::new(HashSet::new());
+        let active = AtomicUsize::new(0);
+        let report = predetect_with(clash.to_str().unwrap(), &auto, |_, path| {
+            let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+            assert!(count <= PREFETCH_CONCURRENCY);
+            assert!(destinations.lock().unwrap().insert(path.to_string()));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            active.fetch_sub(1, Ordering::SeqCst);
+            Ok(b"DOMAIN,example.com".to_vec())
+        });
+        assert_eq!(report.detected, auto.len());
+        assert_eq!(report.backfilled, auto.len());
+        assert_eq!(report.unknown, 0);
     }
 
     #[test]

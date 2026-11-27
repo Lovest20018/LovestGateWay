@@ -9,7 +9,9 @@ from manage_common import ManagementError, operation_lock, read_bytes
 from manage_config import ConfigManager
 from manage_model import load_settings, settings_revision
 from clash_policy import build_policy
-from clash_ppsub import fingerprint, running_document, running_materialized_document, source_identity, rename_rule, rename_references, apply_features
+from clash_ppsub import (fingerprint, running_document, running_materialized_document, source_identity,
+                         rename_rule, rename_rule_providers, rename_references, apply_features,
+                         DEFAULT_RULE_BEHAVIOR, DEFAULT_RULE_INTERVAL)
 
 POLICY = 'etc/paopaogw/files/clash-policy.json'
 GROUP_FIELDS = ('name', 'type', 'proxies', 'use', 'url', 'interval')
@@ -43,8 +45,8 @@ def group_view(row, identifier):
 
 
 def provider_view(key, row):
-    return {'id': key, 'name': key, 'url': row.get('url', ''), 'behavior': row.get('behavior', 'classical'),
-            'format': row.get('format', 'yaml'), 'interval': row.get('interval', 86400),
+    return {'id': key, 'name': key, 'url': row.get('url', ''), 'behavior': row.get('behavior', DEFAULT_RULE_BEHAVIOR),
+            'format': row.get('format', 'yaml'), 'interval': row.get('interval', DEFAULT_RULE_INTERVAL),
             'proxy': row.get('proxy', ''), 'type': row.get('type', 'http')}
 
 
@@ -132,12 +134,8 @@ def merge_native(document, submitted):
     for group in result.get('proxy-groups', []):
         if 'proxies' in group:
             group['proxies'] = [renames.get(item, item) for item in group['proxies']]
-    result_rules = [rename_rule(rule, renames) for rule in result.get('rules', [])]
-    for index, rule in enumerate(result_rules):
-        parts = rule.split(',')
-        if len(parts) >= 2 and parts[0].strip().upper() == 'RULE-SET' and parts[1].strip() in provider_renames:
-            parts[1] = provider_renames[parts[1].strip()]
-            result_rules[index] = ','.join(parts)
+    result_rules = [rename_rule_providers(rename_rule(rule, renames), provider_renames)
+                    for rule in result.get('rules', [])]
     if result_rules != result.get('rules', []): result['rules'] = result_rules
     return result, renames
 

@@ -18,6 +18,32 @@ SERVICES = ('paopaogw', 'paopaogw-api', 'paopaogw-subscription', 'paopaogw-obser
             'paopaogw-core-action@update', 'paopaogw-core-action@rollback', 'paopaogw-core-action@install-local')
 
 
+class MihomoPolicyError(ManagementError):
+    def __init__(self, detail):
+        super().__init__('MIHOMO_POLICY_INVALID')
+        self.detail = detail
+
+
+def policy_validation_detail(output):
+    """Extract only a known error category and a numeric position from Mihomo diagnostics."""
+    for line in reversed(output[-8192:].splitlines()):
+        position = re.search(r'\b(rules|proxy group|proxy)\[?(\d{1,6})\]?(?!\d)', line, re.I)
+        if not position and 'parse config error' not in line.lower():
+            continue
+        reason = '请检查字段和语法。'
+        if re.search(r'\b(?:rule set|rule provider) \[.*?\] not found\b', line, re.I):
+            reason = '找不到引用的规则集。'
+        elif re.search(r'\bproxy \[.*?\] not found\b', line, re.I):
+            reason = '找不到规则的目标代理或节点组。'
+        elif re.search(r'\bsub-rule \[.*?\] not found\b', line, re.I):
+            reason = '找不到引用的子规则。'
+        if position:
+            label = {'rules': '规则', 'proxy group': '节点组', 'proxy': '代理'}[position[1].lower()]
+            return f'第 {int(position[2]) + 1} 条{label}：{reason}'
+        return reason
+    return ''
+
+
 class System:
     def __init__(self, layout, timeout=90, preserve_units=()):
         self.layout = layout; self.timeout = timeout; self.preserve_units = set(preserve_units)
@@ -138,8 +164,11 @@ class System:
                 candidate.chmod(0o600)
                 stream.write(yaml.safe_dump(document, allow_unicode=True, sort_keys=False).encode())
                 stream.close()
-                self.command('nsenter', '-t', pid, '-m', '--', '/usr/local/lib/paopaogw/bin/clash',
-                             '-t', '-d', '/etc/config/clash', '-f', str(candidate))
+                result = self.command('nsenter', '-t', pid, '-m', '--', '/usr/local/lib/paopaogw/bin/clash',
+                                      '-t', '-d', '/etc/config/clash', '-f', str(candidate), check=False)
+                if result.returncode:
+                    detail = policy_validation_detail(result.stderr or '') or policy_validation_detail(result.stdout or '')
+                    raise MihomoPolicyError(detail)
             finally: candidate.unlink(missing_ok=True)
     def prepare(self, action, before):
         self._old_runtime = None

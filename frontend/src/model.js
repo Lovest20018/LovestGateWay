@@ -21,5 +21,12 @@ export function setGroupMode(row,mode) {
   if(mode==='fallback'){row.failover=true;row.monitor_url ||= 'https://www.youtube.com/generate_204';row.expected_status ??='0';row.retries ??=3;}
 }
 export function ruleType(row) {return row.type==='rule-set'?'rule-set':row.type==='url'||row.url?'url':'manual';}
-export function setRuleType(row,type) {delete row.type;delete row.url;if(type==='rule-set'||type==='url'){row.type=type;row.url='';}else row.fixrule ||= [];}
+export const ruleSetDefaults=full=>({behavior:'classical',format:full?'yaml':'auto',interval:86400});
+export function setRuleType(row,type,full=false) {
+  delete row.type;delete row.url;
+  if(type==='rule-set'||type==='url'){
+    row.type=type;row.url='';
+    if(type==='rule-set')for(const [key,value] of Object.entries(ruleSetDefaults(full)))row[key]??=value;
+  }else row.fixrule ||= [];
+}
 export function exported(doc) {return clone(doc);}

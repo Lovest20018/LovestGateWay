@@ -215,7 +215,11 @@ pub fn process_ppsub(
         .map(|r| subinfo::Entry {
             name: r.name.clone(),
             info: r.userinfo.clone(),
-            at: if r.success { r.cached_at.unwrap_or(at) } else { 0 },
+            at: if r.success {
+                r.cached_at.unwrap_or(at)
+            } else {
+                0
+            },
         })
         .collect();
     if let Err(e) = subinfo::save(&subinfo::file(), &entries) {
@@ -553,10 +557,11 @@ pub fn auto_format_rule_sets(config_file: &str) -> std::collections::HashSet<Str
         .ok()
         .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
         .map(|cfg| {
-            parse_rules(&cfg)
+            let sets = parse_rules(&cfg);
+            rules::provider_winners(&rules::priority_order(&sets), |_| {})
                 .into_iter()
-                .filter(|r| r.typ == "rule-set" && r.format.is_empty() && !r.name.is_empty())
-                .map(|r| r.name)
+                .filter(|rule| rule.format.is_empty())
+                .map(|rule| rule.name.clone())
                 .collect()
         })
         .unwrap_or_default()
@@ -755,7 +760,6 @@ mod tests {
 
     #[test]
     fn parse_ss_in_rejects_invalid() {
-
         assert!(ss_cfg(r#"{}"#).is_none());
         assert!(
             ss_cfg(r#"{"shadowsocks_in":{"enable":false,"password":"x","cipher":"aes-128-gcm"}}"#)
@@ -795,6 +799,26 @@ mod tests {
         assert!(buf.contains("listen: 0.0.0.0"), "{buf}");
         assert!(buf.contains("password: YWJjZGVmZ2hpamtsbW5vcA=="), "{buf}");
         assert!(buf.contains("cipher: 2022-blake3-aes-128-gcm"), "{buf}");
+    }
+
+    #[test]
+    fn auto_format_uses_only_the_provider_selected_by_priority() {
+        let raw = serde_json::json!({"rules": [
+            {"type":"rule-set","name":"explicit","url":"https://example.org/a","priority":50,"format":"auto"},
+            {"type":"rule-set","name":"explicit","url":"https://example.org/a","priority":10,"format":"text"},
+            {"type":"rule-set","name":"detected","url":"https://example.org/b","priority":50,"format":"yaml"},
+            {"type":"rule-set","name":"detected","url":"https://example.org/b","priority":10,"format":"auto"},
+            {"type":"rule-set","name":"detected","url":"","priority":1,"format":"text"},
+            {"type":"rule-set","name":"tie","url":"https://example.org/c","priority":10,"format":"yaml"},
+            {"type":"rule-set","name":"tie","url":"https://example.org/c","priority":10,"format":"auto"}
+        ]});
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), raw.to_string()).unwrap();
+        let actual = auto_format_rule_sets(file.path().to_str().unwrap());
+        assert_eq!(
+            actual,
+            std::collections::HashSet::from(["detected".to_string()])
+        );
     }
 
     #[test]

@@ -25,6 +25,20 @@ test('proxy traversal is bounded through cycles and match logs locate the exact 
   assert.equal(matchLog([{payload:'x --> host:80 match DomainSuffix(example.com) using Other'}],duplicates).row,duplicates[1]);
   assert.equal(matchLog([{payload:'x --> host:80 match DomainSuffix(example.com) using Unknown[Node]'}],duplicates).row,null);
 });
+test('rule logs match the exact enabled target and retain bracketed group and node names',()=>{
+  const rows=rulesSnapshot({rules:[
+    {index:4,type:'DomainSuffix',payload:'example.com',proxy:'Backup'},
+    {index:7,type:'DomainSuffix',payload:'example.com',proxy:'Main[EU]'},
+    {index:9,type:'DomainSuffix',payload:'example.com',proxy:'Main[EU]',extra:{disabled:true}},
+  ]});
+  const logs=[{payload:'[TCP] [::1]:4123 --> example.com:443 match DomainSuffix(example.com) using Main[EU][London [one]]'}];
+  const result=matchLog(logs,rows,{'Main[EU]':{all:['London [one]']},Main:{all:[]}});
+  assert.equal(result.root,'Main[EU]');
+  assert.equal(result.node,'London [one]');
+  assert.equal(result.row.index,7);
+  assert.equal(matchLog(logs,[rows[0],rows[2]]).row,null);
+  assert.equal(matchLog([{payload:'x --> host:80 match DomainSuffix(example.com) using Main[EU]'}],rows).row.index,7);
+});
 test('active tests validate normalized URLs and GEO results report mixed failures accurately',()=>{
   assert.equal(testAddress('example.com/path?q=1'),'http://example.com/path?q=1');assert.equal(testAddress('https://[2001:db8::1]/'),'https://[2001:db8::1]/');
   for(const value of ['', 'ftp://example.com','https://u:p@example.com','https://example.com/'+ 'x'.repeat(2048)])assert.throws(()=>testAddress(value));

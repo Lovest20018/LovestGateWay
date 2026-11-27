@@ -104,6 +104,86 @@ class UnifiedEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError,'CONFIG_CHANGED'):
             editor.handle(self.admin,{'kind':'export_yaml','snapshot_id':result['snapshot_id'],'base_revision':result['base_revision']})
 
+    def test_ppsub_rule_validation_keeps_the_document_and_reports_the_exact_part(self):
+        value = {
+            'exported_at': 'fixture', 'subs': [{'name': 'S', 'url': 'https://example.org/sub'}],
+            'node-groups': [{'name': 'PROXY'}], 'custom': {'untouched': True},
+            'rules': [
+                {'type': 'rule-set', 'name': 'ads', 'url': 'https://example.org/ads', 'format': 'auto'},
+                {'fixrule': ['# note', 'AND,((RULE-SET,ads),(DOMAIN,example.org)),PROXY',
+                             'MATCH,PASS-RULE', 'MATCH,GLOBAL']},
+            ],
+        }
+        self.assertEqual(json.loads(editor.validate_ppsub(value)), value)
+        for rule, expected in [('MATCH', 'INVALID_RULE_LINE'), ('DOMAIN,x,Missing', 'UNKNOWN_RULE_TARGET'),
+                               ('NOT,((RULE-SET,missing)),DIRECT', 'UNKNOWN_RULE_PROVIDER')]:
+            with self.subTest(rule=rule):
+                candidate = deepcopy(value)
+                candidate['rules'][1]['fixrule'][1] = rule
+                with self.assertRaisesRegex(ManagementError, expected) as caught:
+                    editor.validate_ppsub(candidate)
+                self.assertEqual(editor.editor_error_details(caught.exception), {
+                    'error': expected, 'issue': {'section': 'rules', 'index': 1, 'field': 'fixrule', 'line': 1},
+                })
+
+        for interval in (-10, 0, 12, 604800):
+            with self.subTest(interval=interval):
+                candidate = deepcopy(value)
+                candidate['rules'][0]['interval'] = interval
+                self.assertEqual(json.loads(editor.validate_ppsub(candidate)), candidate)
+        for interval in (True, '60', 604801):
+            with self.subTest(invalid_interval=interval):
+                candidate = deepcopy(value)
+                candidate['rules'][0]['interval'] = interval
+                with self.assertRaisesRegex(ManagementError, 'INVALID_POLICY_INTERVAL'):
+                    editor.validate_ppsub(candidate)
+
+        duplicate = deepcopy(value)
+        duplicate['rules'].append(deepcopy(value['rules'][0]))
+        with self.assertRaisesRegex(ManagementError, 'DUPLICATE_RULE_PROVIDER'):
+            editor.validate_ppsub(duplicate)
+        invalid = deepcopy(value)
+        invalid['rules'].append(42)
+        with self.assertRaisesRegex(ManagementError, 'INVALID_PPSUB_ROW'):
+            editor.validate_ppsub(invalid)
+
+    def test_preview_and_save_return_safe_field_errors_over_http(self):
+        from http.client import HTTPConnection
+        from http.server import ThreadingHTTPServer
+        from threading import Thread
+        token = self.files / 'fixture-token'
+        token.write_text('a' * 64)
+        body = self.request()
+        value = json.loads(body['value'])
+        value['rules'][0]['format'] = 'auto'
+        body['value'] = json.dumps(value)
+        with ThreadingHTTPServer(('127.0.0.1', 0), source.Handler) as server:
+            server.admin = self.admin
+            thread = Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with patch.object(source, 'CORE_TOKEN', token):
+                    for dry_run in (True, False):
+                        connection = HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+                        try:
+                            connection.request('POST', '/api/subscription', json.dumps({**body, 'dry_run': dry_run}),
+                                               {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + 'a' * 64,
+                                                'Origin': f'http://127.0.0.1:{server.server_port}'})
+                            response = connection.getresponse()
+                            self.assertEqual(response.status, 400)
+                            self.assertEqual(json.loads(response.read()), {
+                                'error': 'INVALID_RULE_FORMAT',
+                                'issue': {'section': 'rules', 'index': 0, 'field': 'format'},
+                            })
+                        finally:
+                            connection.close()
+            finally:
+                server.shutdown()
+                thread.join(2)
+        self.assertEqual(self.ini.read_bytes(), self.original)
+        self.assertIsNone(self.admin.operation)
+        self.assertFalse((self.files / 'clash-policy.json').exists())
+
     def test_full_clash_noop_preview_uses_merged_document_not_editor_defaults(self):
         result=self.admin.current_config()
         config=deepcopy(self.submitted);config['subs']=result['config']['subs']

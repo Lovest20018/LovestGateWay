@@ -3,6 +3,66 @@
   let current = null;
   const loginRequired = '登录已失效，请重新登录；任务与未保存的修改仍保留。';
 
+  const editorErrors = {
+    CONFIG_REVISION_CONFLICT: '配置已变化，请重新读取后再保存。',
+    SOURCE_CHANGE_REQUIRES_SWITCH: '请通过上方“切换配置来源”完成来源更换。',
+    MANAGEMENT_BUSY: '其他管理操作正在进行，请稍后重试。',
+    CONFIG_CHANGED: '运行配置或快照已变化，请重新读取后再保存。',
+    RECOVERY_REQUIRED: '网关有待恢复的配置，请先检查诊断页面。',
+    INVALID_EDITOR_REQUEST: '编辑请求有误，请重新读取配置后再试。',
+    INVALID_EDITOR_CONFIG: '编辑内容格式无效，请检查配置结构。',
+    INVALID_PPSUB: 'PPsub 配置应包含订阅和正确的列表结构。',
+    INVALID_PPSUB_ROW: '此条配置必须是对象。',
+    INVALID_PPSUB_NAME: '名称不能为空或包含无效字符。',
+    DUPLICATE_PPSUB_NAME: '名称重复，请改用其他名称。',
+    INVALID_SUBSCRIPTION_SCHEDULE: '更新计划无效，请检查更新方式和间隔。',
+    INVALID_EDITOR_LIST: '列表中应逐项填写文本。',
+    INVALID_EDITOR_GROUP: '节点组格式无效。',
+    INVALID_EDITOR_RULE: '规则条目格式无效。',
+    INVALID_EDITOR_ID: '条目标识已失效，请重新读取配置。',
+    INVALID_GROUP_NAME: '节点组名称为空或包含无效字符。',
+    DUPLICATE_GROUP_NAME: '节点组名称重复。',
+    UNKNOWN_PROXY_PROVIDER: '找不到节点组使用的订阅提供商。',
+    INVALID_TEST_INTERVAL: '测速间隔应在 30 至 86400 秒之间。',
+    CLASH_RULE_KIND_CHANGED: '已有规则的类型无法直接更改。',
+    CLASH_RULE_URL_UNSUPPORTED: '请填写手写规则，或改用规则集提供商。',
+    CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED: '请在完整 Clash 配置中保留原有订阅提供商条目。',
+    CLASH_SUBSCRIPTION_RENAME_UNSUPPORTED: '完整 Clash 配置仅支持更改订阅链接。',
+    INVALID_URL: '请输入不含用户名、密码或片段的 HTTP 或 HTTPS 链接。',
+    INVALID_RULE_KIND: '请选择有效的规则类型。',
+    INVALID_RULE_PRIORITY: '规则优先级应为整数。',
+    INVALID_RULE_PROVIDER_NAME: '规则集名称为空或包含无效字符。',
+    DUPLICATE_RULE_PROVIDER: '规则集名称重复，请使用不同名称。',
+    INVALID_RULE_PROVIDER_URL: '规则集链接无效，请填写 HTTP 或 HTTPS 链接。',
+    INVALID_RULE_BEHAVIOR: '请选择有效的规则行为。',
+    INVALID_RULE_FORMAT: '请选择与规则行为匹配的格式。完整 Clash 模式需要明确格式。',
+    INVALID_RULE_PROVIDER_PROXY: '规则集下载代理的名称无效。',
+    INVALID_POLICY_INTERVAL: '请填写不超过 604800 的整数。完整 Clash 的更新间隔至少为 60 秒。',
+    UNSUPPORTED_RULE_PROVIDER_TYPE: '文件和内联规则集仅支持重命名。',
+    INVALID_RULE_LINE: '规则格式无效，请检查类型、匹配内容和目标。',
+    UNKNOWN_RULE_TARGET: '找不到此行指定的目标代理组。请创建该组或改用已有目标。',
+    UNKNOWN_RULE_PROVIDER: '找不到此行引用的规则集。',
+    INVALID_PRE_PROXY: '前置代理组不存在或引用了自身。',
+    INVALID_RESTART_HOUR: '定时重启的小时应为 0 至 23 的整数。',
+    INVALID_SS_CONFIG: 'Shadowsocks 加密方式或密码无效，请检查填写内容。',
+    RESERVED_PROVIDER_NAME: '提供商名称与系统生成的名称冲突。',
+    MIHOMO_POLICY_INVALID: 'Mihomo 未接受此配置。',
+  };
+  function knownEditorError(data) {
+    const mapped = Object.hasOwn(editorErrors, data?.error) ? editorErrors[data.error] : '';
+    if (!mapped) return '';
+    const sections = {subs:'订阅提供商', 'node-groups':'节点组', rules:'规则'};
+    const issue = data.issue;
+    const section = Object.hasOwn(sections, issue?.section) ? sections[issue.section] : '';
+    const location = section && Number.isSafeInteger(issue.index) && issue.index >= 0
+      ? `${section}第 ${issue.index + 1} 项${Number.isSafeInteger(issue.line) && issue.line >= 0 ? `第 ${issue.line + 1} 行` : ''}：`
+      : '';
+    return location + mapped + (data.error === 'MIHOMO_POLICY_INVALID' && typeof data.detail === 'string' ? ' ' + data.detail : '');
+  }
+  function localizedMessage(value) {
+    return typeof value === 'string' && /[\u3400-\u9fff]/.test(value) ? value : '';
+  }
+
   function secret() { return window.ppgwAuth?.active() ? 'session' : ''; }
   async function api(path, body, signal) {
     const token = secret();
@@ -21,7 +81,8 @@
       if (staleSession && body === undefined) return api(path, body, signal);
       if (response.status === 401 && !staleSession) window.ppgwAuth?.expired();
       const error = Error(staleSession ? '登录状态已更新，请重新预览后再提交。' : response.status === 401 ? loginRequired :
-        ({CONFIG_REVISION_CONFLICT:'配置已变化，请重新读取后再保存。',SOURCE_CHANGE_REQUIRES_SWITCH:'请通过上方“切换配置来源”完成来源更换。',MANAGEMENT_BUSY:'其他管理操作正在进行，请稍后重试。',CONFIG_CHANGED:'运行配置或快照已变化，请重新读取后再保存。'}[data.error] || data.error) || '暂时无法连接网关，请稍后重试。');
+        knownEditorError(data) || localizedMessage(data.message) || localizedMessage(data.error) || '请求未完成，请核对配置后重试。');
+      error.issue = data.issue;
       error.status = response.status;
       error.staleSession = staleSession;
       throw error;
@@ -149,6 +210,17 @@
       }
     }
 
+    function showEditorError(error) {
+      show(error.message, true);
+      if (error.issue) editor.showIssue?.(error.issue, error.message);
+    }
+    function showOperation(operation, prefix = '') {
+      const failed = ['failed', 'interrupted'].includes(operation.status);
+      const message = failed && knownEditorError(operation) || operation.message;
+      show(prefix + message, failed);
+      if (failed && operation.issue) editor.showIssue?.(operation.issue, message);
+    }
+
     function lockEditing(busy) {
       if (busy) {
         state.editingLocked = true;
@@ -269,7 +341,7 @@
         updateApply();
         if (operation) {
           const stages={fetching:'获取订阅',validating:'校验配置',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置'};
-          show((stages[operation.stage]?stages[operation.stage]+'…\n':'')+operation.message, ['failed','interrupted'].includes(operation.status));
+          showOperation(operation, stages[operation.stage] ? stages[operation.stage]+'…\n' : '');
           view.hidden = !['applied', 'unchanged'].includes(operation.status);
           view.style.display = view.hidden ? 'none' : 'inline-flex';
           if (operation.status !== 'applying') {
@@ -355,10 +427,10 @@
             show('正在统一保存并验证配置，网关可能短暂重启…');
             await request('apply',body);
             await refresh();
-          }catch(error){state.active=false;syncEditing();updateApply();show(error.message,true);}
+          }catch(error){state.active=false;syncEditing();updateApply();showEditorError(error);}
         });
         show('请在预览中确认保存；当前修改尚未生效。');
-      }catch(error){state.loading=false;state.active=false;syncEditing();updateApply();show(error.message,true);}
+      }catch(error){state.loading=false;state.active=false;syncEditing();updateApply();showEditorError(error);}
     };
 
     state.resumeAfterLogin = async () => {
@@ -380,7 +452,7 @@
       state.writeAllowed = data.ppsub_write_allowed !== false;
       state.editKind = data.edit_kind || 'ppsub';
       if (data.operation?.status === 'applying') { state.active = true; await refresh(); }
-      else { await state.loadCurrent(editor.importConfig, false); if(data.operation)show(data.operation.message,['failed','interrupted'].includes(data.operation.status)); }
+      else { await state.loadCurrent(editor.importConfig, false); if(data.operation)showOperation(data.operation); }
     }).catch(error => {
       if (state.stopped) return;
       // Keep the explicit read button available so a temporary failure is retryable.

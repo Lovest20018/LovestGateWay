@@ -5,8 +5,15 @@ import hashlib
 import json
 import re
 import subprocess
+from manage_common import ManagementError
 
 MAX_YAML_BYTES = 2 * 1024 * 1024
+DEFAULT_RULE_BEHAVIOR = 'classical'
+DEFAULT_RULE_INTERVAL = 86400
+RULE_FORMATS = {'yaml', 'text', 'mrs'}
+BUILTIN_TARGETS = {'DIRECT', 'REJECT', 'REJECT-DROP', 'COMPATIBLE', 'PASS', 'PASS-RULE', 'GLOBAL'}
+LOGIC_RULES = {'AND', 'OR', 'NOT'}
+COMMA_PAYLOAD_RULES = LOGIC_RULES | {'SUB-RULE', 'DOMAIN-REGEX', 'PROCESS-NAME-REGEX', 'PROCESS-PATH-REGEX'}
 
 
 def running_materialized_document():
@@ -98,8 +105,8 @@ def editor_config(document, subscription_url=''):
             raise ValueError('INVALID_CLASH_RULE_PROVIDER')
         rule_sets.append({'_clash_id': 'p:' + str(name), 'priority': (len(rule_sets) + 1) * 10, 'type': 'rule-set',
                           'name': str(name), 'url': row.get('url', ''),
-                          'behavior': row.get('behavior', 'classical'),
-                          'interval': row.get('interval', 86400),
+                          'behavior': row.get('behavior', DEFAULT_RULE_BEHAVIOR),
+                          'interval': row.get('interval', DEFAULT_RULE_INTERVAL),
                           'format': row.get('format', 'yaml'), 'proxy': row.get('proxy', '')})
     if rules:
         rule_sets.append({'_clash_id': 'rules', 'priority': (len(rule_sets) + 1) * 10,
@@ -140,28 +147,163 @@ def group_view(row):
 
 
 def provider_view(row):
-    return {key: row.get(key, default) or default for key, default in
-            (('name', ''), ('url', ''), ('behavior', 'domain'), ('format', 'auto'), ('interval', 86400), ('proxy', ''))}
+    return {key: row.get(key, default) for key, default in
+            (('name', ''), ('url', ''), ('behavior', DEFAULT_RULE_BEHAVIOR), ('format', 'yaml'),
+             ('interval', DEFAULT_RULE_INTERVAL), ('proxy', ''))}
 
 
 def rule_lines(row):
     if row.get('url') and row.get('type') != 'rule-set':
         raise ValueError('CLASH_RULE_URL_UNSUPPORTED')
-    return [line.strip() for line in strings(row.get('fixrule', [])) if line.strip()]
+    return [line.strip() for line in strings(row.get('fixrule', [])) if line.strip() and not line.lstrip().startswith('#')]
 
 
 def regex_keywords(items):
     return '|'.join('(?:' + (item[4:] if item.startswith('exp#') else re.escape(item)) + ')' for item in items)
 
 
+class EditorIssue(ManagementError):
+    def __init__(self, code, section, index, field, line=None):
+        super().__init__(code)
+        self.issue = {'section': section, 'index': index, 'field': field}
+        if line is not None:
+            self.issue['line'] = line
+
+
+def check_http_rule_provider(row, index, *, native=False):
+    from manage_model import validate
+    try:
+        validate('ini', 'test_node_url', row['url'])
+    except ManagementError:
+        raise EditorIssue('INVALID_RULE_PROVIDER_URL', 'rules', index, 'url') from None
+    behavior, fmt = row['behavior'], row['format']
+    formats = RULE_FORMATS | {'auto'} if native else RULE_FORMATS
+    if not isinstance(behavior, str) or behavior not in {'classical', 'domain', 'ipcidr'}:
+        raise EditorIssue('INVALID_RULE_BEHAVIOR', 'rules', index, 'behavior')
+    if not isinstance(fmt, str) or fmt not in formats or (fmt == 'mrs' and behavior == 'classical'):
+        raise EditorIssue('INVALID_RULE_FORMAT', 'rules', index, 'format')
+    interval = row['interval']
+    if type(interval) is not int or not ((-(2**63) if native else 60) <= interval <= 604800):
+        raise EditorIssue('INVALID_POLICY_INTERVAL', 'rules', index, 'interval')
+    proxy = row['proxy']
+    if not isinstance(proxy, str) or len(proxy) > 200 or any(ord(c) < 32 for c in proxy):
+        raise EditorIssue('INVALID_RULE_PROVIDER_PROXY', 'rules', index, 'proxy')
+
+
+def trimmed_span(rule, start, end):
+    while start < end and rule[start].isspace():
+        start += 1
+    while end > start and rule[end-1].isspace():
+        end -= 1
+    return start, end
+
+
+def rule_fields(rule):
+    """Locate target and payload using the Mihomo rule-type delimiter rules."""
+    first = rule.find(',')
+    if first < 1 or not (kind := rule[:first].strip().upper()):
+        raise ValueError('INVALID_RULE_LINE')
+    if kind == 'MATCH':
+        payload = None
+        start = first + 1
+    else:
+        separator = rule.rfind(',') if kind in COMMA_PAYLOAD_RULES else rule.find(',', first + 1)
+        if separator <= first:
+            raise ValueError('INVALID_RULE_LINE')
+        payload = trimmed_span(rule, first + 1, separator)
+        if payload[0] == payload[1]:
+            raise ValueError('INVALID_RULE_LINE')
+        start = separator + 1
+    end = -1 if kind in COMMA_PAYLOAD_RULES else rule.find(',', start)
+    target = trimmed_span(rule, start, len(rule) if end < 0 else end)
+    if target[0] == target[1]:
+        raise ValueError('INVALID_RULE_LINE')
+    return kind, payload, target
+
+
+def logical_children(rule, start, end):
+    if start >= end or rule[start] != '(' or rule[end-1] != ')':
+        raise ValueError('INVALID_RULE_LINE')
+    children, depth = [], 0
+    for pos in range(start + 1, end - 1):
+        char = rule[pos]
+        if char == '(':
+            if depth == 0:
+                child = pos + 1
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if depth < 0:
+                raise ValueError('INVALID_RULE_LINE')
+            if depth == 0:
+                children.append((child, pos))
+        elif depth == 0 and char != ',' and not char.isspace():
+            raise ValueError('INVALID_RULE_LINE')
+    if depth != 0 or not children:
+        raise ValueError('INVALID_RULE_LINE')
+    return children
+
+
+def rule_provider_spans(rule, kind, payload):
+    if payload is None:
+        return []
+    if kind == 'SUB-RULE':
+        # The core wraps a SUB-RULE condition in its own outer parentheses.
+        start, end = payload
+        if rule[start] != '(' or rule[end-1] != ')':
+            raise ValueError('INVALID_RULE_LINE')
+        first = rule.find(',', start + 1, end - 1)
+        if first < 0:
+            raise ValueError('INVALID_RULE_LINE')
+        kind, payload = rule[start+1:first].strip().upper(), (first+1, end-1)
+    result = []
+    pending = [(kind, payload)]
+    while pending:
+        kind, (start, end) = pending.pop()
+        if kind == 'RULE-SET':
+            separator = rule.find(',', start, end)
+            span = trimmed_span(rule, start, end if separator < 0 else separator)
+            if span[0] == span[1]:
+                raise ValueError('INVALID_RULE_LINE')
+            result.append(span)
+        elif kind in LOGIC_RULES:
+            start, end = trimmed_span(rule, start, end)
+            children = logical_children(rule, start, end)
+            if kind == 'NOT' and len(children) != 1:
+                raise ValueError('INVALID_RULE_LINE')
+            for start, end in reversed(children):
+                first = rule.find(',', start, end)
+                if first < 0 or not (child_kind := rule[start:first].strip().upper()):
+                    raise ValueError('INVALID_RULE_LINE')
+                if child_kind in {'MATCH', 'SUB-RULE'} or not rule[first+1:end].strip():
+                    raise ValueError('INVALID_RULE_LINE')
+                pending.append((child_kind, (first+1, end)))
+    return result
+
+
 def rename_rule(rule, names):
-    parts = rule.split(',')
-    index = len(parts) - 1
-    while index > 0 and parts[index].strip().lower() in {'no-resolve', 'src', 'dst', 'no-redir', 'not'}:
-        index -= 1
-    if index > 0 and parts[index].strip() in names:
-        parts[index] = names[parts[index].strip()]
-        return ','.join(parts)
+    if not names:
+        return rule
+    try:
+        kind, _, (start, end) = rule_fields(rule)
+    except ValueError:
+        return rule
+    target = rule[start:end]
+    return rule[:start] + names[target] + rule[end:] if kind != 'SUB-RULE' and target in names else rule
+
+
+def rename_rule_providers(rule, names):
+    if not names:
+        return rule
+    try:
+        kind, payload, _ = rule_fields(rule)
+        spans = rule_provider_spans(rule, kind, payload)
+    except ValueError:
+        return rule
+    for start, end in reversed(spans):
+        provider = rule[start:end]
+        if provider in names:
+            rule = rule[:start] + names[provider] + rule[end:]
     return rule
 
 
@@ -181,6 +323,9 @@ def merge_editor(document, baseline, submitted):
     """Apply only changed editor fields to copies of original YAML objects."""
     if not isinstance(submitted, dict):
         raise ValueError('INVALID_EDITOR_CONFIG')
+    for key in ('subs', 'node-groups', 'rules'):
+        if not isinstance(submitted.get(key, []), list) or len(submitted.get(key, [])) > 5000:
+            raise ValueError('INVALID_EDITOR_LIST')
     result = deepcopy(document)
     old_groups = {row['_clash_id']: (row, original) for row, original in
                   zip(baseline['node-groups'], document.get('proxy-groups', []))}
@@ -189,7 +334,7 @@ def merge_editor(document, baseline, submitted):
         if not isinstance(row, dict):
             raise ValueError('INVALID_EDITOR_GROUP')
         identity = row.get('_clash_id', '')
-        if identity and (identity not in old_groups or identity in seen):
+        if not isinstance(identity, str) or (identity and (identity not in old_groups or identity in seen)):
             raise ValueError('INVALID_EDITOR_ID')
         seen.add(identity) if identity else None
         old, original = old_groups[identity] if identity else ({'include': [], 'subs': ['all']}, {})
@@ -221,8 +366,12 @@ def merge_editor(document, baseline, submitted):
                 else:
                     group.pop(native, None)
         # Pre-proxy is materialized as provider override, not an ignored group field.
-        if not identity or edited['mode'] != previous['mode']:
+        mode_changed = edited['mode'] != previous['mode']
+        if not identity or mode_changed:
             group['type'] = 'select' if edited['mode'] == 'smart' else edited['mode']
+        if mode_changed and edited['mode'] in {'select', 'smart'} and original.get('type') in {'url-test', 'fallback'}:
+            for key in ('url', 'interval', 'expected-status', 'max-failed-times'):
+                group.pop(key, None)
         if edited['mode'] == 'smart':
             group['proxies'] = list(dict.fromkeys(group.get('proxies', []) + ['smartspeedtest@hide']))
         elif 'proxies' in group and 'smartspeedtest@hide' in group['proxies']:
@@ -242,12 +391,12 @@ def merge_editor(document, baseline, submitted):
     if len({row['name'] for row in groups}) != len(groups):
         raise ValueError('DUPLICATE_GROUP_NAME')
     old_rules = {row['_clash_id']: row for row in baseline['rules']}
-    providers, lines, seen = {}, [], set()
-    for row in submitted.get('rules', []):
+    providers, lines, seen, provider_renames = {}, [], set(), {}
+    for index, row in enumerate(submitted.get('rules', [])):
         if not isinstance(row, dict):
             raise ValueError('INVALID_EDITOR_RULE')
         identity = row.get('_clash_id', '')
-        if identity and (identity not in old_rules or identity in seen):
+        if not isinstance(identity, str) or (identity and (identity not in old_rules or identity in seen)):
             raise ValueError('INVALID_EDITOR_ID')
         seen.add(identity) if identity else None
         if row.get('type') == 'rule-set':
@@ -256,27 +405,37 @@ def merge_editor(document, baseline, submitted):
                 raise ValueError('CLASH_RULE_KIND_CHANGED')
             previous, edited = provider_view(old), provider_view(row)
             original = document.get('rule-providers', {}).get(old.get('name'), {})
-            provider = deepcopy(original)
-            if not identity:
-                provider['type'] = 'http'
-            for key in ('url', 'behavior', 'format', 'interval', 'proxy'):
-                if edited[key] != previous[key] or not identity:
-                    if key == 'format' and edited[key] == 'auto':
-                        provider.pop('format', None)
-                    elif key == 'proxy' and not edited[key]:
+            provider = deepcopy(original) if identity else {'type': 'http'}
+            name = edited['name']
+            if (not isinstance(name, str) or not name.strip() or name != name.strip()
+                    or len(name) > 200 or any(c in name for c in '\n\r,')):
+                raise EditorIssue('INVALID_RULE_PROVIDER_NAME', 'rules', index, 'name')
+            if name in providers:
+                raise EditorIssue('DUPLICATE_RULE_PROVIDER', 'rules', index, 'name')
+            changed = [key for key in ('url', 'behavior', 'format', 'interval', 'proxy')
+                       if not identity or edited[key] != previous[key]]
+            if provider.get('type', 'http') != 'http':
+                if changed:
+                    raise EditorIssue('UNSUPPORTED_RULE_PROVIDER_TYPE', 'rules', index, changed[0])
+            elif changed or edited['format'] == 'auto':
+                check_http_rule_provider(edited, index)
+                for key in changed:
+                    if key == 'proxy' and not edited[key]:
                         provider.pop(key, None)
                     else:
                         provider[key] = edited[key]
-            name = edited['name']
-            if not isinstance(name, str) or not name or name in providers or any(c in name for c in '\n\r,'):
-                raise ValueError('INVALID_RULE_PROVIDER_NAME')
             providers[name] = provider
             if identity and name != old['name']:
-                renames['RULE-SET:' + old['name']] = name
+                provider_renames[old['name']] = name
         else:
             if identity and old_rules[identity].get('type') == 'rule-set':
                 raise ValueError('CLASH_RULE_KIND_CHANGED')
-            lines.extend(rule_lines(row))
+            try:
+                lines.extend(rule_lines(row))
+            except ValueError as error:
+                code = str(error)
+                field = 'url' if code == 'CLASH_RULE_URL_UNSUPPORTED' else 'fixrule'
+                raise EditorIssue(code, 'rules', index, field) from None
     if groups != document.get('proxy-groups', []):
         result['proxy-groups'] = groups
     if providers != document.get('rule-providers', {}):
@@ -284,26 +443,23 @@ def merge_editor(document, baseline, submitted):
     # Whitespace-only normalization must not cause a policy rewrite.
     if lines != [line.strip() for line in document.get('rules', []) if line.strip()]:
         result['rules'] = lines
-    group_renames = {key: value for key, value in renames.items() if not key.startswith('RULE-SET:')}
     for group in result.get('proxy-groups', []):
         if 'proxies' in group:
-            group['proxies'] = [group_renames.get(name, name) for name in group['proxies']]
+            group['proxies'] = [renames.get(name, name) for name in group['proxies']]
     if 'rules' in result:
-        result['rules'] = [rename_rule(line, group_renames) for line in result['rules']]
-    for index, line in enumerate(result.get('rules', [])):
-        parts = line.split(',')
-        if len(parts) > 1 and parts[0].strip().upper() == 'RULE-SET' and 'RULE-SET:' + parts[1].strip() in renames:
-            parts[1] = renames['RULE-SET:' + parts[1].strip()]
-            result['rules'][index] = ','.join(parts)
-    rename_references(result, group_renames)
+        result['rules'] = [rename_rule_providers(rename_rule(line, renames), provider_renames)
+                           for line in result['rules']]
+    rename_references(result, renames)
     source_url = None
     old_subs = {row.get('_clash_id', row['name']): row for row in baseline.get('subs', [])}
     new_subs = submitted.get('subs', [])
     if len(new_subs) != len(old_subs):
         raise ValueError('CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED')
     for row in new_subs:
+        if not isinstance(row, dict):
+            raise ValueError('CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED')
         key = row.get('_clash_id', row.get('name'))
-        if key not in old_subs:
+        if not isinstance(key, str) or key not in old_subs:
             raise ValueError('CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED')
         old = old_subs[key]
         if row.get('name') != old.get('name'):
@@ -318,7 +474,7 @@ def merge_editor(document, baseline, submitted):
                 result['proxy-providers'][old['name']]['url'] = url
             else:
                 source_url = url
-    return result, source_url, group_renames
+    return result, source_url, renames
 
 
 def feature_options(config):

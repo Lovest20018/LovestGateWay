@@ -36,8 +36,28 @@ async function exercise(browser,kind){
       if(target==='/sniffbox/subscription/config')return reply({edit_kind:kind,config,base_revision:model.revision,settings_revision:model.revision,snapshot_id:'fixture-snapshot',write_allowed:true,node_choices:['N1'],notice:'Synthetic source'});
       if(target==='/sniffbox/subscription/apply'){
         const body=request.postDataJSON(),submitted=JSON.parse(body.value);
-        if(kind==='ppsub')python("from unified_editor import validate_ppsub;v=json.load(sys.stdin);validate_ppsub(v);print(json.dumps({'valid':True}))",submitted);
-        else merged=python("from clash_ppsub import merge_editor,feature_options;v=json.load(sys.stdin);feature_options(v['submitted']);print(json.dumps(merge_editor(v['raw'],v['baseline'],v['submitted'])[0]))",{raw,baseline,submitted});
+        const validation=python(`
+from unified_editor import validate_ppsub, editor_error_details
+from clash_ppsub import merge_editor, feature_options
+fixture = json.load(sys.stdin)
+submitted = fixture['submitted']
+try:
+    if fixture['kind'] == 'ppsub':
+        validate_ppsub(submitted)
+        document = None
+    else:
+        feature_options(submitted)
+        document = merge_editor(fixture['raw'], fixture['baseline'], submitted)[0]
+except ValueError as error:
+    details = editor_error_details(error)
+    if details is None:
+        raise
+    print(json.dumps({'failure': details}))
+else:
+    print(json.dumps({'document': document}))
+`,{kind,raw,baseline,submitted});
+        if(validation.failure)return reply(validation.failure,400);
+        merged=validation.document;
         validations++;posted=submitted;
         if(body.dry_run)return reply({action:'restart',editor_changed:true,changes:{},application:{action:'restart',core_active:true,services:[]}});
         config=submitted;operation={status:'applied',message:'Synthetic editor saved'};return reply(operation,202);
@@ -107,12 +127,31 @@ async function exercise(browser,kind){
     await group.getByRole('button',{name:'复制',exact:true}).click();assert.equal(await page.locator('.groups .item').count(),2);
     await page.locator('.groups .item').nth(1).getByRole('button',{name:'上移',exact:true}).click();assert.equal(await page.locator('.groups .item').first().locator('[data-field="name"]').inputValue(),'Edited Main 副本');
     page.once('dialog',dialog=>dialog.accept());await page.locator('.groups .item').first().getByRole('button',{name:'删除',exact:true}).click();
+    await page.getByRole('button',{name:'添加规则',exact:true}).click();
+    const newRule=page.locator('.rules .item').last();
+    await newRule.getByLabel('规则类型',{exact:true}).selectOption('rule-set');
+    assert.equal(await newRule.locator('[data-field=behavior]').inputValue(),'classical');
+    assert.equal(await newRule.locator('[data-field=format]').inputValue(),kind==='ppsub'?'auto':'yaml');
+    assert.equal(await newRule.locator('[data-field=format] option[value=auto]').count(),kind==='ppsub'?1:0);
+    assert.equal(await newRule.locator('[data-field=interval]').inputValue(),'86400');
+    await fill(newRule,'name','Rules');
+    await fill(newRule,'url','https://example.com/new-rule-set');
+    await page.getByRole('button',{name:'保存并应用',exact:true}).click();
+    const issue=await page.locator('[data-editor-issue]').textContent();
+    assert.match(issue,/规则集名称重复/);
+    assert.doesNotMatch(issue,/DUPLICATE_RULE_PROVIDER/);
+    assert.equal(await newRule.locator('[data-field=name]').getAttribute('aria-invalid'),'true');
+    assert.equal(await page.locator('#preview-dialog').isVisible(),false);
+    page.once('dialog',dialog=>dialog.accept());
+    await newRule.getByRole('button',{name:'删除',exact:true}).click();
     const ruleProvider=page.locator('.rules .item').filter({has:page.locator('[data-field="behavior"]')});await fill(ruleProvider,'name','EditedRules');await fill(ruleProvider,'url','https://example.com/edited-rules');await ruleProvider.locator('[data-field="behavior"]').selectOption('classical');await ruleProvider.locator('[data-field="format"]').selectOption('text');await fill(ruleProvider,'interval','7200');await fill(ruleProvider,'proxy','DIRECT');
     const manual=page.locator('.rules .item').filter({has:page.locator('[data-field="fixrule"]')}).first();await fill(manual,'remark','Edited manual rules');await fill(manual,'fixrule','DOMAIN,edited.example,Edited Main\nMATCH,Edited Main');
     if(kind==='clash_patch')assert.equal(await manual.getByLabel('规则类型',{exact:true}).isDisabled(),true);
     else{const urlRules=page.locator('.rules .item').last();await fill(urlRules,'url','https://example.com/edited-download');await urlRules.locator('[data-field="isforced"]').uncheck();}
     for(const index of [0,1,2])await page.locator('.monitor fieldset').nth(index).locator('[data-field="enable"]').check();
     await fill(page.locator('.monitor fieldset').nth(0),'url','https://example.com/global');await fill(page.locator('.monitor fieldset').nth(0),'retries','3');await fill(page.locator('.monitor fieldset').nth(0),'expected_status','204');
+    assert.equal(await page.locator('.monitor fieldset').nth(1).locator('[data-field=cipher]').inputValue(),'aes-128-gcm');
+    assert.equal(await page.locator('.source-editor select').evaluateAll(controls=>controls.filter(control=>control.selectedIndex===-1).length),0);
     await fill(page.locator('.monitor fieldset').nth(1),'password','fixture-password-123456');await page.locator('.monitor fieldset').nth(1).locator('[data-field="cipher"]').selectOption('aes-128-gcm');await fill(page.locator('.monitor fieldset').nth(2),'hour','5');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});
     await fill(page.locator('.groups .item').first(),'name','Edited after preview');await page.locator('#apply').click();

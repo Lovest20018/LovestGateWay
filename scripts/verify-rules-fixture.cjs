@@ -58,7 +58,7 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
         }
         if(target==='/sniffbox/ruletest'){
           assert.equal(method,'POST');assert.deepEqual(Object.keys(body),['url']);if(testStatus!==200)return reply({ok:false},testStatus);
-          return reply({ok:true,url:body.url,probe:{ok:true,status:204,ms:14},logs:[{type:'info',payload:testNoMatch?"[TCP] 127.0.0.1:9000 --> example.com:80 doesn't match any rule using DIRECT":'[TCP] 127.0.0.1:9000 --> example.com:80 match DOMAIN-SUFFIX(example.com) using '+main},{type:'debug',payload:evil}]});
+          return reply({ok:true,url:body.url,probe:{ok:true,status:204,ms:14},logs:[{type:'info',payload:testNoMatch?"[TCP] 127.0.0.1:9000 --> example.com:80 doesn't match any rule using DIRECT":'[TCP] 127.0.0.1:9000 --> example.com:80 match DOMAIN-SUFFIX(example.com) using '+main+'['+data.proxies[main].now+']'},{type:'debug',payload:evil}]});
         }
         if(target==='/connections')return reply({connections:[],uploadTotal:0,downloadTotal:0});
         if(target==='/sniffbox/rules/matches')return reply({total:0,rules:[]});
@@ -91,6 +91,18 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
     await rules.locator('.rule-test>summary').click();
     const input=rules.getByLabel('规则测试网址',{exact:true}),testButton=rules.getByRole('button',{name:'测试',exact:true});await input.fill('ftp://example.com');const invalidAt=writes().length;await testButton.click();await status.filter({hasText:'HTTP 或 HTTPS'}).waitFor();assert.equal(writes().length,invalidAt);
     await input.fill('example.com/path');await testButton.click();await rules.getByRole('button',{name:'定位规则 #7014',exact:true}).waitFor();assert.deepEqual(writes().at(-1).body,{url:'http://example.com/path'});await search.fill('does-not-match');await rules.getByRole('button',{name:'定位规则 #7014',exact:true}).click();assert.equal(await rules.locator('tbody tr').count(),1);assert.equal(await rules.locator('tbody tr.matched').getAttribute('data-index'),'7014');await rules.getByRole('button',{name:'取消定位',exact:true}).click();await rules.getByText('没有匹配的规则。',{exact:true}).waitFor();await search.fill('');
+    const testGroup=rules.locator('.rule-test-match').getByRole('button',{name:main,exact:true});
+    assert.equal(await testGroup.isEnabled(),true);
+    assert.match(await rules.locator('.rule-test-match').innerText(),new RegExp(beta.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+    await testGroup.click();
+    await drawer.waitFor();
+    await drawer.getByRole('button',{name:'关闭',exact:true}).click();
+    await rules.getByRole('button',{name:'定位规则 #7014',exact:true}).click();
+    await rules.locator('.rule-test>summary').click();
+    await rules.getByRole('button',{name:'清除定位',exact:true}).click();
+    assert.equal(await rules.locator('tbody tr').count(),100);
+    assert.equal(await search.evaluate(node=>node===document.activeElement),true);
+    await rules.locator('.rule-test>summary').click();
     assert.equal(await rules.locator('.rule-test-output img').count(),0);await capture('rules-source-test.png');testNoMatch=true;await testButton.click();await rules.getByText('日志报告未匹配规则 → ',{exact:false}).waitFor();assert.equal(await rules.getByRole('button',{name:/定位规则/}).count(),0);testNoMatch=false;testStatus=429;await testButton.click();await status.filter({hasText:'已有测试正在运行'}).waitFor();testStatus=200;
     ruleReadStatus=503;await rules.getByRole('button',{name:'刷新',exact:true}).click();await status.filter({hasText:'HTTP 503'}).waitFor();assert.equal(await toggle.isDisabled(),true);ruleReadStatus=200;malformedRules=true;await rules.getByRole('button',{name:'刷新',exact:true}).click();await status.filter({hasText:'规则状态暂不可用'}).waitFor();assert.equal(await toggle.isDisabled(),true);malformedRules=false;await rules.getByRole('button',{name:'刷新',exact:true}).click();await status.waitFor({state:'hidden'});await ready();
     holdRead=true;await rules.getByRole('button',{name:'刷新',exact:true}).click();for(let i=0;i<100&&!heldReads.length;i++)await page.waitForTimeout(20);assert.ok(heldReads.length);await search.fill('example.com');await search.focus();holdRead=false;for(const release of heldReads)release();heldReads=[];await ready();assert.equal(await search.inputValue(),'example.com');assert.equal(await search.evaluate(node=>document.activeElement===node),true);await search.fill('');

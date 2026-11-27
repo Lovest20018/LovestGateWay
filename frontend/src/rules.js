@@ -16,7 +16,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   let timer=null,sequence=0,readController=null;const controllers=new Set(),rowViews=new Map(),providerViews=new Map();
   const page=make('section',undefined,'rules-page layout-page');page.id='rules-page';
   const header=make('header',undefined,'rules-head layout-heading'),titles=make('div',undefined,'layout-title'),actions=make('div',undefined,'layout-actions'),toolbar=make('div',undefined,'layout-toolbar layout-toolbar--panel'),title=make('h1','规则'),count=make('span','正在读取…','rules-count'),search=make('input');search.type='search';search.placeholder='搜索规则、目标或匹配内容';search.setAttribute('aria-label','搜索规则');
-  search.addEventListener('input',()=>{query=search.value;pageNumber=1;renderRows();renderProviders();});
+  search.addEventListener('input',()=>{query=search.value;if(located!==null)setLocated(null);else{pageNumber=1;renderRows();}renderProviders();});
   const geoVersion=make('small',undefined,'rules-geo-version'),geoButton=button('手动更新 GEO 数据',()=>{if(!busy&&!paused){confirmText.textContent='数据库每 24 小时会自动尝试更新。手动下载并重新加载 GEO 数据会引起连接中断，确认立即更新吗？';confirmDialog.showModal();}}),modes=modeControl(next=>perform('切换模式',async()=>{await request('/configs',{method:'PATCH',body:{mode:next}});mode=next;})),modeButton=modes.root,refreshButton=button('刷新',()=>refresh());
   geoButton.dataset.action='geo';refreshButton.prepend(icon('history'));titles.append(title,count);actions.append(modeButton,refreshButton);header.append(titles,actions);toolbar.append(search);
   const status=make('p',undefined,'rules-status');status.setAttribute('role','status');status.hidden=true;const notice=make('p','当前为 GLOBAL 全局模式，规则未生效。','rules-notice');notice.hidden=true;
@@ -31,8 +31,11 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function applyColumns(){for(const row of [headRow,...tbody.children]){if(row.classList.contains('rules-empty'))continue;[...row.children].forEach((cell,index)=>{cell.hidden=visibleColumns[index]===false;});}table.style.minWidth=Object.values(visibleColumns).some(value=>!value)?'760px':'990px';}
   for(const [index,cell]of [...headRow.children].entries()){if(index<4)continue;const control=make('input');control.type='checkbox';control.checked=visibleColumns[index]=savedColumns[index]!==false;control.setAttribute('aria-label','显示规则列 '+cell.textContent);control.addEventListener('change',()=>{visibleColumns[index]=control.checked;try{localStorage.setItem('ppgw-rules-columns',JSON.stringify(visibleColumns));}catch{}applyColumns();});columnPanel.append(field(cell.textContent,control));}
   const tableTools=make('div',undefined,'layout-toolbar layout-table-tools');tableTools.append(make('h2','规则列表'),columnPanel);tableCard.prepend(tableTools);
+  const locationBar=make('div',undefined,'layout-toolbar'),locationText=make('span');
+  locationBar.hidden=true;locationText.setAttribute('role','status');
+  locationBar.append(locationText,button('清除定位',()=>{setLocated(null);search.focus();}));
   const pagination=make('div',undefined,'rules-pagination'),size=make('select');size.setAttribute('aria-label','每页规则数');for(const value of ['auto','20','50','100','all']){const option=make('option',({auto:'自动',all:'全部'})[value]||value);option.value=value;size.append(option);}size.value=pageSize;size.addEventListener('change',()=>{pageSize=size.value;pageNumber=1;try{sessionStorage.setItem('rules_pageSize',pageSize);}catch{}renderRows();});
-  const previous=button('上一页',()=>{pageNumber--;renderRows();}),next=button('下一页',()=>{pageNumber++;renderRows();}),pageCount=make('span');pagination.append(field('每页',size),previous,pageCount,next);tableCard.append(tip,tableWrap,pagination);
+  const previous=button('上一页',()=>{pageNumber--;renderRows();}),next=button('下一页',()=>{pageNumber++;renderRows();}),pageCount=make('span');pagination.append(field('每页',size),previous,pageCount,next);tableCard.append(tip,locationBar,tableWrap,pagination);
   const confirmDialog=make('dialog',undefined,'rules-dialog rules-confirm');confirmDialog.setAttribute('aria-label','确认更新 GEO 数据');const confirmTitle=make('h2','更新 GEO 数据'),confirmText=make('p'),cancel=button('取消',()=>confirmDialog.close()),confirm=button('确认更新',()=>{if(!confirmDialog.open)return;confirmDialog.close();perform('GEO 更新',async()=>{const result=geoResult(await request('/upgrade/geo',{method:'POST',timeout:120000}));geo=result.files;renderGeo();if(!result.complete)throw Error(result.message);return result.message;},true);});confirm.dataset.action='confirm-geo';confirmDialog.append(confirmTitle,confirmText,cancel,confirm);
   const drawer=make('dialog',undefined,'rules-dialog rule-group-dialog');drawer.setAttribute('aria-label','目标节点组');const drawerHead=make('header'),back=button('返回上层',()=>{drawerPath.pop();drawerLimit=120;renderDrawer();}),drawerTitle=make('h2'),close=button('关闭',()=>drawer.close());drawerHead.append(back,drawerTitle,close);const drawerHint=make('p',undefined,'rule-group-hint'),drawerList=make('div',undefined,'rule-group-list'),more=button('显示更多',()=>{drawerLimit+=120;renderDrawer();});drawer.append(drawerHead,drawerHint,drawerList,more);drawer.addEventListener('close',()=>{drawerPath=[];});
   const feedback=make('div',undefined,'layout-feedback'),tools=make('div',undefined,'layout-tools-grid');feedback.append(status,notice);tools.append(testSection,dataSection);page.append(header,toolbar,feedback,tools,tableCard,confirmDialog,drawer);host.replaceChildren(page);
@@ -82,7 +85,8 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
     const view={tr,cells,toggle,target,chain,row};toggle.addEventListener('change',()=>{const current=view.row,disabled=!toggle.checked;toggle.checked=current.extra.disabled!==true;if(!current.canToggle||busy||paused||reading||!rulesCurrent||!mode||mode!=='rule')return;perform(disabled?'临时停用规则':'临时启用规则',async()=>{await request('/rules/disable',{method:'PATCH',body:{[String(current.index)]:disabled}});if(disposed)return;current.extra.disabled=disabled;return '下次配置重载后恢复。';});});return view;
   }
   function renderRows(){
-    const selection=rulePage(rows,{query,located,page:pageNumber,pageSize}),matched=matchLog(testResult?.logs,rows)?.row;pageNumber=selection.page;const keep=new Set();
+    const selection=rulePage(rows,{query,located,page:pageNumber,pageSize}),matched=matchLog(testResult?.logs,rows,proxies)?.row;pageNumber=selection.page;const keep=new Set();
+    locationBar.hidden=located===null;locationText.textContent=located===null?'':'当前仅显示定位规则 #'+located;
     for(const [position,row]of selection.rows.entries()){
       const key=String(row.position);keep.add(key);let view=rowViews.get(key);if(!view){view=createRow(row);rowViews.set(key,view);}view.row=row;view.tr.dataset.index=String(row.index);view.toggle.setAttribute('aria-label','启用规则 '+row.index);view.toggle.checked=row.extra.disabled!==true;view.toggle.hidden=!row.canToggle;view.tr.classList.toggle('off',row.extra.disabled===true);view.tr.classList.toggle('matched',matched===row);
       view.target.textContent=row.proxy||'—';view.target.title=row.proxy;view.target.disabled=!proxiesCurrent||!isGroup(proxies[row.proxy]);const chain=proxyChain(proxies,row.proxy),end=chain.at(-1),label=end?nodeLabel(end,optimize()):null;view.chain.textContent=label?'→ '+[label.flag,label.display].filter(Boolean).join(' '):'';view.chain.title=chain.join(' → ');
@@ -107,13 +111,27 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
     }
     more.hidden=drawerLimit>=group.all.length;more.textContent='显示更多（剩余 '+Math.max(0,group.all.length-drawerLimit)+' 个）';actionState();
   }
+  function setLocated(index){
+    located=index;pageNumber=1;renderTest();renderRows();
+  }
   async function runTest(){
     if(busy||paused||!loaded)return;let url;try{url=testAddress(testInput.value);}catch(error){message(error.message);return;}
     testResult=null;located=null;renderTest();await perform('规则测试',async()=>{const result=await request('/sniffbox/ruletest',{method:'POST',body:{url},timeout:30000});if(disposed)return;if(result?.ok!==true)throw Error(typeof result?.error==='string'?result.error:'测试结果未确认。');testResult={url:typeof result.url==='string'?result.url:url,probe:result.probe,logs:Array.isArray(result.logs)?result.logs:[],logsError:typeof result.logsError==='string'?result.logsError:''};renderTest();});
   }
   function renderTest(){
     testOutput.replaceChildren();if(!testResult)return;const {probe,logs}=testResult;testOutput.append(make('p','测试网址：'+testResult.url));const summary=probe&&typeof probe==='object'?'请求结果：'+(typeof probe.status==='number'?'HTTP '+probe.status:typeof probe.error==='string'?probe.error:'未确认')+(typeof probe.ms==='number'?' · '+probe.ms+' ms':''):'请求结果未确认。';testOutput.append(make('p',summary));
-    const match=matchLog(logs,rows);if(match){const line=make('p',undefined,'rule-test-match');line.append(document.createTextNode(match.type?'日志匹配：'+match.type+(match.payload?'('+match.payload+')':'')+' → ':match.none?'日志报告未匹配规则 → ':'日志使用目标 → '));const target=button(match.chain,()=>{if(isGroup(proxies[match.chain]))openGroup(match.chain);});target.disabled=!isGroup(proxies[match.chain]);line.append(target);const chain=proxyChain(proxies,match.chain);if(chain.length)line.append(make('span',' → '+chain.join(' → ')));testOutput.append(line);if(match.row){const locate=button(located===null?'定位规则 #'+match.row.index:'取消定位',()=>{located=located===null?match.row.index:null;pageNumber=1;renderTest();renderRows();});testOutput.append(locate);}}
+    const match=matchLog(logs,rows,proxies);
+    if(match){
+      const line=make('p',undefined,'rule-test-match');
+      line.append(document.createTextNode(match.type?'日志匹配：'+match.type+(match.payload?'('+match.payload+')':'')+' → ':match.none?'日志报告未匹配规则 → ':'日志使用目标 → '));
+      const target=button(match.root,()=>{if(proxiesCurrent&&isGroup(proxies[match.root]))openGroup(match.root);});
+      target.disabled=!proxiesCurrent||!isGroup(proxies[match.root]);line.append(target);
+      const chain=match.node?[match.node]:proxyChain(proxies,match.root);
+      if(chain.length)line.append(make('span',' → '+chain.join(' → ')));
+      testOutput.append(line);
+      if(match.row)testOutput.append(button(located===null?'定位规则 #'+match.row.index:'取消定位',
+        ()=>setLocated(located===null?match.row.index:null)));
+    }
     else testOutput.append(make('p','未取得可识别的匹配日志，不能据此确定命中规则。'));
     const details=make('details'),heading=make('summary','相关日志（'+logs.length+'）'),log=make('pre');log.textContent=logs.slice(0,2000).map(item=>(typeof item?.type==='string'?'['+item.type+'] ':'')+(typeof item?.payload==='string'?item.payload:'')).join('\n')||testResult.logsError||'暂无日志。';details.append(heading,log);testOutput.append(details);
   }

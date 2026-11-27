@@ -81,7 +81,7 @@ pub async fn run(
     let probe_out = probe_out?;
 
     let lines = tail.map(|t| t.lines).unwrap_or_default();
-    let (picked, ports) = select_lines(&lines, &host);
+    let (picked, ports) = select_lines(&lines, &host, port);
     Ok(json!({
         "ok": true,
         "url": url,
@@ -140,12 +140,11 @@ fn normalize_url(raw: &str) -> Result<String, String> {
 }
 
 fn split_host_port(url: &str) -> (String, u16) {
-    let https = url.starts_with("https://");
-    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let https = scheme.eq_ignore_ascii_case("https");
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let authority = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
     let (host, port) = match authority.strip_prefix('[') {
-
         Some(v6) => match v6.split_once(']') {
             Some((h, tail)) => (h, tail.strip_prefix(':').and_then(|p| p.parse().ok())),
             None => (v6, None),
@@ -161,26 +160,52 @@ fn split_host_port(url: &str) -> (String, u16) {
     )
 }
 
-fn select_lines(lines: &[(String, String)], host: &str) -> (Vec<Value>, BTreeSet<u16>) {
-    let hostl = host.to_ascii_lowercase();
+fn log_destination(s: &str) -> Option<(&str, u16)> {
+    let endpoint = s.split_whitespace().next()?;
+    let (host, port) = endpoint.rsplit_once(':')?;
+    let host = host
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+        .unwrap_or(host);
+    Some((host.trim_end_matches('.'), port.parse().ok()?))
+}
+
+fn same_host(actual: &str, expected: &str) -> bool {
+    if actual.eq_ignore_ascii_case(expected.trim_end_matches('.')) {
+        return true;
+    }
+    let actual = actual.parse::<std::net::IpAddr>();
+    let expected = expected.parse::<std::net::IpAddr>();
+    matches!((actual, expected), (Ok(actual), Ok(expected)) if actual == expected)
+}
+
+fn select_lines(lines: &[(String, String)], host: &str, port: u16) -> (Vec<Value>, BTreeSet<u16>) {
     let mut ports = BTreeSet::new();
     let mut hit = vec![false; lines.len()];
-    if !hostl.is_empty() {
+    if !host.is_empty() {
         for (i, (_, msg)) in lines.iter().enumerate() {
-            if msg.to_ascii_lowercase().contains(&hostl) {
+            if let Some((source, destination)) = msg.split_once("-->")
+                && let Some((name, destination_port)) = log_destination(destination)
+                && destination_port == port
+                && same_host(name, host)
+            {
                 hit[i] = true;
-                ports.extend(loopback_ports(msg));
+                ports.extend(loopback_ports(source));
             }
         }
     }
 
     if !ports.is_empty() {
         for (i, (_, msg)) in lines.iter().enumerate() {
-            if !hit[i] && loopback_ports(msg).iter().any(|p| ports.contains(p)) {
+            if !hit[i]
+                && !msg.contains("-->")
+                && loopback_ports(msg).iter().any(|p| ports.contains(p))
+            {
                 hit[i] = true;
             }
         }
     }
+
     let picked = lines
         .iter()
         .zip(&hit)
@@ -191,28 +216,29 @@ fn select_lines(lines: &[(String, String)], host: &str) -> (Vec<Value>, BTreeSet
 }
 
 fn loopback_ports(s: &str) -> Vec<u16> {
-    const PAT: &[u8] = b"127.0.0.1:";
-    let b = s.as_bytes();
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i + PAT.len() <= b.len() {
-        if &b[i..i + PAT.len()] != PAT {
-            i += 1;
-            continue;
+    let mut ports = Vec::new();
+    for pattern in ["127.0.0.1:", "[::1]:"] {
+        for (start, _) in s.match_indices(pattern) {
+            if start > 0 && s.as_bytes()[start - 1].is_ascii_alphanumeric()
+                || start > 0 && s.as_bytes()[start - 1] == b'.'
+            {
+                continue;
+            }
+            let port = &s[start + pattern.len()..];
+            let digits = port.bytes().take_while(u8::is_ascii_digit).count();
+            if port
+                .as_bytes()
+                .get(digits)
+                .is_some_and(|b| b.is_ascii_alphanumeric())
+            {
+                continue;
+            }
+            if let Ok(port) = port[..digits].parse() {
+                ports.push(port);
+            }
         }
-        let start = i + PAT.len();
-        let mut j = start;
-        while j < b.len() && b[j].is_ascii_digit() {
-            j += 1;
-        }
-        if j > start
-            && let Ok(p) = s[start..j].parse::<u16>()
-        {
-            out.push(p);
-        }
-        i = j.max(start);
     }
-    out
+    ports
 }
 
 struct LogTail {
@@ -339,6 +365,7 @@ mod tests {
         assert_eq!(split_host_port("http://[::1]:81/x"), ("::1".into(), 81));
         assert_eq!(split_host_port("http://[::1]/x"), ("::1".into(), 80));
         assert_eq!(split_host_port("http://a.com?q=1"), ("a.com".into(), 80));
+        assert_eq!(split_host_port("HTTPS://A.COM/"), ("a.com".into(), 443));
     }
 
     #[test]
@@ -369,7 +396,7 @@ mod tests {
             l("[DNS] failed to lookup 127.0.0.1:41234 timeout"),
             l("noise without any address"),
         ];
-        let (picked, ports) = select_lines(&lines, "a.com");
+        let (picked, ports) = select_lines(&lines, "a.com", 80);
         assert_eq!(picked.len(), 2, "target line + same-source-port sibling");
         assert!(
             picked[0]["payload"]
@@ -386,9 +413,37 @@ mod tests {
         let lines = vec![l(
             "[TCP] 127.0.0.1:5555 --> other.com:443 match Match using DIRECT",
         )];
-        let (picked, ports) = select_lines(&lines, "a.com");
+        let (picked, ports) = select_lines(&lines, "a.com", 443);
         assert!(picked.is_empty());
         assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn selects_by_exact_host_port_and_ipv6_source() {
+        let lines = vec![
+            l("[TCP] 127.0.0.1:2001 --> sub.a.co:443 match Domain(a.co) using DIRECT"),
+            l("[TCP] 127.0.0.1:2002 --> a.co:80 match Domain(a.co) using DIRECT"),
+            l("[TCP] [::1]:3001 --> A.CO.:443 match Domain(a.co) using Proxy[Node]"),
+            l("[DNS] diagnostic for [::1]:3001"),
+            l("[TCP] [::1]:3001 --> other.example:443 match Match using DIRECT"),
+            l("[DEBUG] data for 1127.0.0.1:3001"),
+        ];
+        let (picked, ports) = select_lines(&lines, "a.co", 443);
+        assert_eq!(ports, BTreeSet::from([3001]));
+        assert_eq!(picked.len(), 2);
+        assert!(
+            picked[0]["payload"]
+                .as_str()
+                .unwrap()
+                .contains("Proxy[Node]")
+        );
+        assert!(
+            picked[1]["payload"]
+                .as_str()
+                .unwrap()
+                .contains("diagnostic")
+        );
+        assert!(same_host("2001:db8::1", "2001:0db8:0:0:0:0:0:1"));
     }
 
     #[test]
@@ -417,7 +472,7 @@ mod tests {
         let lines = vec![l(
             "[TCP] 127.0.0.1:1 --> API.Example.COM:443 match Domain(x) using P",
         )];
-        let (picked, _) = select_lines(&lines, "api.example.com");
+        let (picked, _) = select_lines(&lines, "api.example.com", 443);
         assert_eq!(picked.len(), 1);
     }
 }

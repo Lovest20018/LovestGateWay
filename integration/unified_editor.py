@@ -7,29 +7,140 @@ import time
 from manage_common import ManagementError, operation_lock, require_idle
 from manage_config import ConfigManager
 from manage_model import load_settings, settings_revision, validate
-from manage_runtime import System
+from manage_runtime import MihomoPolicyError, System
 from clash_ppsub import (merge_editor, feature_options, apply_features, fingerprint,
-                         source_identity, logical_document, running_materialized_document)
+                         source_identity, logical_document, running_materialized_document, DEFAULT_RULE_BEHAVIOR,
+                         BUILTIN_TARGETS, EditorIssue, provider_view, check_http_rule_provider, rule_fields,
+                         rule_provider_spans, strings)
 from clash_policy import build_policy
 from manage_preview import clash_summary, native_summary, complete_preview, source_details
 
 
-def validate_ppsub(value):
-    if not isinstance(value, dict) or not isinstance(value.get('subs'), list) or not value['subs']:
+EDITOR_VALIDATION_CODES = {
+    'INVALID_EDITOR_REQUEST', 'INVALID_EDITOR_CONFIG', 'INVALID_EDITOR_LIST', 'INVALID_EDITOR_GROUP',
+    'INVALID_EDITOR_RULE', 'INVALID_EDITOR_ID', 'INVALID_GROUP_NAME', 'DUPLICATE_GROUP_NAME',
+    'UNKNOWN_PROXY_PROVIDER', 'INVALID_TEST_INTERVAL', 'CLASH_RULE_KIND_CHANGED',
+    'CLASH_RULE_URL_UNSUPPORTED', 'CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED',
+    'CLASH_SUBSCRIPTION_RENAME_UNSUPPORTED', 'INVALID_URL', 'INVALID_PRE_PROXY',
+    'INVALID_RESTART_HOUR', 'INVALID_SS_CONFIG', 'RESERVED_PROVIDER_NAME',
+}
+
+
+def editor_error_details(error):
+    code = str(error).split(':', 1)[0]
+    if isinstance(error, EditorIssue):
+        return {'error': code, 'issue': error.issue}
+    if isinstance(error, MihomoPolicyError):
+        return {'error': code, **({'detail': error.detail} if error.detail else {})}
+    return {'error': code} if code in EDITOR_VALIDATION_CODES else None
+
+
+def check_ppsub_rows(value, section, maximum):
+    rows = value.get(section, [])
+    if not isinstance(rows, list) or len(rows) > maximum:
         raise ManagementError('INVALID_PPSUB')
-    if not value.get('exported_at') or len(value['subs']) > 500:
-        raise ManagementError('INVALID_PPSUB')
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise EditorIssue('INVALID_PPSUB_ROW', section, index, '')
+    return rows
+
+
+def check_ppsub_names(rows, section):
     names = set()
-    for row in value['subs']:
-        if not isinstance(row, dict) or not isinstance(row.get('name'), str) or not row['name'].strip() or row['name'] in names:
-            raise ManagementError('INVALID_PPSUB')
-        from manage_subscription_schedule import validate_plan
-        validate_plan(row)
-        names.add(row['name'])
-        validate('ini', 'test_node_url', row.get('url'))
-    for key in ('node-groups', 'rules'):
-        if not isinstance(value.get(key, []), list) or len(value.get(key, [])) > 5000:
-            raise ManagementError('INVALID_PPSUB')
+    for index, row in enumerate(rows):
+        name = row.get('name')
+        if (not isinstance(name, str) or not name or name != name.strip() or len(name) > 256
+                or any(c in name for c in '\r\n') or (section == 'node-groups' and ',' in name)):
+            raise EditorIssue('INVALID_PPSUB_NAME', section, index, 'name')
+        if name in names:
+            raise EditorIssue('DUPLICATE_PPSUB_NAME', section, index, 'name')
+        names.add(name)
+    return names
+
+
+def check_ppsub_url(row, section, index, field='url'):
+    try:
+        validate('ini', 'test_node_url', row.get(field))
+    except ManagementError:
+        raise EditorIssue('INVALID_URL', section, index, field) from None
+
+
+def validate_ppsub(value):
+    if not isinstance(value, dict) or not value.get('exported_at'):
+        raise ManagementError('INVALID_PPSUB')
+    subscriptions = check_ppsub_rows(value, 'subs', 500)
+    if not subscriptions:
+        raise ManagementError('INVALID_PPSUB')
+    check_ppsub_names(subscriptions, 'subs')
+    from manage_subscription_schedule import validate_plan
+    for index, row in enumerate(subscriptions):
+        try:
+            validate_plan(row)
+        except ManagementError:
+            raise EditorIssue('INVALID_SUBSCRIPTION_SCHEDULE', 'subs', index, 'update_mode') from None
+        check_ppsub_url(row, 'subs', index)
+
+    groups = check_ppsub_rows(value, 'node-groups', 5000)
+    targets = check_ppsub_names(groups, 'node-groups') | BUILTIN_TARGETS
+    for index, row in enumerate(groups):
+        for field in ('subs', 'include', 'keywords', 'exclude_keywords'):
+            try:
+                strings(row.get(field, []))
+            except ValueError:
+                raise EditorIssue('INVALID_EDITOR_LIST', 'node-groups', index, field) from None
+        for field in ('speedtest_url', 'monitor_url'):
+            if row.get(field, '') != '':
+                check_ppsub_url(row, 'node-groups', index, field)
+
+    rows = check_ppsub_rows(value, 'rules', 5000)
+    providers = set()
+    for index, row in enumerate(rows):
+        kind = row.get('type', '')
+        if not isinstance(kind, str) or kind not in {'', 'manual', 'url', 'rule-set'}:
+            raise EditorIssue('INVALID_RULE_KIND', 'rules', index, 'type')
+        priority = row.get('priority', 0)
+        if type(priority) is not int or not -(2**63) <= priority < 2**63:
+            raise EditorIssue('INVALID_RULE_PRIORITY', 'rules', index, 'priority')
+        if kind == 'rule-set':
+            provider = provider_view(row)
+            if row.get('format', '') == '':
+                provider['format'] = 'auto'
+            if row.get('behavior', '') == '':
+                provider['behavior'] = DEFAULT_RULE_BEHAVIOR
+            check_http_rule_provider(provider, index, native=True)
+            name = provider['name']
+            if (not isinstance(name, str) or not name or name != name.strip() or len(name) > 200
+                    or any(c in name for c in '\r\n,')):
+                raise EditorIssue('INVALID_RULE_PROVIDER_NAME', 'rules', index, 'name')
+            if name in providers:
+                raise EditorIssue('DUPLICATE_RULE_PROVIDER', 'rules', index, 'name')
+            providers.add(name)
+        elif kind == 'url' or (kind == '' and row.get('url', '') != ''):
+            check_ppsub_url(row, 'rules', index)
+
+    for index, row in enumerate(rows):
+        kind = row.get('type', '')
+        if kind in {'rule-set', 'url'} or (kind == '' and row.get('url')):
+            continue
+        try:
+            lines = strings(row.get('fixrule', []))
+        except ValueError:
+            raise EditorIssue('INVALID_EDITOR_LIST', 'rules', index, 'fixrule') from None
+        for number, line in enumerate(lines):
+            if not line.strip() or line.lstrip().startswith('#'):
+                continue
+            try:
+                rule_kind, payload, (start, end) = rule_fields(line)
+                if rule_kind == 'SUB-RULE':
+                    raise ValueError('INVALID_RULE_LINE')
+                spans = rule_provider_spans(line, rule_kind, payload)
+            except ValueError:
+                raise EditorIssue('INVALID_RULE_LINE', 'rules', index, 'fixrule', number) from None
+            if line[start:end] not in targets:
+                raise EditorIssue('UNKNOWN_RULE_TARGET', 'rules', index, 'fixrule', number)
+            if any(line[start:end] not in providers for start, end in spans):
+                raise EditorIssue('UNKNOWN_RULE_PROVIDER', 'rules', index, 'fixrule', number)
+
     feature_options(value)
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
 
@@ -50,7 +161,10 @@ def candidate(admin, body, preview=None):
     layout = source.management_layout()
     if settings_revision(layout) != body.get('settings_revision') or source.revision(source.CONFIG.read_bytes()) != body.get('base_revision'):
         raise ManagementError('CONFIG_REVISION_CONFLICT')
-    submitted = json.loads(body['value'])
+    try:
+        submitted = json.loads(body['value'])
+    except json.JSONDecodeError:
+        raise ManagementError('INVALID_EDITOR_CONFIG') from None
     options = {'policy_update': None, 'ppsub_update': None}
     verify = None
     settings = load_settings(layout)
@@ -198,4 +312,6 @@ def worker(admin, body, operation):
                    'CONFIG_REVISION_CONFLICT': '配置已变化，未写入，请重新读取后再保存。',
                    'CONFIG_CHANGED': '运行配置或快照已变化，未写入，请重新读取后再保存。',
                    'MANAGEMENT_BUSY': '其他管理任务正在进行，请稍后重试。'}.get(code, '校验或应用失败，配置未保存；请检查订阅与规则。')
-        with admin.lock: operation.update(status='failed', message=message, error=code if re.fullmatch(r'[A-Z_]{3,64}',code) else 'OPERATION_FAILED')
+        details = editor_error_details(error) or {'error': code if re.fullmatch(r'[A-Z_]{3,64}', code) else 'OPERATION_FAILED'}
+        with admin.lock:
+            operation.update(status='failed', message=message, **details)

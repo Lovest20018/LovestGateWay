@@ -136,6 +136,69 @@ class ClashPpsubTests(unittest.TestCase):
         self.assertNotIn('never-expose', str(config))
         self.assertEqual(document['proxy-groups'][0]['proxies'], ['Backup', 'N1', 'N1', 'DIRECT'])
 
+    def test_provider_validation_and_legacy_provider_fields(self):
+        document, baseline, submitted = self.editing()
+        submitted['rules'].append({'type': 'rule-set', 'name': 'New', 'url': 'https://example.com/rules'})
+        result, _, _ = merge_editor(document, baseline, submitted)
+        self.assertEqual(result['rule-providers']['New'], {
+            'type': 'http', 'url': 'https://example.com/rules', 'behavior': 'classical',
+            'format': 'yaml', 'interval': 86400,
+        })
+        for field, value, code in [
+            ('url', 'ftp://example.com/rules', 'INVALID_RULE_PROVIDER_URL'),
+            ('format', 'auto', 'INVALID_RULE_FORMAT'),
+            ('interval', 12, 'INVALID_POLICY_INTERVAL'),
+            ('behavior', 'wrong', 'INVALID_RULE_BEHAVIOR'),
+        ]:
+            with self.subTest(field=field):
+                candidate = deepcopy(submitted)
+                candidate['rules'][-1][field] = value
+                with self.assertRaisesRegex(ValueError, code):
+                    merge_editor(document, baseline, candidate)
+
+        document['rule-providers']['File'] = {'type': 'file', 'path': './rules/local', 'behavior': 'domain'}
+        baseline, _ = editor_config(document)
+        submitted = deepcopy(baseline)
+        submitted['rules'][1]['name'] = 'RenamedFile'
+        result, _, _ = merge_editor(document, baseline, submitted)
+        self.assertEqual(result['rule-providers']['RenamedFile'], document['rule-providers']['File'])
+        submitted['rules'][1]['url'] = 'https://example.com/rules'
+        with self.assertRaisesRegex(ValueError, 'UNSUPPORTED_RULE_PROVIDER_TYPE'):
+            merge_editor(document, baseline, submitted)
+
+    def test_compound_rule_renames_ignore_regex_payload_and_remove_comments(self):
+        document = self.document()
+        document['rules'] = [
+            'AND,((RULE-SET,China),(OR,((NOT,((RULE-SET,China))),(DOMAIN,example.com)))),Main',
+            'DOMAIN-REGEX,(RULE-SET,China),Main',
+            'SUB-RULE,(NETWORK,tcp),Main',
+        ]
+        document['sub-rules'] = {'Main': ['MATCH,DIRECT']}
+        baseline, _ = editor_config(document)
+        submitted = deepcopy(baseline)
+        submitted['node-groups'][0]['name'] = 'Primary'
+        submitted['rules'][0]['name'] = 'NewChina'
+        submitted['rules'][-1]['fixrule'].insert(0, '  # editor note')
+        result, _, _ = merge_editor(document, baseline, submitted)
+        self.assertEqual(result['rules'], [
+            'AND,((RULE-SET,NewChina),(OR,((NOT,((RULE-SET,NewChina))),(DOMAIN,example.com)))),Primary',
+            'DOMAIN-REGEX,(RULE-SET,China),Primary',
+            'SUB-RULE,(NETWORK,tcp),Main',
+        ])
+        self.assertEqual(result['sub-rules'], document['sub-rules'])
+
+    def test_manual_group_drops_previous_mode_options_only(self):
+        document, baseline, submitted = self.editing()
+        old = document['proxy-groups'][1]
+        old.update({'expected-status': 204, 'max-failed-times': 4})
+        group = submitted['node-groups'][1]
+        group.pop('failover')
+        result, _, _ = merge_editor(document, baseline, submitted)
+        result_group = result['proxy-groups'][1]
+        self.assertEqual(result_group['type'], 'select')
+        self.assertFalse(set(result_group) & {'url', 'interval', 'expected-status', 'max-failed-times'})
+        self.assertEqual(result_group['tolerance'], old['tolerance'])
+
     def test_does_not_invent_default_groups_or_rules(self):
         config, counts = editor_config({'proxy-groups': [], 'rules': []})
         self.assertEqual(config['node-groups'], [])

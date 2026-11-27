@@ -5,32 +5,68 @@ use std::collections::{BTreeMap, HashSet};
 use yaml_rust2::yaml::Hash;
 use yaml_rust2::{Yaml, YamlLoader};
 
+const BUILTIN_TARGETS: &[&str] = &[
+    "DIRECT",
+    "REJECT",
+    "REJECT-DROP",
+    "COMPATIBLE",
+    "PASS",
+    "PASS-RULE",
+    "GLOBAL",
+];
+
+pub(super) fn priority_order(rule_sets: &[RuleSet]) -> Vec<&RuleSet> {
+    let mut sets: Vec<_> = rule_sets.iter().collect();
+    sets.sort_by_key(|rule| rule.priority);
+    sets
+}
+
+pub(super) fn provider_winners<'a>(
+    sorted: &[&'a RuleSet],
+    mut duplicate: impl FnMut(&str),
+) -> Vec<&'a RuleSet> {
+    let mut seen = HashSet::new();
+    sorted
+        .iter()
+        .copied()
+        .filter(|row| {
+            if row.typ != "rule-set" || row.name.is_empty() || row.url.is_empty() {
+                return false;
+            }
+            let first = seen.insert(row.name.as_str());
+            if !first {
+                duplicate(&row.name);
+            }
+            first
+        })
+        .collect()
+}
+
 pub fn process_rules(
     rule_sets: &[RuleSet],
     proxy_groups: &[Yaml],
 ) -> Result<(Vec<String>, Hash), PpsubErr> {
-    let mut sets: Vec<&RuleSet> = rule_sets.iter().collect();
-    sets.sort_by_key(|r| r.priority);
+    let sets = priority_order(rule_sets);
 
-    let group_names: HashSet<String> = proxy_groups
+    let group_names: HashSet<&str> = proxy_groups
         .iter()
-        .filter_map(|g| g["name"].as_str().map(String::from))
+        .filter_map(|g| g["name"].as_str())
         .collect();
 
-    let mut all_rules: Vec<String> = Vec::new();
-    let mut defined: Vec<(String, Yaml)> = Vec::new();
-    let mut dropped: BTreeMap<String, usize> = BTreeMap::new();
+    let defined = provider_winners(&sets, |name| {
+        pp_warn(&format!(
+            "duplicate rule-set provider [{name}]: kept the first by priority"
+        ));
+    });
+    let provider_names: HashSet<_> = defined.iter().map(|rs| rs.name.as_str()).collect();
 
-    for rs in sets {
-        if rs.typ == "rule-set" {
-            if rs.name.is_empty() || rs.url.is_empty() {
-                continue;
-            }
-            pp_log(&format!("rule-set provider [{}] {}", rs.name, rs.url));
-            defined.push((rs.name.clone(), build_provider(rs)));
-            continue;
-        }
-        let rules: Vec<String> = if rs.typ == "url" || (rs.typ.is_empty() && !rs.url.is_empty()) {
+    let mut all_rules = Vec::new();
+    let mut used: HashSet<String> = HashSet::new();
+    let mut bad_targets: BTreeMap<String, usize> = BTreeMap::new();
+    let mut bad_providers: BTreeMap<String, usize> = BTreeMap::new();
+    let mut malformed = 0;
+    for rs in sets.into_iter().filter(|rs| rs.typ != "rule-set") {
+        let rules = if rs.typ == "url" || (rs.typ.is_empty() && !rs.url.is_empty()) {
             pp_log(&format!(
                 "downloading rules{} {}",
                 if rs.is_forced { " (forced)" } else { "" },
@@ -56,43 +92,56 @@ pub fn process_rules(
         } else {
             rs.fixrule.clone()
         };
-        for rule in rules {
+        for rule in &rules {
             let rule = rule.trim();
             if rule.is_empty() || rule.starts_with('#') {
                 continue;
             }
-            if !validate_rule(rule, &group_names) {
-
-                if let Some(t) = rule_target(rule) {
-                    *dropped.entry(t).or_insert(0usize) += 1;
-                }
+            let Some((kind, payload, target)) = rule_fields(rule) else {
+                malformed += 1;
+                continue;
+            };
+            let Some(refs) = rule_provider_names(&kind, payload) else {
+                malformed += 1;
+                continue;
+            };
+            if !BUILTIN_TARGETS.contains(&target) && !group_names.contains(target) {
+                *bad_targets.entry(target.to_string()).or_default() += 1;
                 continue;
             }
+            if let Some(name) = refs.iter().find(|name| !provider_names.contains(**name)) {
+                *bad_providers.entry((*name).to_string()).or_default() += 1;
+                continue;
+            }
+            used.extend(refs.into_iter().map(String::from));
             all_rules.push(rule.to_string());
         }
     }
 
-    for (target, n) in &dropped {
+    if malformed != 0 {
+        pp_warn(&format!(
+            "dropped {malformed} malformed or unsupported rule(s)"
+        ));
+    }
+    for (target, n) in bad_targets {
         pp_warn(&format!(
             "dropped {n} rule(s) targeting [{target}]: no such proxy group"
         ));
     }
+    for (name, n) in bad_providers {
+        pp_warn(&format!(
+            "dropped {n} rule(s) referencing [{name}]: no such rule-set provider"
+        ));
+    }
 
-    let mut used: HashSet<String> = HashSet::new();
-    for rule in &all_rules {
-        if rule.to_uppercase().starts_with("RULE-SET") {
-            let parts: Vec<&str> = rule.split(',').collect();
-            if parts.len() >= 2 {
-                used.insert(parts[1].trim().to_string());
-            }
-        }
-    }
-    let mut final_providers = Hash::new();
-    for (name, provider) in defined {
-        if used.contains(&name) {
-            final_providers.insert(ystr(&name), provider);
-        }
-    }
+    let final_providers = defined
+        .into_iter()
+        .filter(|rs| used.contains(&rs.name))
+        .map(|rs| {
+            pp_log(&format!("rule-set provider [{}]", rs.name));
+            (ystr(&rs.name), build_provider(rs))
+        })
+        .collect();
     Ok((all_rules, final_providers))
 }
 
@@ -139,32 +188,96 @@ fn build_provider(rs: &RuleSet) -> Yaml {
     Yaml::Hash(p)
 }
 
-fn rule_target(rule: &str) -> Option<String> {
-    let parts: Vec<&str> = rule.split(',').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    const OPTS: [&str; 5] = ["no-resolve", "src", "dst", "no-redir", "not"];
-    let mut idx = parts.len() as i64 - 1;
-    while idx >= 0 {
-        let cand = parts[idx as usize].trim().to_lowercase();
-        if !OPTS.contains(&cand.as_str()) {
-            break;
-        }
-        idx -= 1;
-    }
-    if idx < 1 {
-        return None;
-    }
-    Some(parts[idx as usize].trim().to_string())
+fn logical_kind(kind: &str) -> bool {
+    matches!(kind, "AND" | "OR" | "NOT")
 }
 
-fn validate_rule(rule: &str, group_names: &HashSet<String>) -> bool {
-    let Some(target) = rule_target(rule) else {
-        return true;
+// Mihomo treats targets differently for MATCH and rules whose payload can contain commas.
+fn rule_fields(rule: &str) -> Option<(String, &str, &str)> {
+    let (kind, rest) = rule.split_once(',')?;
+    let kind = kind.trim().to_ascii_uppercase();
+    if kind.is_empty() || kind == "SUB-RULE" {
+        return None;
+    }
+    let (payload, target) = if kind == "MATCH" {
+        ("", rest.split(',').next()?.trim())
+    } else {
+        let (payload, target) = if logical_kind(&kind)
+            || matches!(
+                kind.as_str(),
+                "DOMAIN-REGEX" | "PROCESS-NAME-REGEX" | "PROCESS-PATH-REGEX"
+            ) {
+            rest.rsplit_once(',')?
+        } else {
+            let (payload, rest) = rest.split_once(',')?;
+            (payload, rest.split(',').next()?)
+        };
+        let payload = payload.trim();
+        if payload.is_empty() {
+            return None;
+        }
+        (payload, target.trim())
     };
-    const BUILTIN: [&str; 4] = ["DIRECT", "REJECT", "PROXY", "proxies"];
-    BUILTIN.contains(&target.as_str()) || group_names.contains(&target)
+    (!target.is_empty()).then_some((kind, payload, target))
+}
+
+fn logical_children(payload: &str) -> Option<Vec<&str>> {
+    let content = payload.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let mut children = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, ch) in content.char_indices() {
+        match ch {
+            '(' => {
+                if depth == 0 {
+                    start = index + 1;
+                }
+                depth += 1;
+            }
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    children.push(&content[start..index]);
+                }
+            }
+            ',' => {}
+            _ if depth == 0 && !ch.is_whitespace() => return None,
+            _ => {}
+        }
+    }
+    (depth == 0 && !children.is_empty()).then_some(children)
+}
+
+fn rule_provider_names<'a>(kind: &str, payload: &'a str) -> Option<Vec<&'a str>> {
+    let mut names = Vec::new();
+    let mut pending = vec![(kind.to_string(), payload)];
+    while let Some((kind, payload)) = pending.pop() {
+        if kind == "RULE-SET" {
+            let name = payload.split(',').next()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            names.push(name);
+        } else if logical_kind(&kind) {
+            let children = logical_children(payload)?;
+            if kind == "NOT" && children.len() != 1 {
+                return None;
+            }
+            for child in children.into_iter().rev() {
+                let (kind, payload) = child.split_once(',')?;
+                let kind = kind.trim().to_ascii_uppercase();
+                let payload = payload.trim();
+                if kind.is_empty()
+                    || payload.is_empty()
+                    || matches!(kind.as_str(), "MATCH" | "SUB-RULE")
+                {
+                    return None;
+                }
+                pending.push((kind, payload));
+            }
+        }
+    }
+    Some(names)
 }
 
 fn download_rules(url: &str) -> Result<Vec<String>, String> {
@@ -213,26 +326,45 @@ mod tests {
     }
 
     #[test]
-    fn validate_rule_target_and_options() {
-        let gn: HashSet<String> = ["MyGroup".to_string()].into_iter().collect();
-        assert!(validate_rule("DOMAIN,a.com,DIRECT", &gn));
-        assert!(validate_rule("DOMAIN,a.com,MyGroup", &gn));
-        assert!(
-            validate_rule("IP-CIDR,1.1.1.1/32,MyGroup,no-resolve", &gn),
-            "skip trailing no-resolve"
+    fn parses_targets_like_mihomo() {
+        for target in BUILTIN_TARGETS {
+            let rule = format!("MATCH,{target}");
+            assert_eq!(rule_fields(&rule).unwrap().2, *target);
+        }
+        assert_eq!(
+            rule_fields("IP-CIDR,192.0.2.0/24,MyGroup,no-resolve")
+                .unwrap()
+                .2,
+            "MyGroup"
         );
-        assert!(
-            !validate_rule("DOMAIN,a.com,GhostGroup", &gn),
-            "non-existent group → reject"
+        assert_eq!(rule_fields("DOMAIN-REGEX,x{1,2},PROXY").unwrap().2, "PROXY");
+        assert!(rule_fields("MATCH").is_none());
+        assert!(rule_fields("DOMAIN,DIRECT").is_none());
+        assert!(rule_fields("SUB-RULE,(NETWORK,tcp),group").is_none());
+    }
+
+    #[test]
+    fn recognizes_nested_rule_set_references() {
+        let (kind, payload, target) = rule_fields(
+            "AND,((RULE-SET,ads),(OR,((NOT,((RULE-SET,geo))),(DOMAIN-SUFFIX,a.com)))),REJECT",
+        )
+        .unwrap();
+        assert_eq!(target, "REJECT");
+        assert_eq!(
+            rule_provider_names(&kind, payload),
+            Some(vec!["ads", "geo"])
         );
-        assert!(validate_rule("MATCH", &gn), "<2 segments → allow");
+        assert_eq!(
+            rule_provider_names("DOMAIN-REGEX", "(RULE-SET,ads)"),
+            Some(vec![])
+        );
+        assert!(rule_provider_names("AND", "((RULE-SET,ads)").is_none());
     }
 
     #[test]
     fn fixrule_and_prune_providers() {
         let groups = groups_with(&["Proxy"]);
         let sets = vec![
-
             RuleSet {
                 priority: 1,
                 typ: "rule-set".into(),
@@ -259,7 +391,6 @@ mod tests {
                 proxy: String::new(),
                 path: String::new(),
             },
-
             RuleSet {
                 priority: 3,
                 typ: String::new(),
@@ -271,6 +402,8 @@ mod tests {
                     "RULE-SET,ad,REJECT".into(),
                     "DOMAIN,a.com,Proxy".into(),
                     "DOMAIN,b.com,Ghost".into(),
+                    "DOMAIN,c.com,PROXY".into(),
+                    "MATCH".into(),
                     "MATCH,DIRECT".into(),
                 ],
                 is_forced: false,
@@ -286,10 +419,46 @@ mod tests {
             !rules.iter().any(|r| r.contains("Ghost")),
             "invalid group rules removed"
         );
+        assert!(!rules.iter().any(|r| r.ends_with(",PROXY") || r == "MATCH"));
         assert!(rules.contains(&"MATCH,DIRECT".to_string()));
 
         assert!(providers.contains_key(&ystr("ad")));
         assert!(!providers.contains_key(&ystr("unused")));
+    }
+
+    #[test]
+    fn earliest_provider_priority_wins_for_compound_rules() {
+        let provider = |priority, url: &str| RuleSet {
+            priority,
+            typ: "rule-set".into(),
+            name: "ads".into(),
+            url: url.into(),
+            behavior: String::new(),
+            interval: 0,
+            fixrule: vec![],
+            is_forced: false,
+            format: String::new(),
+            proxy: String::new(),
+            path: String::new(),
+        };
+        let mut manual = provider(9, "");
+        manual.typ.clear();
+        let rule = "NOT,((RULE-SET,ads)),REJECT";
+        manual.fixrule = vec![rule.into(), "RULE-SET,missing,DIRECT".into()];
+        let (rules, providers) = process_rules(
+            &[
+                provider(5, "https://example.com/later"),
+                manual,
+                provider(1, "https://example.com/first"),
+            ],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(rules, [rule]);
+        assert_eq!(
+            providers[&ystr("ads")]["url"].as_str(),
+            Some("https://example.com/first")
+        );
     }
 
     #[test]

@@ -2,6 +2,20 @@
 (() => {
   'use strict';
   let current = null;
+  const boxDefaults = {'route.block_bittorrent': true, 'route.block_quic': true, 'route.block_unknown': false};
+  function boxOptions(raw) {
+    const values = {...boxDefaults};
+    for (const assignment of String(raw ?? '').split(',')) {
+      const separator = assignment.indexOf('=');
+      if (separator < 0) continue;
+      const key = assignment.slice(0, separator).trim();
+      if (!Object.hasOwn(values, key)) continue;
+      const setting = assignment.slice(separator + 1).trim().replace(/^"+|"+$/g, '').toLowerCase();
+      if (['yes','true','on','1'].includes(setting)) values[key] = true;
+      if (['no','false','off','0'].includes(setting)) values[key] = false;
+    }
+    return values;
+  }
   function mount(root, options = {}) {
     root.classList.add('layout-page');
     root.replaceChildren(document.getElementById('ppgw-gateway-view').content.cloneNode(true));
@@ -55,7 +69,7 @@
       openport: ['允许局域网显式代理', 'HTTP / SOCKS5 共用 1080 端口；启用前请设置代理用户名和密码。'],
       openport_auth: ['代理账号', '用户名明文显示；密码留空保留当前账号。'],
       admin_cidr: ['管理访问范围', '逗号分隔 CIDR；留空允许所有来源。请保留当前设备所在网段。'],
-      proxy_cidr: ['代理访问范围', '透明 TCP 转发与显式代理共用的客户端范围；逗号分隔 IPv4 / IPv6 CIDR，留空允许所有来源。'],
+      proxy_cidr: ['代理访问范围', '逗号分隔 IPv4 / IPv6 CIDR，留空允许所有来源。1080 显式代理当前仅监听 IPv4，IPv6 范围用于透明 TCP 转发。'],
       net_rec: ['核心流量统计', '记录核心流量与分布；与 API 历史采集分别控制。'],
       max_rec: ['流量记录上限', '核心流量统计开启后可以热更新。'],
       net_cleanday: ['每月清理日', '1–31；留空关闭定期清理。'],
@@ -265,7 +279,11 @@
     function valueOf(namespace, key) { return dirty.has(namespace + '.' + key) ? dirty.get(namespace + '.' + key) : model.settings[namespace][key]; }
     function setValue(namespace, key, value) {
       const id = namespace + '.' + key;
-      if (JSON.stringify(value) === JSON.stringify(model.settings[namespace][key])) dirty.delete(id);
+      const saved = model.settings[namespace][key];
+      const unchanged = id === 'ini.box'
+        ? JSON.stringify(boxOptions(value)) === JSON.stringify(boxOptions(saved))
+        : JSON.stringify(value) === JSON.stringify(saved);
+      if (unchanged) dirty.delete(id);
       else dirty.set(id, value);
       updateDirty();
     }
@@ -550,12 +568,14 @@
         ])]));
         result.push(assetCard());
       } else {
-        const box = Object.fromEntries(String(valueOf('ini', 'box')).split(',').filter(Boolean).map(v => v.split('=')));
-        const defaults = {'route.block_bittorrent': true, 'route.block_quic': true, 'route.block_unknown': false};
+        const box = boxOptions(valueOf('ini', 'box'));
         const toggles = el('div', {class: 'field-grid'});
         for (const [key, title] of [['route.block_bittorrent', '阻断 BitTorrent'], ['route.block_quic', '阻断 QUIC'], ['route.block_unknown', '阻断未知流量']]) {
-          const id = 'box-' + key, input = el('input', {id, type: 'checkbox', checked: key in box ? box[key] === 'true' : defaults[key]});
-          input.onchange = () => { box[key] = String(input.checked); setValue('ini', 'box', Object.entries({...Object.fromEntries(Object.entries(defaults).map(([k,v]) => [k,String(v)])), ...box}).map(([k,v]) => `${k}=${v}`).join(',')); };
+          const id = 'box-' + key, input = el('input', {id, type: 'checkbox', checked: box[key]});
+          input.onchange = () => {
+            box[key] = input.checked;
+            setValue('ini', 'box', Object.entries(box).map(([name, enabled]) => `${name}=${enabled}`).join(','));
+          };
           toggles.append(el('div', {class: 'field toggle-field'}, [el('div', {}, [el('label', {htmlFor: id, text: title}), el('small', {text: key === 'route.block_quic' ? '同时涉及 UDP 防火墙规则，当前按重启应用。' : '按重启应用并校验。'})]), input]));
         }
         result.push(card('流量控制', '仅开放当前 Debian 版支持的阻断选项。', '01', [toggles]));

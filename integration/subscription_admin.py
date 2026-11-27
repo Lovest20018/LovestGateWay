@@ -671,6 +671,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self.respond(503, {'error': '配置暂时无法读取，请稍后重试。'})
     def do_POST(self):
+        body = None
         try:
             if self.headers.get('Origin') not in {'http://' + self.headers.get('Host', ''), 'https://' + self.headers.get('Host', '')}:
                 return self.respond(403, {'error': 'ORIGIN_REJECTED'})
@@ -695,12 +696,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(202, self.server.admin.reset_policy(body))
             self.respond(404, {'error': 'NOT_FOUND'})
         except ManagementError as error:
+            if self.path == '/api/subscription':
+                from unified_editor import editor_error_details
+                details = editor_error_details(error)
+                if details:
+                    return self.respond(400, details)
             code = str(error).split(':', 1)[0]
             allowed = {'CONFIG_REVISION_CONFLICT', 'SOURCE_CHANGE_REQUIRES_SWITCH', 'MANAGEMENT_BUSY', 'RECOVERY_REQUIRED',
                        'INVALID_EDITOR_REQUEST', 'INVALID_PPSUB', 'INVALID_URL', 'CONFIG_CHANGED'}
             return self.respond(409 if code in {'CONFIG_REVISION_CONFLICT', 'MANAGEMENT_BUSY', 'CONFIG_CHANGED'} else 400,
                                 {'error': code if code in allowed else 'INVALID_EDITOR_REQUEST'})
         except ValueError as error:
+            if self.path == '/api/subscription' and isinstance(body, dict) and body.get('kind') == 'editor':
+                from unified_editor import editor_error_details
+                details = editor_error_details(error)
+                if details:
+                    return self.respond(400, details)
             if self.path.startswith('/api/core/'):
                 from mihomo_update import error_details
                 details = error_details(error)
