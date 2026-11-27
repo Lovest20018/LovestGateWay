@@ -25,7 +25,7 @@ const routes=['connections','traffic','distribution','logs','region'];
  publishLog({msg:'\x1b[31mFixture core <img src=x onerror=alert(1)>\x1b[0m'});
  const server=http.createServer(async(request,response)=>{try{
   const url=new URL(request.url,'http://localhost'),target=url.pathname,method=request.method;
-  if(target.startsWith('/ui/')){try{const filename=path.join(output,target==='/ui/'?'index.html':path.basename(target));response.writeHead(200,{'Content-Type':target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':target.endsWith('.woff2')?'font/woff2':'text/html'});response.end(await fs.readFile(filename));}catch{response.writeHead(404);response.end();}return;}
+  if(target.startsWith('/ui/')){try{const filename=path.join(output,target==='/ui/'?'index.html':path.basename(target)),body=await fs.readFile(filename);response.writeHead(200,{'Content-Type':target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':target.endsWith('.woff2')?'font/woff2':'text/html'});response.end(body);}catch{response.writeHead(404);response.end();}return;}
   if(target.startsWith('/sniffbox/auth/')){let raw='';for await(const chunk of request)raw+=chunk;const reply=sessions.handle(request,raw?JSON.parse(raw):undefined);return send(response,reply.data,reply.status,reply.headers);}
   requests.push({target,method,authorized:sessions.authorized(request),at:Date.now()});
   if(!sessions.authorized(request))return send(response,{error:'LOGIN_REQUIRED'},401);
