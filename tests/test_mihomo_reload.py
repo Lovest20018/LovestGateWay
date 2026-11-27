@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'integration'))
-from mihomo_reload import plan, policy_candidate, rule_rows, reload_verified
+from mihomo_reload import GROUP_TYPES, observed_rules, plan, policy_candidate, rule_rows, reload_verified
 from manage_common import ManagementError
 
 BASE = {'mode': 'rule', 'dns': {'enable': False},
@@ -73,6 +73,54 @@ class ReloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError,'STALE_POLICY_SNAPSHOT'):
             reload_verified(BASE,self.candidate(),controller,lambda doc:None,written.append)
         self.assertFalse(any(call[0]=='PUT' for call in controller.calls));self.assertEqual(written,[])
+    def test_rule_comparison_normalizes_domain_and_cidr_without_rewriting_options(self):
+        rules=['domain,EXAMPLE.test,DIRECT','DOMAIN-SUFFIX,NESTED.TEST,MAIN','DOMAIN-KEYWORD,BLooM,DIRECT',
+               'IP-CIDR,192.0.2.127/24,DIRECT,NO-RESOLVE','IP-CIDR6,2001:DB8::9/32,DIRECT',
+               'SRC-IP-CIDR,198.51.100.2/24,DIRECT','MATCH,MAIN']
+        expected=[('domain','example.test','DIRECT'),('domainsuffix','nested.test','MAIN'),('domainkeyword','bloom','DIRECT'),
+                  ('ipcidr','192.0.2.0/24','DIRECT'),('ipcidr','2001:db8::/32','DIRECT'),
+                  ('srcipcidr','198.51.100.0/24','DIRECT'),('match','','MAIN')]
+        controller_rows=[{'type':kind,'payload':payload,'proxy':proxy} for kind,payload,proxy in expected]
+        controller_rows[3].update(type='IPCIDR',payload='192.0.2.200/24')
+        self.assertEqual(observed_rules({'rules':controller_rows}),expected)
+        after={**deepcopy(BASE),'rules':rules};written=[]
+        self.assertEqual(rule_rows(after),expected)
+        reload_verified(BASE,after,Controller(),lambda doc:self.assertEqual(doc['rules'],rules),written.append)
+        self.assertEqual(written[0]['rules'],rules)
+        self.assertFalse(plan(BASE,{**after,'rules':['IP-CIDR,192.0.2.8/24,DIRECT,src']})['eligible'])
+
+    def test_explicit_renames_restore_selector_and_lock_targets_including_child_groups(self):
+        before=deepcopy(BASE)
+        before['proxy-groups']=[{'name':'MAIN','type':'select','proxies':['DIRECT','Child']},
+            {'name':'Child','type':'select','proxies':['DIRECT','Fixture']},
+            {'name':'Auto','type':'url-test','proxies':['DIRECT','Child']}]
+        after=deepcopy(before);renames={'MAIN':'Main new','Child':'Child new','Auto':'Auto new'}
+        for group in after['proxy-groups']:
+            group['name']=renames[group['name']]
+            group['proxies']=[renames.get(proxy,proxy) for proxy in group['proxies']]
+        after['rules']=['MATCH,Main new']
+        class GroupController(Controller):
+            def __init__(self):
+                super().__init__();self.doc=deepcopy(before)
+                self.choices={'GLOBAL':'MAIN','MAIN':'Child','Child':'Fixture','Auto':'Child'}
+            def request(self,method,path,body=None):
+                if path=='/proxies':
+                    current={group['name']:{'type':GROUP_TYPES[group['type']],'all':group['proxies'],
+                        ('now' if group['type']=='select' else 'fixed'):self.choices.get(group['name'],'DIRECT')}
+                        for group in self.doc['proxy-groups']}
+                    current['GLOBAL']={'type':'Selector','all':['DIRECT',*current],'now':self.choices.get('GLOBAL','DIRECT')}
+                    return {'proxies':current},self.peer
+                if method=='PUT' and path.startswith('/proxies/'):
+                    from urllib.parse import unquote
+                    self.choices[unquote(path.split('/')[-1])]=body['name']
+                    return None,self.peer
+                value,peer=super().request(method,path,body)
+                if path.startswith('/configs?'):self.choices={}
+                return value,peer
+        controller=GroupController();decision,update=policy_candidate(before,after,{}, {},renames=renames)
+        self.assertTrue(decision['eligible']);self.assertEqual(update['renames'],renames)
+        reload_verified(update['before'],update['after'],controller,lambda doc:None,lambda doc:None,renames=update['renames'])
+        self.assertEqual(controller.choices,{'GLOBAL':'Main new','Main new':'Child new','Child new':'Fixture','Auto new':'Child new'})
     def test_automatic_group_manual_lock_is_restored_and_verified(self):
         class LockedController(Controller):
             def __init__(self):super().__init__();self.fixed='Fixture'

@@ -82,6 +82,13 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     assert.equal(await overview.locator('[data-interfaces] tr').count(),3);assert.equal(await overview.locator('.overview-virtual').getAttribute('open'),null);assert.match(await overview.locator('.overview-virtual summary').textContent(),/虚拟接口（1）/);assert.equal(await overview.locator('.overview-virtual tr').count(),1);
     assert.equal(await overview.locator('[data-interfaces] img').count(),0);assert.equal(await page.evaluate(()=>window.untrustedRan),undefined);
     await overview.locator('canvas').first().hover();await overview.locator('.overview-chart-tip').first().waitFor({state:'visible'});
+    const historyChart=overview.locator('.overview-chart[data-samples="12"]').first(),canvas=historyChart.locator('canvas'),readout=historyChart.locator('output');
+    await canvas.focus();await page.keyboard.press('Home');const first=await readout.textContent();
+    await page.keyboard.press('ArrowRight');assert.notEqual(await readout.textContent(),first);
+    await page.keyboard.press('ArrowLeft');assert.equal(await readout.textContent(),first);
+    await page.setViewportSize({width:375,height:812});
+    await canvas.evaluate(node=>{const bounds=node.getBoundingClientRect();node.dispatchEvent(new PointerEvent('pointerdown',{pointerType:'touch',clientX:bounds.right-5,clientY:bounds.top+20,bubbles:true}));});
+    assert.notEqual(await readout.textContent(),first);await page.setViewportSize({width:1440,height:1100});
     await capture('overview-source-desktop.png');
     status=503;await overview.locator('.overview-status').filter({hasText:'HTTP 503'}).waitFor();
     assert.equal(await overview.locator('[data-field=memory-total]').innerText(),'8.0 GB');status=200;
@@ -112,7 +119,7 @@ const fixture={version:'20261105.fixture',clash_version:'v1.19.33',clash_meta:tr
     await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route=connections]').click();
     await page.locator('#overview-page').waitFor({state:'detached'});hold=false;releaseHeld();await page.waitForTimeout(100);assert.equal(await page.locator('#overview-page').count(),0);assert.deepEqual(errors,[]);
     delete fixture.cpu.cloudflared;delete fixture.memory.cloudflared_rss;expectedSecret='fixture-token';sessions.reset();await page.goto(origin+'/ui/?without-cloudflared#/overview');await page.locator('#overview-page [data-field=cpu-model]').getByText('Fixture CPU 4-core',{exact:true}).waitFor();assert.equal(await page.locator('#overview-page canvas[aria-label*=Cloudflared]').count(),0);assert.doesNotMatch(await page.locator('[data-cpu-legend]').textContent(),/Cloudflared/);
-    const report={syntheticOnly:true,sourceOverviewWithoutRuntimeBundle:true,readOnlyRequests:true,nestedStaticFieldsRetained:true,trafficSamples:true,counterAndBootReset:true,apiFailureRecovery:true,reauthWithoutReload:true,untrustedTextOnly:true,chartHover:true,theme:true,mobileWidths:[375,320],backForward:true,pollingDisposed:true,lateResponseIgnored:true,pageErrors:errors};
+    const report={syntheticOnly:true,sourceOverviewWithoutRuntimeBundle:true,readOnlyRequests:true,nestedStaticFieldsRetained:true,trafficSamples:true,counterAndBootReset:true,apiFailureRecovery:true,reauthWithoutReload:true,untrustedTextOnly:true,chartHover:true,chartKeyboardAndTouch:true,theme:true,mobileWidths:[375,320],backForward:true,pollingDisposed:true,lateResponseIgnored:true,pageErrors:errors};
     await fs.writeFile(path.join(evidence,'overview-browser-evidence.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));await context.close();
   }finally{await browser.close();}
 })().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

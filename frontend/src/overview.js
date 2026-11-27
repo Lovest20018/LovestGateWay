@@ -33,8 +33,10 @@ function chart(label,series,format,gapMs=3000){
   const box=make('div',undefined,'overview-chart'),canvas=make('canvas'),tip=make('output',undefined,'overview-chart-tip');
   const scale=make('div',undefined,'overview-chart-scale'),ceiling=make('span'),zero=make('span',format(0));scale.append(ceiling,zero);
   const range=make('div',undefined,'overview-chart-range'),startLabel=make('span'),windowLabel=make('span'),endLabel=make('span');range.append(startLabel,windowLabel,endLabel);
-  canvas.setAttribute('role','img');canvas.setAttribute('aria-label',label);box.append(canvas,scale,range,tip);tip.hidden=true;
-  let values=[],maximum=1;
+  canvas.setAttribute('role','img');canvas.setAttribute('aria-label',label);canvas.tabIndex=0;
+  canvas.setAttribute('aria-keyshortcuts','ArrowLeft ArrowRight Home End');
+  box.append(canvas,scale,range,tip);tip.hidden=true;
+  let values=[],maximum=1,selectedAt=null;
   const time=value=>gapMs>3000?new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):new Date(value).toLocaleTimeString('zh-CN',{hour12:false});
   const rangeLabel=seconds=>seconds<60?seconds+' 秒':seconds<3600?(seconds/60).toFixed(seconds%60?1:0)+' 分钟':(seconds/3600).toFixed(seconds%3600?1:0)+' 小时';
   const fraction=(value,index)=>values.length>1?(value.at-values[0].at)/(values.at(-1).at-values[0].at||1):index;
@@ -49,9 +51,41 @@ function chart(label,series,format,gapMs=3000){
   };
   const observer=new ResizeObserver(redraw);observer.observe(box);
   const themeObserver=new MutationObserver(redraw);themeObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-  canvas.addEventListener('pointermove',event=>{if(!values.length)return;const width=canvas.getBoundingClientRect().width,at=Math.max(0,Math.min(1,(event.offsetX-64)/Math.max(1,width-72))),sample=values.reduce((best,value,index)=>Math.abs(fraction(value,index)-at)<Math.abs(fraction(best,values.indexOf(best))-at)?value:best,values[0]);tip.textContent=time(sample.at)+' · '+series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');tip.hidden=false;});
-  canvas.addEventListener('pointerleave',()=>{tip.hidden=true;});
-  return {node:box,update(next,max,visibleSeries=series){series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;ceiling.textContent=format(maximum);startLabel.textContent=values.length?time(values[0].at):'';endLabel.textContent=values.length>1?time(values.at(-1).at):'';windowLabel.textContent=values.length>1?'近 '+rangeLabel(Math.max(1,Math.round((values.at(-1).at-values[0].at)/1000))):'等待采样…';canvas.setAttribute('aria-label',label+'，'+windowLabel.textContent+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，'):'暂无采样'));redraw();},dispose(){observer.disconnect();themeObserver.disconnect();}};
+  function read(index){
+    const sample=values[Math.max(0,Math.min(values.length-1,index))];
+    if(!sample)return;
+    selectedAt=sample.at;
+    const text=time(sample.at)+' · '+series.map(([key,name])=>name+' '+format(sample[key])).join(' · ');
+    if(tip.textContent!==text)tip.textContent=text;
+    tip.hidden=false;
+  }
+  function readPointer(event){
+    if(!values.length)return;
+    const {left,width}=canvas.getBoundingClientRect(),at=(event.clientX-left-64)/Math.max(1,width-72);
+    let closest=0;
+    for(let i=1;i<values.length;i++)if(Math.abs(fraction(values[i],i)-at)<Math.abs(fraction(values[closest],closest)-at))closest=i;
+    read(closest);
+  }
+  const clearRead=()=>{selectedAt=null;tip.hidden=true;};
+  canvas.addEventListener('pointermove',event=>{if(event.pointerType==='mouse')readPointer(event);});
+  canvas.addEventListener('pointerdown',readPointer);
+  canvas.addEventListener('pointerleave',event=>{if(event.pointerType==='mouse'&&document.activeElement!==canvas)clearRead();});
+  canvas.addEventListener('focus',()=>{if(tip.hidden)read(values.length-1);});
+  canvas.addEventListener('blur',clearRead);
+  canvas.addEventListener('keydown',event=>{
+    const index=values.findIndex(value=>value.at===selectedAt),current=index<0?values.length-1:index;
+    const next={Home:0,End:values.length-1,ArrowLeft:current-1,ArrowRight:current+1}[event.key];
+    if(next!==undefined){event.preventDefault();read(next);}
+  });
+  return {node:box,update(next,max,visibleSeries=series){
+    series=visibleSeries;values=next;box.dataset.samples=String(values.length);maximum=max||Math.max(1,...values.flatMap(row=>series.map(([key])=>number(row[key])||0)))*1.15;
+    ceiling.textContent=format(maximum);startLabel.textContent=values.length?time(values[0].at):'';endLabel.textContent=values.length>1?time(values.at(-1).at):'';
+    windowLabel.textContent=values.length>1?'近 '+rangeLabel(Math.max(1,Math.round((values.at(-1).at-values[0].at)/1000))):'等待采样…';
+    canvas.setAttribute('aria-label',label+'，'+windowLabel.textContent+'，'+(values.length?series.map(([key,name])=>name+' '+format(values.at(-1)[key])).join('，')+'。左右方向键查看采样':'暂无采样'));
+    if(selectedAt!==null&&values.length){const index=values.findIndex(row=>row.at===selectedAt);read(Math.max(0,index));}
+    else if(!values.length)clearRead();
+    redraw();
+  },dispose(){observer.disconnect();themeObserver.disconnect();}};
 }
 
 export function mountOverview(host,{initialInfo=null,onUnauthorized=()=>{},onInfo=()=>{}}={}){

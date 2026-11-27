@@ -25,10 +25,11 @@ const raw = {
 const editorConfig = python("from clash_ppsub import editor_config;d=json.load(sys.stdin);print(json.dumps(editor_config(d,'https://example.com/sub')[0]))", raw);
 
 async function main() {
-  const browser = await chromium.launch({channel: 'chrome', headless: true});
+  const browser = await chromium.launch({channel:'chrome',headless:true,...(process.platform==='win32'?{args:['--disable-gpu']}:{})});
   try {
     const context = await browser.newContext({viewport: {width: 1440, height: 1000}, reducedMotion: 'reduce'});
     const page = await context.newPage(), errors = [], submitted = [], previews = [];
+    page.setDefaultTimeout(15000);page.setDefaultNavigationTimeout(15000);
     page.on('pageerror', error => errors.push(error.message));
     await page.addInitScript(() => {
       localStorage.setItem('PaoPaoGateWay', JSON.stringify({clashAPIConfigs: [{secret: 'fixture-token'}]}));
@@ -230,12 +231,24 @@ async function main() {
     await page.getByRole('tab',{name:'访问与统计',exact:true}).click();
     assert.equal(await proxyPassword.inputValue(),'fixture:password!');
     assert.equal(await proxyPassword.getAttribute('type'),'password','draft passwords are hidden again after rerendering');
+    for(const width of [320,375]){
+      await page.setViewportSize({width,height:667});
+      const trigger=page.locator('#preview'),modal=page.getByRole('dialog',{name:'预览应用结果'});
+      await trigger.click();await modal.waitFor();
+      assert.equal(await modal.evaluate(node=>{const title=node.querySelector('h2'),r=title.getBoundingClientRect();return node.matches(':modal')&&title.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true);
+      await page.keyboard.press('Tab');await page.locator('#cancel-preview:focus').waitFor();
+      await page.keyboard.press('Tab');await page.locator('#apply:focus').waitFor();
+      await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});await page.locator('#preview:focus').waitFor();
+      assert.equal(await page.locator('#shell-page-title').textContent(),'设置');
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&document.querySelector('#shell-menu').getBoundingClientRect().height>=40),true);
+    }
+    await page.setViewportSize({width:1440,height:1000});
     await page.locator('#preview').click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});
     assert.equal(previews.at(-1).patch.ini.openport_auth,'fixture-user:fixture:password!','password colons remain intact');
     assert.doesNotMatch(await page.locator('#preview-content').innerText(),/fixture-user|fixture:password!/);
     const submittedBeforeProxy=submitted.length;
-    await proxyPassword.fill('changed-password');
+    await proxyPassword.evaluate(node=>{node.value='changed-password';node.dispatchEvent(new Event('input',{bubbles:true}));});
     await page.locator('#apply').click();
     assert.match(await page.locator('#notice').innerText(),/编辑内容已变化/);
     assert.equal(submitted.length,submittedBeforeProxy,'a stale credential preview cannot be applied');
@@ -263,9 +276,8 @@ async function main() {
     await page.locator('#discard').click();
     assert.equal(await proxyUser.inputValue(),'fixture-user');assert.equal(await proxyPassword.inputValue(),'');
     await proxyUser.fill('reload-draft');
-    page.once('dialog',dialog=>dialog.accept());
     const proxyReload=page.waitForResponse(response=>new URL(response.url()).pathname==='/sniffbox/settings/config');
-    await page.locator('#reload').click();await proxyReload;
+    await page.locator('#reload').click();await page.getByRole('dialog',{name:'刷新配置'}).getByRole('button',{name:'放弃并刷新'}).click();await proxyReload;
     assert.equal(await proxyUser.inputValue(),'fixture-user');assert.equal(await proxyPassword.inputValue(),'');
     await proxyToggle.uncheck();
     await page.getByRole('button',{name:'清除已保存的代理账号',exact:true}).click();
@@ -376,8 +388,8 @@ async function main() {
     assert.equal(await navigation.locator('a[href="#/subscriptions"].active').count(), 1);
     await navigation.getByRole('link', {name: '设置', exact: true}).click();
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).inputValue(), '8999');
-    page.once('dialog', dialog => dialog.dismiss());
     await navigation.getByRole('link', {name: '概览', exact: true}).click();
+    await page.getByRole('dialog',{name:'离开当前页面'}).getByRole('button',{name:'取消',exact:true}).click();
     assert.equal(new URL(page.url()).hash, '#/settings');
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).inputValue(), '8999');
     await page.locator('#discard').click();
@@ -502,13 +514,14 @@ async function main() {
     await navigation.getByRole('link', {name: '设置', exact: true}).click();
     await page.getByLabel('流量记录上限', {exact: true}).waitFor();
     await blur(page.getByLabel('流量记录上限', {exact: true}), '9010');
-    page.once('dialog', dialog => dialog.dismiss());
     await page.goBack();
+    await page.getByRole('dialog',{name:'离开当前页面'}).waitFor();
     await page.waitForURL('**/#/settings');
+    await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'离开当前页面'}).waitFor({state:'hidden'});
     assert.equal(new URL(page.url()).hash, '#/settings');
     assert.equal(await page.getByLabel('流量记录上限', {exact: true}).inputValue(), '9010');
-    page.once('dialog', dialog => dialog.accept());
     await page.goBack();
+    await page.getByRole('dialog',{name:'离开当前页面'}).getByRole('button',{name:'确认离开',exact:true}).click();
     await page.locator('.ppgw-gateway').waitFor({state: 'detached'});
     // Aborting an in-flight config read must not write into the next route.
     configDelay = 500;
@@ -521,7 +534,7 @@ async function main() {
     for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await context.close();
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
       uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
-      sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, appearanceSelection: true, mobileMenu: true,
+      sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, nativeModalFocusAndEscape: true, appearanceSelection: true, mobileMenu: true,
       unmountDuringFetch: true, observerApiSettings: true, recheckPreservesDraft:true, staleCheckDistinguished:true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, proxySeparateCredentials:true, proxyFixedPortInfo:true, proxyCredentialValidation:true, proxySavedCredentialRetention:true, proxyExplicitCredentialClear:true, proxyDraftProtection:true, proxyUsernameVisibleAfterSave:true, proxyPasswordOnlyChange:true, pageErrors: errors}));
   } finally { for(const context of browser.contexts())for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await browser.close(); }
 }

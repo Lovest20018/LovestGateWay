@@ -6,6 +6,7 @@ import {trafficSnapshot,aggregateTraffic,filterTraffic,distributions,apex,nodeSn
 import {ansiSegments,stripAnsi,logBuffer,logEvent,logReplay} from '../src/log-model.js';
 import {regionTests,categories} from '../src/region-catalog.js';
 import {valueOf,predicate,runRegionTest,probePool} from '../src/region-engine.js';
+import {isRegionIp,maskRegionIps} from '../src/region-privacy.js';
 
 test('fragmented SSE framing preserves Unicode, multiline data, comments and CRLF',()=>{
   const output=[],events=eventDecoder(value=>output.push(value)),decoder=new TextDecoder(),bytes=new TextEncoder().encode(': heartbeat\r\ndata: 中文\r\ndata: second\r\n\r\ndata: []\n\n');
@@ -54,4 +55,14 @@ test('probe scheduling caps concurrency, retries only 429 and cancels queued wor
  let active=0,max=0,calls=0;const pool=probePool(async(request,signal)=>{calls++;active++;max=Math.max(max,active);try{await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,20);signal?.addEventListener('abort',()=>{clearTimeout(timer);reject(new DOMException('stop','AbortError'));},{once:true});});return request;}finally{active--;}});
  const abort=new AbortController(),pending=Array.from({length:30},(_,id)=>pool(id,abort.signal));setTimeout(()=>abort.abort(),5);const settled=await Promise.allSettled(pending);assert.equal(max,5);assert.equal(calls,5);assert.ok(settled.every(row=>row.status==='rejected'));assert.equal(await pool('next'), 'next');
  let attempts=0;const retry=probePool(async()=>{if(++attempts<3)throw Object.assign(Error('busy'),{status:429});return 'ok';});assert.equal(await retry({}),'ok');assert.equal(attempts,3);attempts=0;await assert.rejects(probePool(async()=>{attempts++;throw Object.assign(Error('invalid'),{status:400});})({}));assert.equal(attempts,1);
+});
+test('region masking hides standalone and embedded IPv4 and IPv6 while retaining surrounding text',()=>{
+ const raw='IPv4: 192.0.2.99:443. IPv6: [2001:DB8::ff]:443. Mapped ::ffff:198.51.100.7, scope fe80::9%eth0.';
+ const masked=maskRegionIps(raw);
+ assert.match(masked,/IPv4: 192\.0\.•••\.•••:443/);
+ assert.match(masked,/IPv6: \[2001:db8:••••\]:443/);
+ for(const address of ['192.0.2.99','2001:DB8::ff','198.51.100.7','fe80::9','eth0'])assert.ok(!masked.includes(address));
+ for(const address of ['192.0.2.3','2001:db8::a','::ffff:192.0.2.3','fe80::9%eth0'])assert.ok(isRegionIp(address));
+ assert.equal(isRegionIp('network error'),false);
+ assert.equal(maskRegionIps('elapsed 09:22:10, release 1.2.3'), 'elapsed 09:22:10, release 1.2.3');
 });

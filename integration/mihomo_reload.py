@@ -6,6 +6,7 @@ which restores persistent inputs and restarts the previously accepted config.
 """
 from copy import deepcopy
 import http.client
+from ipaddress import ip_network
 import json
 import os
 from pathlib import Path
@@ -21,8 +22,19 @@ RULE_TYPES = {'DOMAIN', 'DOMAIN-SUFFIX', 'DOMAIN-KEYWORD', 'IP-CIDR', 'IP-CIDR6'
               'SRC-IP-CIDR', 'SRC-PORT', 'DST-PORT', 'NETWORK', 'MATCH'}
 GROUP_TYPES = {'select': 'Selector', 'url-test': 'URLTest', 'fallback': 'Fallback',
                'load-balance': 'LoadBalance'}
+LOCKABLE_GROUPS = {'URLTest', 'Fallback', 'LoadBalance'}
 GROUP_OPTIONS = {'name', 'type', 'proxies', 'url', 'interval', 'lazy', 'hidden', 'tolerance',
                  'expected-status', 'max-failed-times', 'strategy'}
+
+
+def normalized_rule(kind, payload, proxy):
+    kind = re.sub('[^a-z0-9]', '', kind.lower())
+    if kind == 'ipcidr6': kind = 'ipcidr'
+    if kind in {'domain', 'domainsuffix', 'domainkeyword', 'network'}:
+        payload = payload.lower()
+    if kind in {'ipcidr', 'srcipcidr'}:
+        payload = str(ip_network(payload, strict=False))
+    return kind, payload, proxy
 
 
 def rule_rows(document):
@@ -34,11 +46,9 @@ def rule_rows(document):
         count = 2 if kind == 'MATCH' else 3
         if kind not in RULE_TYPES or len(parts) not in {count, count+1}:
             raise ValueError('unsupported rule')
-        if len(parts) > count and parts[-1] != 'no-resolve': raise ValueError('unsupported rule')
+        if len(parts) > count and parts[-1].lower() != 'no-resolve': raise ValueError('unsupported rule')
         payload = '' if kind == 'MATCH' else parts[1]
-        if kind == 'NETWORK': payload = payload.lower()
-        normalized = 'ipcidr' if kind == 'IP-CIDR6' else re.sub('[^a-z0-9]', '', kind.lower())
-        result.append((normalized, payload, parts[count-1]))
+        result.append(normalized_rule(kind, payload, parts[count-1]))
     return result
 
 
@@ -74,7 +84,7 @@ def plan(before, after):
     return {'eligible': True, 'reason': 'static_policy_only'}
 
 
-def policy_candidate(before, after, old_features, features, materialized=None):
+def policy_candidate(before, after, old_features, features, materialized=None, *, renames=None):
     """Use identical physical representations and never widen the runtime allowlist."""
     from clash_ppsub import apply_features, logical_document
     if features != old_features:
@@ -84,7 +94,7 @@ def policy_candidate(before, after, old_features, features, materialized=None):
     if logical_document(raw) != before or raw != expected:
         return {'eligible': False, 'reason': 'materialized_snapshot_changed'}, None
     result = plan(raw, after)
-    return result, {'before': deepcopy(raw), 'after': deepcopy(after)} if result['eligible'] else None
+    return result, {'before': deepcopy(raw), 'after': deepcopy(after), 'renames': dict(renames or {})} if result['eligible'] else None
 
 
 class UnixController:
@@ -106,7 +116,29 @@ class UnixController:
         finally: connection.close()
 
 
-def reload_verified(before, after, controller, validate, persist):
+def saved_selections(proxies, renames):
+    choices = []
+    destinations = set(renames.values())
+    for name, row in proxies.items():
+        # A reused name belongs to the explicitly renamed group, not its old occupant.
+        if not isinstance(row, dict) or (name in destinations and name not in renames):
+            continue
+        kind = row.get('type')
+        field = 'now' if kind == 'Selector' else 'fixed' if kind in LOCKABLE_GROUPS else None
+        selected = row.get(field)
+        if field and isinstance(selected, str) and selected and (selected not in destinations or selected in renames):
+            choices.append((renames.get(name, name), kind, field, renames.get(selected, selected)))
+    return choices
+
+
+def observed_rules(value):
+    try:
+        return [normalized_rule(row['type'], row['payload'], row['proxy']) for row in value['rules']]
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def reload_verified(before, after, controller, validate, persist, *, renames=None):
     if not plan(before, after)['eligible']: raise ManagementError('MIHOMO_RELOAD_UNSUPPORTED')
     config, identity = controller.request('GET', '/configs')
     proxies, peer = controller.request('GET', '/proxies')
@@ -115,19 +147,12 @@ def reload_verified(before, after, controller, validate, persist):
     previous = proxies.get('proxies', {})
     rules, peer = controller.request('GET', '/rules')
     if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
-    def observed_rules(value):
-        return [(re.sub('[^a-z0-9]', '', str(row.get('type', '')).lower()), str(row.get('payload', '')), row.get('proxy'))
-                for row in value.get('rules', [])]
     if observed_rules(rules) != rule_rows(before): raise ManagementError('STALE_POLICY_SNAPSHOT')
     for group in before.get('proxy-groups', []):
         row = previous.get(group['name'], {})
         if row.get('type') != GROUP_TYPES[group['type']] or row.get('all') != group['proxies']:
             raise ManagementError('STALE_POLICY_SNAPSHOT')
-    choices = {name: row.get('now') for name, row in previous.items()
-               if isinstance(row, dict) and row.get('type') == 'Selector' and isinstance(row.get('now'), str)}
-    locks = {name: (row.get('type'), row['fixed']) for name, row in previous.items()
-             if isinstance(row, dict) and row.get('type') in {'URLTest', 'Fallback', 'LoadBalance'}
-             and isinstance(row.get('fixed'), str) and row['fixed']}
+    choices = saved_selections(previous, renames or {})
     candidate = deepcopy(after); candidate['mode'] = config['mode']
     validate(candidate)
     # Recheck ownership immediately before the only mutating controller call.
@@ -138,14 +163,9 @@ def reload_verified(before, after, controller, validate, persist):
     current, peer = controller.request('GET', '/proxies')
     if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
     actual = current.get('proxies', {})
-    for name, selected in choices.items():
+    for name, kind, field, selected in choices:
         row = actual.get(name, {})
-        if row.get('type') == 'Selector' and selected in row.get('all', []) and row.get('now') != selected:
-            _, peer = controller.request('PUT', '/proxies/'+quote(name, safe=''), {'name': selected})
-            if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
-    for name, (kind, selected) in locks.items():
-        row = actual.get(name, {})
-        if row.get('type') == kind and selected in row.get('all', []) and row.get('fixed') != selected:
+        if row.get('type') == kind and selected in row.get('all', []) and row.get(field) != selected:
             _, peer = controller.request('PUT', '/proxies/'+quote(name, safe=''), {'name': selected})
             if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
     current, peer = controller.request('GET', '/proxies')
@@ -155,13 +175,9 @@ def reload_verified(before, after, controller, validate, persist):
         row = actual.get(group['name'], {})
         if row.get('type') != GROUP_TYPES[group['type']] or row.get('all') != group['proxies']:
             raise ManagementError('MIHOMO_RELOAD_GROUP_NOT_LOADED')
-    for name, selected in choices.items():
+    for name, kind, field, selected in choices:
         row = actual.get(name, {})
-        if row.get('type') == 'Selector' and selected in row.get('all', []) and row.get('now') != selected:
-            raise ManagementError('MIHOMO_RELOAD_SELECTION_NOT_PRESERVED')
-    for name, (kind, selected) in locks.items():
-        row = actual.get(name, {})
-        if row.get('type') == kind and selected in row.get('all', []) and row.get('fixed') != selected:
+        if row.get('type') == kind and selected in row.get('all', []) and row.get(field) != selected:
             raise ManagementError('MIHOMO_RELOAD_SELECTION_NOT_PRESERVED')
     rules, peer = controller.request('GET', '/rules')
     if peer != identity: raise ManagementError('MIHOMO_RELOAD_IDENTITY_CHANGED')
@@ -224,4 +240,5 @@ def apply_policy(system, update, settings):
             'effective_revision': protected_revision(document, key), 'apply_method': 'mihomo_reload',
             'loaded_at': time.time(), 'local_sections': list(policy.get('sections', {})),
             'policy_matches_source': policy.get('source_identity') == source_identity(settings['ini'])})
-    return reload_verified(update['before'], update['after'], UnixController(Path('/proc')/pid/'root/tmp/clash.sock'), validate, persist)
+    return reload_verified(update['before'], update['after'], UnixController(Path('/proc')/pid/'root/tmp/clash.sock'),
+                           validate, persist, renames=update.get('renames'))

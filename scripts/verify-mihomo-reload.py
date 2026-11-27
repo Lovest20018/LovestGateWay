@@ -19,7 +19,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'integration'))
-from mihomo_reload import UnixController, plan, policy_candidate, reload_verified
+from mihomo_reload import UnixController, observed_rules, plan, policy_candidate, reload_verified, rule_rows
 from manage_common import ManagementError
 
 
@@ -219,6 +219,34 @@ def main():
             assert json.loads(loaded.read_text()).get('x-ppgw-features') == physical.get('x-ppgw-features')
             keep.close(); keep = None
             passed('managed_'+label+'_static_rules_preserve_pid_tcp_selections_and_reject_matching_connection')
+        stop()
+        before=deepcopy(config)
+        before['proxy-groups'][0]['proxies']=['DIRECT','Child']
+        before['proxy-groups'][1]['proxies']=['DIRECT','Child']
+        before['proxy-groups'].append({'name':'Child','type':'select','proxies':['DIRECT','Fixture']})
+        before['rules']=['DOMAIN,BEFORE.Example,DIRECT','IP-CIDR,192.0.2.37/24,DIRECT,NO-RESOLVE','MATCH,MAIN']
+        persist(before);start();rename_pid=process.pid
+        for name,selected in [('MAIN','Child'),('GLOBAL','MAIN'),('url-test','Child'),('Child','Fixture')]:
+            api('PUT','/proxies/'+name,{'name':selected})
+        original=api('GET','/proxies')['proxies']
+        assert original['MAIN']['now']=='Child' and original['url-test']['fixed']=='Child'
+        assert observed_rules(api('GET','/rules'))==rule_rows(before)
+        after=deepcopy(before);renames={'MAIN':'New main','Child':'New child','url-test':'New auto'}
+        for group in after['proxy-groups']:
+            group['name']=renames.get(group['name'],group['name'])
+            group['proxies']=[renames.get(name,name) for name in group['proxies']]
+        after['rules']=['DOMAIN,AFTER.Example,DIRECT','IP-CIDR,192.0.2.199/24,DIRECT,NO-RESOLVE',
+                        'IP-CIDR6,2001:DB8::12/32,DIRECT,no-resolve','MATCH,New main']
+        result,update=policy_candidate(before,after,{}, {},renames=renames)
+        assert result['eligible']
+        reload_verified(update['before'],update['after'],controller,validate,persist,renames=update['renames'])
+        assert process.pid==rename_pid and process.poll() is None
+        assert observed_rules(api('GET','/rules'))==rule_rows(after)
+        assert json.loads(loaded.read_text())['rules']==after['rules']
+        current=api('GET','/proxies')['proxies']
+        assert current['GLOBAL']['now']=='New main' and current['New main']['now']=='New child'
+        assert current['New child']['now']=='Fixture' and current['New auto']['fixed']=='New child'
+        passed('noncanonical_rules_and_explicit_group_and_child_renames_survive_real_reload')
         report.update(complete=True, connection_identity_preserved_on_success=True,
                       uncertain_reload_requires_restart=True, providers_use_restart=True)
         save()

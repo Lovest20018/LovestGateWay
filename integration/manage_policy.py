@@ -195,17 +195,17 @@ class PolicyManager:
             group['name'] = renames.get(group.get('name'), group.get('name'))
             if group.get('pre_proxy_group') in renames:
                 group['pre_proxy_group'] = renames[group['pre_proxy_group']]
-        return snapshot, merged, policy, apply_features(merged, features)
+        return snapshot, merged, policy, apply_features(merged, features), renames
 
     def preview(self, body):
         with operation_lock(self.layout):
-            snapshot, merged, policy, effective = self.candidate(body)
+            snapshot, merged, policy, effective, renames = self.candidate(body)
             changed = merged != snapshot['document']
             if changed: self.system.validate_policy(effective)
             from mihomo_reload import policy_candidate
             features = policy.get('features', {})
             reload_plan, _ = policy_candidate(snapshot['document'], effective, snapshot['features'], features,
-                running_materialized_document() if self.layout.live else None)
+                running_materialized_document() if self.layout.live else None, renames=renames)
             return {'status': 'preview', 'action': ('mihomo_reload' if reload_plan['eligible'] else 'restart') if changed else 'none',
                     'mihomo_reload': reload_plan,
                     'base_revision': snapshot['revision'], 'changed': changed,
@@ -214,7 +214,7 @@ class PolicyManager:
 
     def apply(self, body):
         with operation_lock(self.layout):
-            snapshot, merged, policy, effective = self.candidate(body)
+            snapshot, merged, policy, effective, renames = self.candidate(body)
             if merged == snapshot['document']: return {'status': 'unchanged', 'revision': snapshot['revision']}
             self.system.validate_policy(effective)
             def verify():
@@ -224,7 +224,7 @@ class PolicyManager:
             from mihomo_reload import policy_candidate
             features = policy.get('features', {})
             _, update = policy_candidate(snapshot['document'], effective, snapshot['features'], features,
-                running_materialized_document() if self.layout.live else None)
+                running_materialized_document() if self.layout.live else None, renames=renames)
             options = {'mihomo_update': update} if update else {}
             result = ConfigManager(self.layout, self.system).apply({}, snapshot['revision'],
                 policy_update=(json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode(), verify=verify, **options)

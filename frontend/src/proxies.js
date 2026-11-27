@@ -1,4 +1,5 @@
 import {modeControl} from './mode-control.js';
+import {confirmAction} from './dialog.js';
 import {icon} from './icons.js';
 import {formatBytes} from './format.js';
 import {snapshot,preferences,groups,isGroup,automatic,lockable,rejected,segment,sorts,delay,state,nodeLabel,members,testUrl,testPath,testPlan,usage,informationNode,customHiddenNode} from './proxy-model.js';
@@ -53,10 +54,13 @@ export function mountProxies(host,{initialInfo,onUnauthorized=()=>{}}={}){
   for(const control of [lockConfirm,lockCancel])control.setAttribute('role','menuitem');lockMenu.append(lockText,lockConfirm,lockCancel);
   lockMenu.addEventListener('toggle',event=>{if(event.newState==='closed')lockTarget=null;});
   lockMenu.addEventListener('keydown',event=>{if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();(document.activeElement===lockConfirm?lockCancel:lockConfirm).focus();}});
-  function openLock(group,name,anchor){
+  async function openLock(group,name,anchor){
     if(busy||paused||disposed||!lockable(data.proxies[group]))return;
     const unlocking=data.proxies[group].fixed===name;
-    if(typeof lockMenu.showPopover!=='function'){if(confirm((unlocking?'解除锁定：':'锁定节点：')+name+'？'))fixed(group,name);return;}
+    if(typeof lockMenu.showPopover!=='function'){
+      if(await confirmAction((unlocking?'解除锁定：':'锁定节点：')+name+'？',{trigger:anchor})&&!disposed&&data.proxies[group])fixed(group,name);
+      return;
+    }
     lockTarget={group,name};lockText.textContent=group+' · '+name;lockConfirm.textContent=unlocking?'解锁此节点':'锁定此节点';
     const bounds=anchor.getBoundingClientRect();lockMenu.style.left=Math.max(12,Math.min(bounds.left,innerWidth-280))+'px';lockMenu.style.top=Math.max(12,Math.min(bounds.bottom,innerHeight-160))+'px';lockMenu.showPopover();lockConfirm.focus();
   }

@@ -122,9 +122,12 @@
     view.type = 'button';
     view.className = 'btn';
     view.textContent = '查看代理';
-    view.hidden = true;
-    view.style.display = 'none';
-    view.onclick = () => { location.hash = '#/proxies'; location.reload(); };
+    function showProxyLink(visible) {
+      view.hidden=!visible;
+      view.style.display=visible?'inline-flex':'none';
+    }
+    showProxyLink(false);
+    view.onclick = () => editor.navigate('#/proxies');
     const explanation = document.createElement('details');
     explanation.className = 'ppgw-read-note';
     explanation.hidden = true;
@@ -301,8 +304,10 @@
         const name=item.querySelector('.row input'); if(name) name.readOnly=full;
       });
     }
-    const capabilityObserver=new MutationObserver(restrictCapabilities);
-    capabilityObserver.observe(editor.header.parentElement,{childList:true,subtree:true,characterData:true});
+    editor.header.parentElement.addEventListener('ppgw:editor-render',syncEditing,{signal:lifetime.signal});
+    editor.header.parentElement.addEventListener('input',event=>{
+      if(event.target.matches('.subs [data-field="name"]'))providerControls();
+    },{signal:lifetime.signal});
     editor.header.parentElement.addEventListener('contextmenu',event=>{if(state.editKind==='clash_patch'&&event.target.closest('.subs')){event.preventDefault();event.stopPropagation();}},{capture:true,signal:lifetime.signal});
     function syncEditing() { lockEditing(state.loading || state.active || state.settingsBusy || (state.loaded && !state.writeAllowed)); restrictCapabilities(); window.ppgwGateway?.setEditorBusy(state.loading||state.active); }
 
@@ -343,14 +348,15 @@
         if (operation) {
           const stages={fetching:'获取订阅',validating:'校验配置',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置'};
           showOperation(operation, stages[operation.stage] ? stages[operation.stage]+'…\n' : '');
-          view.hidden = !['applied', 'unchanged'].includes(operation.status);
-          view.style.display = view.hidden ? 'none' : 'inline-flex';
+          const applied=['applied','unchanged'].includes(operation.status);
+          showProxyLink(false);
           if (operation.status !== 'applying') {
             state.revision = data.base_revision;
             syncEditing();
-            if (['applied', 'unchanged'].includes(operation.status) || !state.loaded) {
+            if (applied || !state.loaded) {
               const message = operation.message;
               if (await state.loadCurrent(editor.importConfig, false)) show(message, operation.status === 'failed');
+              if(!state.stopped)showProxyLink(applied);
               if (operation.status !== 'failed') window.ppgwGateway?.editorApplied();
             }
           }
@@ -366,7 +372,8 @@
 
     state.loadCurrent = async (importConfig, confirmChanges = true) => {
       if (state.loading || state.active || state.stopped) return false;
-      if (confirmChanges && (hasChanges() || window.ppgwGateway?.editorOptionsChanged()) && !confirm('重新读取会放弃未保存的编辑内容和更新计划，继续吗？')) return false;
+      if (confirmChanges && (hasChanges() || window.ppgwGateway?.editorOptionsChanged()) && !await editor.confirmAction('重新读取会放弃未保存的编辑内容和更新计划，继续吗？',{title:'重新读取配置',accept:'放弃并重新读取'})) return false;
+      if (state.loading || state.active || state.stopped) return false;
       if(confirmChanges) window.ppgwGateway?.discardEditorOptions();
       state.loading = true;
       updateApply();
@@ -390,8 +397,7 @@
         providerControls();
         state.needsReload = false;
         state.baseline = fingerprint();
-        view.hidden = true;
-        view.style.display = 'none';
+        showProxyLink(false);
         show(data.notice, false, true);
         return true;
       } catch (error) {
@@ -424,7 +430,7 @@
           if(state.stopped||state.active)return;
           if(previewFingerprint!==fingerprint()||JSON.stringify(body.settings_patch)!==JSON.stringify(window.ppgwGateway?.editorPatch(state.settingsRevision)||{}))throw Error('编辑内容已变化，请重新预览后再确认应用。');
           try {
-            state.active=true;syncEditing();updateApply();view.hidden=true;view.style.display='none';
+            state.active=true;syncEditing();updateApply();showProxyLink(false);
             show('正在统一保存并验证配置，网关可能短暂重启…');
             await request('apply',body);
             await refresh();
@@ -470,18 +476,12 @@
       clearTimeout(state.providerTimer);
       syncEditing();
       window.ppgwGateway?.setEditorBusy(false);
-      capabilityObserver.disconnect(); editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); backup.remove(); exportNote.remove(); refreshNodes.remove(); cacheNote.remove();
+      editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); backup.remove(); exportNote.remove(); refreshNodes.remove(); cacheNote.remove();
       detachOptions?.(); optionsHost.remove();
       dirtyState.remove();apply.remove();commitbar.remove();feedback.remove();
       notice.remove();
       if (current === state) current = null;
     }
-    destroy.allowNavigation = (url, type) => {
-      if (url && url.origin === location.origin && url.pathname === location.pathname && url.hash === '#/ppsub') return true;
-      if (state.active) { show('正在保存并应用，请等待任务完成后再离开。'); return false; }
-      if (!hasChanges()) return true;
-      return type !== 'leave' && confirm('离开会放弃未保存的修改，继续吗？');
-    };
     return destroy;
   }
 

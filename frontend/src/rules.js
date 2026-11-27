@@ -12,6 +12,7 @@ const groupType=node=>node?.smart?'智能测速':({Selector:'手动选择',URLTe
 export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const supported=!initialInfo||['yaml','suburl'].includes(initialInfo.mode);
   let rows=[],providers=[],proxies={},mode='',geo=[],loaded=false,rulesCurrent=false,proxiesCurrent=false,disposed=false,paused=false,busy=false,reading=false,resumeRequested=false,query='',pageNumber=1,located=null,testResult=null,drawerPath=[],drawerLimit=120;
+  let ruleReadError='';
   let pageSize='auto';try{const saved=sessionStorage.getItem('rules_pageSize');if(['auto','20','50','100','all'].includes(saved))pageSize=saved;}catch{}
   let timer=null,sequence=0,readController=null;const controllers=new Set(),rowViews=new Map(),providerViews=new Map();
   const page=make('section',undefined,'rules-page layout-page');page.id='rules-page';
@@ -58,12 +59,17 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function schedule(){clearTimeout(timer);if(!disposed&&!paused&&!document.hidden)timer=setTimeout(()=>refresh(false),15000);}
   async function refresh(explicit=true){
     if(disposed||document.hidden||!supported)return;if(busy){if(explicit)resumeRequested=true;return;}if(!explicit&&(paused||reading))return;
-    clearTimeout(timer);paused=false;readController?.abort();const current=++sequence,active=new AbortController();readController=active;reading=true;actionState();
+    clearTimeout(timer);paused=false;readController?.abort();const current=++sequence,active=new AbortController();readController=active;reading=true;
+    if(!loaded){ruleReadError='';renderRows();}else actionState();
     try{const [rulesResult,providerResult,configResult,proxyResult,geoState]=await Promise.allSettled([
       request('/rules',{signal:active.signal}),request('/providers/rules',{signal:active.signal}),request('/configs',{signal:active.signal}),request('/sniffbox/proxies?fresh=1',{signal:active.signal}),request('/sniffbox/geo',{signal:active.signal})]);
       if(disposed||current!==sequence)return;
       const errors=[];
-      rulesCurrent=false;if(rulesResult.status==='fulfilled'){rows=rulesSnapshot(rulesResult.value);loaded=true;rulesCurrent=true;}else errors.push('规则：'+rulesResult.reason.message);
+      rulesCurrent=false;
+      try{
+        if(rulesResult.status==='rejected')throw rulesResult.reason;
+        rows=rulesSnapshot(rulesResult.value);loaded=true;rulesCurrent=true;
+      }catch(error){if(!loaded)ruleReadError=error.message;errors.push('规则：'+error.message);}
       if(providerResult.status==='fulfilled'){try{providers=providersSnapshot(providerResult.value);}catch(error){errors.push(error.message);}}else errors.push('规则订阅：'+providerResult.reason.message);
       if(configResult.status==='fulfilled'&&typeof configResult.value?.mode==='string')mode=configResult.value.mode.toLowerCase();else{mode='';errors.push('运行模式未确认。');}
       proxiesCurrent=false;if(proxyResult.status==='fulfilled'&&proxyResult.value?.proxies&&typeof proxyResult.value.proxies==='object'){proxies=snapshot(proxyResult.value).proxies;proxiesCurrent=true;}else errors.push('目标节点状态未确认。');
@@ -85,15 +91,27 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
     const view={tr,cells,toggle,target,chain,row};toggle.addEventListener('change',()=>{const current=view.row,disabled=!toggle.checked;toggle.checked=current.extra.disabled!==true;if(!current.canToggle||busy||paused||reading||!rulesCurrent||!mode||mode!=='rule')return;perform(disabled?'临时停用规则':'临时启用规则',async()=>{await request('/rules/disable',{method:'PATCH',body:{[String(current.index)]:disabled}});if(disposed)return;current.extra.disabled=disabled;return '下次配置重载后恢复。';});});return view;
   }
   function renderRows(){
-    const selection=rulePage(rows,{query,located,page:pageNumber,pageSize}),matched=matchLog(testResult?.logs,rows,proxies)?.row;pageNumber=selection.page;const keep=new Set();
+    count.textContent=loaded?rows.length+' 条规则':ruleReadError?'读取失败':'正在读取…';
+    const selection=rulePage(rows,{query,located,page:pageNumber,pageSize}),matched=matchLog(testResult?.logs,rows,proxies)?.row;pageNumber=selection.page;const keep=new Set(),optimized=optimize();
     locationBar.hidden=located===null;locationText.textContent=located===null?'':'当前仅显示定位规则 #'+located;
     for(const [position,row]of selection.rows.entries()){
       const key=String(row.position);keep.add(key);let view=rowViews.get(key);if(!view){view=createRow(row);rowViews.set(key,view);}view.row=row;view.tr.dataset.index=String(row.index);view.toggle.setAttribute('aria-label','启用规则 '+row.index);view.toggle.checked=row.extra.disabled!==true;view.toggle.hidden=!row.canToggle;view.tr.classList.toggle('off',row.extra.disabled===true);view.tr.classList.toggle('matched',matched===row);
-      view.target.textContent=row.proxy||'—';view.target.title=row.proxy;view.target.disabled=!proxiesCurrent||!isGroup(proxies[row.proxy]);const chain=proxyChain(proxies,row.proxy),end=chain.at(-1),label=end?nodeLabel(end,optimize()):null;view.chain.textContent=label?'→ '+[label.flag,label.display].filter(Boolean).join(' '):'';view.chain.title=chain.join(' → ');
+      view.target.textContent=row.proxy||'—';view.target.title=row.proxy;view.target.disabled=!proxiesCurrent||!isGroup(proxies[row.proxy]);const chain=proxyChain(proxies,row.proxy),end=chain.at(-1),label=end?nodeLabel(end,optimized):null;view.chain.textContent=label?'→ '+[label.flag,label.display].filter(Boolean).join(' '):'';view.chain.title=chain.join(' → ');
       for(const [index,value]of [[2,row.type||'—'],[3,row.payload||'—'],[4,typeof row.size==='number'&&row.size>=0?String(row.size):'—'],[5,row.extra.hitCount??'—'],[6,row.extra.missCount??'—'],[7,date(row.extra.hitAt)],[8,date(row.extra.missAt)],[9,String(row.index)]])view.cells[index].textContent=typeof value==='string'||typeof value==='number'?value:'—';
       if(tbody.children[position]!==view.tr)tbody.insertBefore(view.tr,tbody.children[position]||null);
     }
-    for(const [key,view]of rowViews)if(!keep.has(key)){view.tr.remove();rowViews.delete(key);}let empty=tbody.querySelector('.rules-empty');if(!selection.rows.length){if(!empty){empty=make('tr',undefined,'rules-empty');const cell=make('td');cell.colSpan=10;empty.append(cell);tbody.append(empty);}empty.firstChild.replaceChildren(document.createTextNode(!loaded?'正在读取规则…':!rows.length?'当前配置没有规则。':'没有匹配的规则。'));if(loaded&&!rows.length){const link=make('a','前往订阅与策略');link.href='#/subscriptions';empty.firstChild.append(' ',link);}}else empty?.remove();
+    for(const [key,view]of rowViews)if(!keep.has(key)){view.tr.remove();rowViews.delete(key);}
+    let empty=tbody.querySelector('.rules-empty');
+    if(!selection.rows.length){
+      if(!empty){empty=make('tr',undefined,'rules-empty');const cell=make('td');cell.colSpan=10;empty.append(cell);tbody.append(empty);}
+      const cell=empty.firstChild;
+      if(!loaded&&ruleReadError){
+        cell.replaceChildren(make('span','读取规则失败。'+ruleReadError),' ',button('重试',()=>{tableWrap.focus();refresh();}));
+      }else{
+        cell.textContent=!loaded?'正在读取规则…':!rows.length?'当前配置没有规则。':'没有匹配的规则。';
+        if(loaded&&!rows.length){const link=make('a','前往订阅与策略');link.href='#/subscriptions';cell.append(' ',link);}
+      }
+    }else empty?.remove();
     pageCount.textContent=selection.page+' / '+selection.pages+' · '+selection.total+' 条';previous.disabled=selection.page<=1;next.disabled=selection.page>=selection.pages;tip.hidden=rows.length<=3;tableCard.classList.toggle('global',mode!=='rule');applyColumns();actionState();
   }
   function renderProviders(){
@@ -105,8 +123,9 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function openGroup(name){drawerPath=[name];drawerLimit=120;renderDrawer();if(!drawer.open)drawer.showModal();}
   function renderDrawer(){
     const name=drawerPath.at(-1),group=proxies[name];if(!name||!isGroup(group)){if(drawer.open)drawer.close();return;}
+    const optimized=optimize();
     drawerTitle.textContent=name;back.hidden=drawerPath.length<=1;drawerHint.textContent=drawerPath.join(' → ')+' · '+groupType(group)+' · '+group.all.length+' 个节点。'+(group.type==='Selector'&&!group.smart?'点击节点即可切换。':'由核心自动选择；锁定操作请使用代理页。');drawerList.replaceChildren();
-    for(const member of group.all.slice(0,drawerLimit)){const child=proxies[member],row=make('div',undefined,'rule-group-row'),info=nodeLabel(member,optimize()),choose=button([info.flag,info.display].filter(Boolean).join(' '),()=>perform('切换目标节点',async()=>{const live=proxies[name];if(!proxiesCurrent||!isGroup(live)||live.type!=='Selector'||live.smart||!live.all.includes(member)||live.now===member)return;await request('/proxies/'+segment(name),{method:'PUT',body:{name:member}});if(!disposed)live.now=member;}));choose.dataset.action='group-select';choose.dataset.unavailable=String(!proxiesCurrent||group.type!=='Selector'||group.smart===true||group.now===member);choose.setAttribute('aria-pressed',String(group.now===member));choose.title=member;row.dataset.node=member;const latency=delay({proxies},member,name);row.append(choose,make('span',isGroup(child)?groupType(child):latency===null?'—':latency===0?'超时':latency+' ms'));
+    for(const member of group.all.slice(0,drawerLimit)){const child=proxies[member],row=make('div',undefined,'rule-group-row'),info=nodeLabel(member,optimized),choose=button([info.flag,info.display].filter(Boolean).join(' '),()=>perform('切换目标节点',async()=>{const live=proxies[name];if(!proxiesCurrent||!isGroup(live)||live.type!=='Selector'||live.smart||!live.all.includes(member)||live.now===member)return;await request('/proxies/'+segment(name),{method:'PUT',body:{name:member}});if(!disposed)live.now=member;}));choose.dataset.action='group-select';choose.dataset.unavailable=String(!proxiesCurrent||group.type!=='Selector'||group.smart===true||group.now===member);choose.setAttribute('aria-pressed',String(group.now===member));choose.title=member;row.dataset.node=member;const latency=delay({proxies},member,name);row.append(choose,make('span',isGroup(child)?groupType(child):latency===null?'—':latency===0?'超时':latency+' ms'));
       if(isGroup(child)){const drill=button('查看子组',()=>{if(drawerPath.includes(member)){message('节点组存在循环引用，已停止继续展开。');return;}drawerPath.push(member);drawerLimit=120;renderDrawer();});drill.setAttribute('aria-label','查看子组 '+member);row.append(drill);}drawerList.append(row);
     }
     more.hidden=drawerLimit>=group.all.length;more.textContent='显示更多（剩余 '+Math.max(0,group.all.length-drawerLimit)+' 个）';actionState();
@@ -135,7 +154,7 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
     else testOutput.append(make('p','未取得可识别的匹配日志，不能据此确定命中规则。'));
     const details=make('details'),heading=make('summary','相关日志（'+logs.length+'）'),log=make('pre');log.textContent=logs.slice(0,2000).map(item=>(typeof item?.type==='string'?'['+item.type+'] ':'')+(typeof item?.payload==='string'?item.payload:'')).join('\n')||testResult.logsError||'暂无日志。';details.append(heading,log);testOutput.append(details);
   }
-  function render(){if(disposed)return;count.textContent=rows.length+' 条规则';notice.hidden=mode==='rule'||!mode;notice.textContent=mode==='direct'?'当前为直连模式，规则未生效。':'当前为 GLOBAL 全局模式，规则未生效。';renderGeo();renderRows();renderProviders();if(drawer.open)renderDrawer();actionState();}
+  function render(){if(disposed)return;notice.hidden=mode==='rule'||!mode;notice.textContent=mode==='direct'?'当前为直连模式，规则未生效。':'当前为 GLOBAL 全局模式，规则未生效。';renderGeo();renderRows();renderProviders();if(drawer.open)renderDrawer();actionState();}
   const visibility=()=>{if(document.hidden){clearTimeout(timer);sequence++;readController?.abort();reading=false;}else if(!disposed&&!paused)refresh(false);},focus=()=>{if(!disposed&&!paused&&!busy)refresh(false);};document.addEventListener('visibilitychange',visibility);window.addEventListener('focus',focus);
   if(!supported){message('当前出站模式不使用 Mihomo 规则，请在网关设置中选择配置来源。');count.textContent='当前模式无规则';tools.hidden=toolbar.hidden=tableCard.hidden=true;geoButton.hidden=modeButton.hidden=refreshButton.hidden=true;}else if(!document.hidden)refresh();
   return {refresh,dispose(){disposed=true;sequence++;clearTimeout(timer);for(const controller of controllers)controller.abort();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',focus);for(const dialog of [confirmDialog,drawer])if(dialog.open)dialog.close();host.replaceChildren();}};

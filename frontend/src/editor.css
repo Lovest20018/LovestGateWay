@@ -1,6 +1,5 @@
 /* Retain the original PPsub editor's compact cards and inline token controls. */
 .source-editor {margin:0;display:flex;flex-direction:column;gap:12px;min-width:0;font-size:13px}
-.source-editor .phead {display:flex;align-items:center;flex-wrap:wrap;gap:8px}
 .source-editor .editor-body {display:flex;flex-direction:column;gap:16px;min-width:0}
 .source-editor .editor-body>:is(.monitor,.subs,.groups,.rules) {width:100%;min-width:0}
 .source-editor .editor-section,.source-editor .monitor {padding:16px 18px;border:1px solid var(--edge);border-left:3px solid var(--down);border-radius:var(--r-card);background:var(--panel);margin:0}
@@ -29,6 +28,7 @@
 .source-editor .editor-field textarea {min-height:78px;resize:vertical;font-family:var(--font-mono);line-height:1.55}
 .source-editor .editor-check {flex-direction:row;align-items:center;gap:7px;width:fit-content;margin:8px 0 0}
 .source-editor .editor-check input {order:-1;appearance:auto;width:16px;height:16px;margin:0;flex:none;accent-color:var(--brand)}
+:root[data-theme=light] .source-editor .editor-check input:not(:checked):not(:focus-visible) {outline:1px solid var(--text-3);outline-offset:-1px;border-radius:3px}
 .source-editor .editor-check>span {color:var(--text)}
 .source-editor .editor-group-body {display:flex;flex-direction:column;gap:8px}
 .source-editor .editor-group-basics {display:flex;align-items:center;flex-wrap:wrap;gap:10px 18px;margin-bottom:2px}

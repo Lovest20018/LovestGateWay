@@ -9,19 +9,36 @@ export function mountConnections(host,{onUnauthorized=()=>{}}={}) {
   const columns={host:true,dl:true,ul:true,dlSpeed:true,ulSpeed:true,chains:true,rule:true,active:false,source:true,inbound:false};
   try{stored=JSON.parse(localStorage.getItem('conns_cols')||'{}');for(const key of Object.keys(columns))if(typeof stored[key]==='boolean')columns[key]=stored[key];}catch{}
   const client=monitorClient({onUnauthorized,onPause:()=>{tracker.resetRates();fresh=false;dialog.dispose();render();},onResume:()=>tracker.resetRates()});
-  const tabs=el('div',undefined,'monitor-tabs'),activeTab=button('活动',()=>changeTab('active')),closedTab=button('已关闭',()=>changeTab('closed'));tabs.setAttribute('aria-label','连接视图');tabs.append(activeTab,closedTab);
+  const tabs=el('div',undefined,'monitor-tabs'),activeTab=button('活动',()=>changeTab('active')),closedTab=button('已关闭',()=>changeTab('closed'));
+  const tabButtons={active:activeTab,closed:closedTab};
+  tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label','连接视图');
+  for(const [key,control] of Object.entries(tabButtons)){
+    control.id='connections-tab-'+key;control.setAttribute('role','tab');control.setAttribute('aria-controls','connections-table-panel');
+  }
+  tabs.append(activeTab,closedTab);
+  tabs.addEventListener('keydown',event=>{
+    const target={Home:'active',End:'closed',ArrowLeft:tab==='active'?'closed':'active',ArrowRight:tab==='active'?'closed':'active'}[event.key];
+    if(target){event.preventDefault();changeTab(target);tabButtons[target].focus();}
+  });
   const search=input('搜索连接',{onInput:value=>{query=value;pageNumber=1;render();}}),columnPanel=el('details',undefined,'monitor-columns'),columnTitle=el('summary','列设置'),pause=button('暂停刷新',()=>{auto=!auto;reader.setEnabled(auto);tracker.resetRates();render();}),refresh=button('刷新',()=>readOnce()),closeAll=button('关闭全部',()=>{if(!busy&&fresh&&!client.unauthorized)dialog.show('关闭全部连接','将关闭网关当前的全部活动连接，确认继续吗？',()=>perform('/connections'));});
   columnPanel.append(columnTitle);ui.head.append(pause,refresh);ui.toolbar.append(tabs);closeAll.classList.add('monitor-danger');closeAll.title='关闭全部活动连接，不受当前筛选限制';
   const stats=el('div',undefined,'monitor-metrics'),card=el('section',undefined,'glass monitor-card');ui.root.append(stats,card);
+  card.id='connections-table-panel';card.setAttribute('role','tabpanel');
   const labels={host:'目标地址',dl:'下载',ul:'上传',dlSpeed:'下载速率',ulSpeed:'上传速率',chains:'代理链',rule:'匹配规则',active:'最近活动',source:'来源',inbound:'入站'};
   for(const [key,label]of Object.entries(labels)){const control=el('input');control.type='checkbox';control.checked=columns[key];control.addEventListener('change',()=>{columns[key]=control.checked;try{localStorage.setItem('conns_cols',JSON.stringify({...stored,...columns}));}catch{}list.columns(definitions());render();});columnPanel.append(field(label,control));}
   const list=table({columns:definitions(),onSort:key=>{direction=sort===key?-direction:-1;sort=key;render();},onFilter:(key,value)=>{filters[key]=value;pageNumber=1;render();},filters,key:row=>row.id+(row.closedAt?':'+row.closedAt:'')});
   const pagination=pager((page,size)=>{pageNumber=page;pageSize=size;render();}),tools=el('div',undefined,'layout-toolbar layout-table-tools');tools.append(search,columnPanel,closeAll);card.append(tools,list.wrap,pagination.root);
-  function definitions(){return [...Object.keys(columns).filter(key=>columns[key]).map(key=>({key,label:labels[key],filter:['host','chains','rule','source','inbound'].includes(key),numeric:['dl','ul','dlSpeed','ulSpeed','active'].includes(key),value:row=>key==='dl'||key==='ul'?bytes(connectionValues[key](row)):key.endsWith('Speed')?bytes(connectionValues[key](row))+(connectionValues[key](row)==null?'':'/s'):key==='active'?duration(Date.now()-(row.closedAt??row.lastActive)):connectionValues[key](row)||'—',title:row=>key==='active'?date(row.closedAt??row.lastActive):String(connectionValues[key](row)??'—'),action:['host','chains','rule','source','inbound'].includes(key)?async row=>ui.message(await copy(connectionValues[key](row))?'已复制。':'复制失败，请选择文字复制。'):undefined})),{key:'actions',label:'操作',sortable:false,value:()=>tab==='active'?'关闭':'已关闭',accessible:row=>'关闭连接 '+row.id,action:row=>{if(tab==='active'&&fresh&&!busy)perform('/connections/'+encodeURIComponent(row.id));},disabled:()=>tab!=='active'||busy||!fresh||client.unauthorized}];}
-  function changeTab(value){tab=value;pageNumber=1;render();}
+  function definitions(){
+    const action={key:'actions',label:tab==='active'?'操作':'状态',sortable:false,value:()=>tab==='active'?'关闭':'已关闭'};
+    if(tab==='active')Object.assign(action,{accessible:row=>'关闭连接 '+row.id,action:row=>{if(fresh&&!busy)perform('/connections/'+encodeURIComponent(row.id));},disabled:()=>busy||!fresh||client.unauthorized});
+    return [...Object.keys(columns).filter(key=>columns[key]).map(key=>({key,label:labels[key],filter:['host','chains','rule','source','inbound'].includes(key),numeric:['dl','ul','dlSpeed','ulSpeed','active'].includes(key),value:row=>key==='dl'||key==='ul'?bytes(connectionValues[key](row)):key.endsWith('Speed')?bytes(connectionValues[key](row))+(connectionValues[key](row)==null?'':'/s'):key==='active'?duration(Date.now()-(row.closedAt??row.lastActive)):connectionValues[key](row)||'—',title:row=>key==='active'?date(row.closedAt??row.lastActive):String(connectionValues[key](row)??'—'),action:['host','chains','rule','source','inbound'].includes(key)?async row=>ui.message(await copy(connectionValues[key](row))?'已复制。':'复制失败，请选择文字复制。'):undefined})),action];
+  }
+  function changeTab(value){if(tab===value)return;tab=value;pageNumber=1;list.columns(definitions());render();}
   function render(){
     if(client.disposed)return;
-    activeTab.textContent='活动（'+data.active.length+'）';closedTab.textContent='已关闭（'+data.closed.length+'）';activeTab.setAttribute('aria-pressed',String(tab==='active'));closedTab.setAttribute('aria-pressed',String(tab==='closed'));
+    activeTab.textContent='活动（'+data.active.length+'）';closedTab.textContent='已关闭（'+data.closed.length+'）';
+    for(const [key,control] of Object.entries(tabButtons)){control.setAttribute('aria-selected',String(key===tab));control.tabIndex=key===tab?0:-1;}
+    card.setAttribute('aria-labelledby',tabButtons[tab].id);
     pause.textContent=auto?'暂停刷新':'恢复刷新';pause.setAttribute('aria-pressed',String(!auto));closeAll.disabled=busy||!fresh||!loaded||client.unauthorized;refresh.disabled=busy;
     const rows=filterConnections(data[tab],{query,filters,sort,direction}),selection=pagination.update(rows,pageNumber,pageSize);pageNumber=selection.page;
     const down=rows.reduce((sum,row)=>sum+row.download,0),up=rows.reduce((sum,row)=>sum+row.upload,0),rates=rows.some(row=>row.dlSpeed!=null)?rows.reduce((sum,row)=>sum+number(row.dlSpeed),0):null;

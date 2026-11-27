@@ -1,7 +1,8 @@
 import {clone,documentModel,exported,move,groupMode,setGroupMode,ruleType,setRuleType,ruleSetDefaults} from './model.js';
 import {guardUrlInput} from './url-privacy.js';
+import {confirmAction} from './dialog.js';
 
-export function mountEditor(host) {
+export function mountEditor(host,{navigate}) {
   let doc=documentModel(),destroy,serial=0,editRevision=0,importSequence=0,stopped=false;const expanded=new WeakMap();
   const defaultCipher='aes-128-gcm';
   const el=(tag,attrs={},children=[])=>{const node=document.createElement(tag);for(const [key,value]of Object.entries(attrs)){if(key==='text')node.textContent=value;else if(key.startsWith('on'))node.addEventListener(key.slice(2),value);else if(key==='class')node.className=value;else node.setAttribute(key,value);}node.append(...children);return node;};
@@ -21,7 +22,8 @@ export function mountEditor(host) {
     const sequence=++importSequence,revision=editRevision,baseline=JSON.stringify(doc),file=upload.files[0];
     try{
       if(!file||stopped)return;
-      if(window.ppgwPpsub.hasChanges()&&!confirm('导入将替换未保存的编辑内容，继续吗？'))return;
+      if(window.ppgwPpsub.hasChanges()&&!await confirmAction('导入将替换未保存的编辑内容，继续吗？',{title:'导入 PPsub',accept:'替换并导入',trigger:importMenu.firstElementChild}))return;
+      if(stopped||sequence!==importSequence||revision!==editRevision)return;
       importNotice('正在读取导入文件；期间的新编辑会保留。');
       const raw=await file.text();
       if(stopped||sequence!==importSequence)return;
@@ -31,7 +33,8 @@ export function mountEditor(host) {
     }catch(error){if(!stopped&&sequence===importSequence)importNotice('导入失败：'+error.message);}
     finally{if(!stopped&&sequence===importSequence)upload.value='';}
   };
-  header.append(menu('导出编辑内容',download),menu('导入 PPsub',()=>upload.click()),button('重新读取',()=>window.ppgwPpsub.loadCurrent(importConfig)),upload);
+  const importMenu=menu('导入 PPsub',()=>upload.click());
+  header.append(menu('导出编辑内容',download),importMenu,button('重新读取',()=>window.ppgwPpsub.loadCurrent(importConfig)),upload);
   const skeleton=el('div',{class:'editor-skeleton',role:'status',text:'正在读取配置…'});body.hidden=true;root.append(header,importStatus,skeleton,body);host.append(root);
   function field(row,key,label,type='text',options={}) {
     const id='editor-field-'+(++serial),wrap=el('label',{class:'editor-field'+(type==='checkbox'?' editor-check':''),for:id}),input=el(type==='lines'||type==='textarea'?'textarea':type==='select'?'select':'input',{id,'data-field':key});
@@ -59,7 +62,13 @@ export function mountEditor(host) {
     rows.forEach((row,index)=>{
       const item=el('details',{class:'item'}),tools=el('summary',{class:'editor-item-tools'},[el('strong',{text:(index+1)+'. '+(row.name||row.remark||title)})]);item.open=expanded.get(row)??index===0;item.addEventListener('toggle',()=>expanded.set(row,item.open));
       for(const [label,offset]of [['上移',-1],['下移',1]]){const b=button(label,()=>{move(rows,index,offset);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});b.disabled=index+offset<0||index+offset>=rows.length;if(full&&key==='subs')b.hidden=true;tools.append(b);}
-      const remove=button('删除',()=>{if(!confirm('删除此'+title+'？'))return;rows.splice(index,1);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')remove.hidden=true;tools.append(remove);
+      const remove=button('删除',async()=>{
+        if(!await confirmAction('删除此'+title+'？',{title:'删除'+title,accept:'确认删除',trigger:remove}))return;
+        const at=doc[key]===rows?rows.indexOf(row):-1;
+        if(stopped||at<0)return;
+        rows.splice(at,1);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();root.dispatchEvent(new Event('input',{bubbles:true}));
+        body.querySelector('[data-editor-section="'+key+'"] .editor-add')?.focus({preventScroll:true});
+      });if(full&&key==='subs')remove.hidden=true;tools.append(remove);
       const copy=button('复制',()=>{const duplicate=clone(row);delete duplicate._clash_id;if(duplicate.name)duplicate.name+=' 副本';expanded.set(duplicate,true);rows.splice(index+1,0,duplicate);if(key==='rules')rows.forEach((r,i)=>r.priority=(i+1)*10);render();});if(full&&key==='subs')copy.hidden=true;tools.append(copy);
       item.append(tools,...fields(row,full));if(!full)item.append(advanced(row));area.append(item);
     });area.append(el('div',{class:'editor-section-footer'},[add]));return area;
@@ -124,6 +133,7 @@ export function mountEditor(host) {
     body.replaceChildren(list,features(),section('subs','订阅提供商',()=>({name:'',url:''}),subscription),section('node-groups','节点组',()=>({name:'',subs:['all'],include:[]}),group),section('rules','规则',()=>({priority:(doc.rules.length+1)*10,fixrule:[]}),rules));
     if(optionsHost)body.querySelector('.monitor').append(optionsHost);
     if(!full)body.append(advanced(doc,'完整配置与扩展字段（JSON）'));
+    root.dispatchEvent(new Event('ppgw:editor-render'));
   }
   function showIssue(issue,message){
     if(!Number.isSafeInteger(issue.index)||issue.index<0)return;
@@ -144,6 +154,6 @@ export function mountEditor(host) {
     }
   }
   function importConfig(value){doc=documentModel(value);render();}
-  destroy=window.ppgwPpsub.mount({header,setLoading:(loading,loaded)=>{root.dataset.editorState=loading?'loading':loaded?'loaded':'error';root.setAttribute('aria-busy',String(loading));body.hidden=loading||!loaded;skeleton.hidden=!loading&&loaded;skeleton.textContent=loading?'正在读取配置…':'当前配置尚未读取，请重新读取。';},exportConfig:()=>exported(doc),importConfig,showIssue,providers:()=>doc.subs});
+  destroy=window.ppgwPpsub.mount({header,navigate,confirmAction,setLoading:(loading,loaded)=>{root.dataset.editorState=loading?'loading':loaded?'loaded':'error';root.setAttribute('aria-busy',String(loading));body.hidden=loading||!loaded;skeleton.hidden=!loading&&loaded;skeleton.textContent=loading?'正在读取配置…':'当前配置尚未读取，请重新读取。';},exportConfig:()=>exported(doc),importConfig,showIssue,providers:()=>doc.subs});
   return ()=>{stopped=true;++importSequence;destroy();root.remove();};
 }

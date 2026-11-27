@@ -72,10 +72,20 @@ else:
     assert.equal(await page.evaluate(()=>isSecureContext),false,'must exercise HTTP LAN password hashing');
     await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();
     const ready=()=>page.waitForFunction(()=>document.querySelector('.source-editor')?.dataset.editorState==='loaded');await ready();
+    const confirmation=(title,name)=>page.getByRole('dialog',{name:title,exact:true}).getByRole('button',{name,exact:true});
+    for(const width of [320,375]){
+      await page.setViewportSize({width,height:700});
+      assert.equal(await page.locator('#shell-page-title').textContent(),'订阅');
+      const sizes=await page.locator('.source-editor .phead').evaluate(header=>[...header.querySelectorAll('button')].filter(b=>b.getClientRects().length).map(b=>{const r=b.getBoundingClientRect();return{top:r.top,width:r.width,height:r.height};}));
+      assert.ok(sizes.length>=3&&sizes.every(size=>size.height>=40&&Math.abs(size.width-sizes[0].width)<1));
+      assert.ok(Math.abs(sizes[1].top-sizes[0].top)<1);
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    }
+    await page.setViewportSize({width:1440,height:950});
     {const privateProvider=page.locator('.subs .item').first(),privateUrl=privateProvider.locator('[data-field=url]');assert.equal(await privateUrl.inputValue(),'');assert.equal((await privateProvider.innerText()).includes(config.subs[0].url),false);await privateProvider.getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await privateUrl.inputValue(),config.subs[0].url);await privateProvider.getByRole('button',{name:'隐藏地址',exact:true}).click();assert.equal(await privateUrl.inputValue(),'');}
     if(kind==='ppsub'){
       await page.evaluate(()=>{const original=File.prototype.text;window.delayedImports={};File.prototype.text=function(){if(this.name.startsWith('delayed-import-')){const name=this.name;return new Promise(resolve=>{window.delayedImports[name]=()=>original.call(this).then(resolve);});}return original.apply(this,arguments);};});
-      const chooseDelayed=async(name,label,confirm=false)=>{if(confirm)page.once('dialog',dialog=>dialog.accept());const value=structuredClone(native);value['node-groups'][0].name=label;await page.locator('.source-editor input[type=file]').setInputFiles({name,mimeType:'application/json',buffer:Buffer.from(JSON.stringify(value))});await page.waitForFunction(name=>typeof window.delayedImports[name]==='function',name);};
+      const chooseDelayed=async(name,label,confirm=false)=>{const value=structuredClone(native);value['node-groups'][0].name=label;await page.locator('.source-editor input[type=file]').setInputFiles({name,mimeType:'application/json',buffer:Buffer.from(JSON.stringify(value))});if(confirm)await confirmation('导入 PPsub','替换并导入').click();await page.waitForFunction(name=>typeof window.delayedImports[name]==='function',name);};
       const release=async name=>{await page.evaluate(name=>window.delayedImports[name](),name);await page.waitForTimeout(50);};
       const groupName=page.locator('.groups .item').first().locator('[data-field="name"]');
       await chooseDelayed('delayed-import-edit.json','Late import must not replace typed draft');
@@ -83,13 +93,13 @@ else:
       assert.equal(await groupName.inputValue(),'Typed after file chosen','late file read must not overwrite newer form input');
       assert.match(await page.locator('[data-import-status]').textContent(),/已取消迟到的导入/);
       await chooseDelayed('delayed-import-reload.json','Late import must not replace reloaded document',true);
-      page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'重新读取',exact:true}).click();await ready();await release('delayed-import-reload.json');
+      await page.getByRole('button',{name:'重新读取',exact:true}).click();await confirmation('重新读取配置','放弃并重新读取').click();await ready();await release('delayed-import-reload.json');
       assert.equal(await groupName.inputValue(),'Main','late import must not overwrite a newer server reload');
       await chooseDelayed('delayed-import-older.json','Older import');
       const latest=structuredClone(native);latest['node-groups'][0].name='Latest import';await page.locator('.source-editor input[type=file]').setInputFiles({name:'latest-import.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(latest))});await page.waitForFunction(()=>document.querySelector('.groups [data-field="name"]')?.value==='Latest import');await release('delayed-import-older.json');
       assert.equal(await groupName.inputValue(),'Latest import','an older file must not replace a newer import');
       await chooseDelayed('delayed-import-unmount.json','Late import must not reach next editor',true);
-      page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="overview"]').click();await page.locator('.source-editor').waitFor({state:'detached'});await release('delayed-import-unmount.json');
+      await page.locator('#shell-nav [data-route="overview"]').click();await confirmation('离开当前页面','确认离开').click();await page.locator('.source-editor').waitFor({state:'detached'});await release('delayed-import-unmount.json');
       // Visit the maintained connection page and verify shared storage preferences.
       await page.locator('#shell-nav [data-route="connections"]').click();await page.locator('#connections-page').waitFor();
       const storageCheck=await page.locator('#connections-page').evaluate(async(_,secret)=>{
@@ -111,7 +121,7 @@ else:
       const advanced=page.locator('.editor-body > .editor-advanced');await advanced.locator('summary').click();await page.waitForFunction(()=>document.querySelector('.editor-body > .editor-advanced textarea')?.value);
       const value=JSON.parse(await advanced.locator('textarea').inputValue());value.advanced_added={preserve:true};
       await advanced.locator('textarea').fill(JSON.stringify(value));await advanced.getByRole('button',{name:'应用 JSON 修改',exact:true}).click();
-      page.once('dialog',dialog=>dialog.dismiss());await page.locator('#shell-nav [data-route="overview"]').click();assert.equal(new URL(page.url()).hash,'#/subscriptions','JSON edits participate in draft navigation protection');
+      await page.locator('#shell-nav [data-route="overview"]').click();await confirmation('离开当前页面','取消').click();assert.equal(new URL(page.url()).hash,'#/subscriptions','JSON edits participate in draft navigation protection');
     }
     const fill=async(scope,key,value)=>{if(await scope.evaluate(node=>node.tagName==='DETAILS'&&!node.open))await scope.locator(':scope > summary').click();const control=scope.locator('[data-field="'+key+'"]');if(key==='url'&&await control.getAttribute('readonly')!==null&&await scope.getByRole('button',{name:'修改地址',exact:true}).count())await scope.getByRole('button',{name:'修改地址',exact:true}).click();await control.fill(value);};
     const provider=page.locator('.subs .item').first(),group=page.locator('.groups .item').first();
@@ -126,7 +136,7 @@ else:
     const fixed=group.getByRole('group',{name:'固定节点 / 组',exact:true});await fixed.locator(':scope > .btn').click();await fixed.locator('[data-field=include]').fill('REJECT');await fixed.locator('[data-field=include]').press('Enter');
     await group.getByRole('button',{name:'复制',exact:true}).click();assert.equal(await page.locator('.groups .item').count(),2);
     await page.locator('.groups .item').nth(1).getByRole('button',{name:'上移',exact:true}).click();assert.equal(await page.locator('.groups .item').first().locator('[data-field="name"]').inputValue(),'Edited Main 副本');
-    page.once('dialog',dialog=>dialog.accept());await page.locator('.groups .item').first().getByRole('button',{name:'删除',exact:true}).click();
+    await page.locator('.groups .item').first().getByRole('button',{name:'删除',exact:true}).click();await confirmation('删除节点组','确认删除').click();
     await page.getByRole('button',{name:'添加规则',exact:true}).click();
     const newRule=page.locator('.rules .item').last();
     await newRule.getByLabel('规则类型',{exact:true}).selectOption('rule-set');
@@ -142,8 +152,8 @@ else:
     assert.doesNotMatch(issue,/DUPLICATE_RULE_PROVIDER/);
     assert.equal(await newRule.locator('[data-field=name]').getAttribute('aria-invalid'),'true');
     assert.equal(await page.locator('#preview-dialog').isVisible(),false);
-    page.once('dialog',dialog=>dialog.accept());
     await newRule.getByRole('button',{name:'删除',exact:true}).click();
+    await confirmation('删除规则','确认删除').click();
     const ruleProvider=page.locator('.rules .item').filter({has:page.locator('[data-field="behavior"]')});await fill(ruleProvider,'name','EditedRules');await fill(ruleProvider,'url','https://example.com/edited-rules');await ruleProvider.locator('[data-field="behavior"]').selectOption('classical');await ruleProvider.locator('[data-field="format"]').selectOption('text');await fill(ruleProvider,'interval','7200');await fill(ruleProvider,'proxy','DIRECT');
     const manual=page.locator('.rules .item').filter({has:page.locator('[data-field="fixrule"]')}).first();await fill(manual,'remark','Edited manual rules');await fill(manual,'fixrule','DOMAIN,edited.example,Edited Main\nMATCH,Edited Main');
     if(kind==='clash_patch')assert.equal(await manual.getByLabel('规则类型',{exact:true}).isDisabled(),true);
@@ -154,21 +164,25 @@ else:
     assert.equal(await page.locator('.source-editor select').evaluateAll(controls=>controls.filter(control=>control.selectedIndex===-1).length),0);
     await fill(page.locator('.monitor fieldset').nth(1),'password','fixture-password-123456');await page.locator('.monitor fieldset').nth(1).locator('[data-field="cipher"]').selectOption('aes-128-gcm');await fill(page.locator('.monitor fieldset').nth(2),'hour','5');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});
-    await fill(page.locator('.groups .item').first(),'name','Edited after preview');await page.locator('#apply').click();
-    await page.getByText('编辑内容已变化，请重新预览后再确认应用。',{exact:true}).waitFor();assert.equal(operation,null,'a stale inline preview must never apply an older editor document');
+    await page.locator('.groups .item').first().locator('[data-field="name"]').evaluate(node=>{node.value='Edited after preview';node.dispatchEvent(new Event('input',{bubbles:true}));});await page.locator('#apply').click();
+    await page.getByText('编辑内容已变化，请重新预览后再确认应用。',{exact:true}).waitFor();assert.equal(operation,null,'a stale modal preview cannot apply an older editor document');
     await fill(page.locator('.groups .item').first(),'name','Edited Main');
     await page.getByRole('button',{name:'保存并应用',exact:true}).click();await page.locator('#preview-dialog').waitFor({state:'visible'});await page.locator('#apply').click();await page.getByText('Synthetic editor saved',{exact:true}).waitFor();await ready();
     assert.ok(validations>=2);assert.equal(posted['node-groups'][0].monitor_url,'https://example.com/health');assert.equal(posted['node-groups'][0].interval,900);assert.equal(posted.global_monitor.expected_status,'204');assert.equal(posted.restart_cron.hour,5);assert.deepEqual(posted['node-groups'][0].keywords,['exp#HK|JP','keyword']);assert.deepEqual(posted['node-groups'][0].exclude_keywords,['expired']);assert.deepEqual(posted['node-groups'][0].include,['N1','DIRECT','REJECT']);
     if(kind==='ppsub'){assert.deepEqual(posted.custom,native.custom);assert.deepEqual(posted.advanced_added,{preserve:true});assert.deepEqual(posted.subs[0].extension,native.subs[0].extension);assert.deepEqual(posted['node-groups'][0].hidden_feature,{nested:1});assert.equal(posted.subs[0].update_interval,'7h');assert.equal(posted.rules[0].unknown_rule,true);}
     else{assert.equal(posted.subs[0]._clash_id,'s:0');assert.equal(posted['node-groups'][0]._clash_id,'g:0');assert.equal(merged.secret,raw.secret);assert.deepEqual(merged.dns,raw.dns);assert.deepEqual(merged.proxies,raw.proxies);assert.equal(merged['proxy-groups'][0].hidden,true);assert.equal(merged['proxy-groups'][0].lazy,true);assert.deepEqual(merged['proxy-providers'].Airport.header,raw['proxy-providers'].Airport.header);assert.deepEqual(merged['rule-providers'].EditedRules.custom,{preserve:1});assert.equal(merged['proxy-groups'][0].type,'url-test');assert.deepEqual(merged.rules,['DOMAIN,edited.example,Edited Main','MATCH,Edited Main']);}
+    await page.evaluate(()=>window.ppgwFixtureDocument='original');
+    await page.getByRole('button',{name:'查看代理',exact:true}).click();await page.locator('#proxies-page').waitFor();
+    assert.equal(await page.evaluate(()=>window.ppgwFixtureDocument),'original');
+    await page.locator('#shell-nav [data-route="subscriptions"]').click();await ready();
     await fill(page.locator('.groups .item').first(),'name','Draft survives reauthentication');expired=true;
     await page.waitForFunction(()=>document.querySelector('#shell-status')?.textContent.includes('重新登录'),null,{timeout:45000});expired=false;
     await page.getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill(password);await page.getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});
     assert.equal(await page.locator('.groups .item').first().locator('[data-field="name"]').inputValue(),'Draft survives reauthentication');
     const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(saved.favorite,'preserve-me');assert.equal(saved.clashAPIConfigs[0].label,'existing-profile');assert.equal(saved.clashAPIConfigs[0].secret,'');assert.equal(saved.clashAPIConfigs[1].label,'second-profile');assert.equal(saved.clashAPIConfigs[1].secret,'');
     await page.evaluate(()=>window.postMessage({type:'ppgw:route',hash:'#/overview'},location.origin));assert.equal(new URL(page.url()).hash,'#/subscriptions','messages from an untrusted source are ignored');
-    page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav').getByRole('button',{name:'退出登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).waitFor();const loggedOut=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(loggedOut.favorite,'preserve-me');assert.equal(loggedOut.clashAPIConfigs[0].label,'existing-profile');assert.equal(loggedOut.clashAPIConfigs[0].secret,'');
-    assert.deepEqual(errors,[]);return{kind,nonSecureHttpLogin:true,actualFormsValidatedByBackend:true,hiddenFieldsPreserved:true,copyMoveDelete:true,reauthenticationPreservesDraft:true,storedPreferencesPreserved:true,foreignMessageIgnored:true,...(kind==='ppsub'?{lateImportPreservesNewInput:true,reloadInvalidatesImport:true,newerImportWins:true,unmountedImportIgnored:true}:{}),validations,pageErrors:errors};
+    await page.locator('#shell-nav').getByRole('button',{name:'退出登录',exact:true}).click();await confirmation('离开当前页面','确认离开').click();await page.getByLabel('管理密码',{exact:true}).waitFor();const loggedOut=await page.evaluate(()=>JSON.parse(localStorage.getItem('PaoPaoGateWay')));assert.equal(loggedOut.favorite,'preserve-me');assert.equal(loggedOut.clashAPIConfigs[0].label,'existing-profile');assert.equal(loggedOut.clashAPIConfigs[0].secret,'');
+    assert.deepEqual(errors,[]);return{kind,nonSecureHttpLogin:true,actualFormsValidatedByBackend:true,hiddenFieldsPreserved:true,copyMoveDelete:true,mobileToolbarAligned:true,proxyNavigationWithoutReload:true,reauthenticationPreservesDraft:true,storedPreferencesPreserved:true,foreignMessageIgnored:true,...(kind==='ppsub'?{lateImportPreservesNewInput:true,reloadInvalidatesImport:true,newerImportWins:true,unmountedImportIgnored:true}:{}),validations,pageErrors:errors};
   }finally{await context.close();}
 }
 (async()=>{const browser=await chromium.launch({channel:'chrome',headless:true});try{const results=[];for(const kind of ['ppsub','clash_patch'])results.push(await exercise(browser,kind));await fs.mkdir(path.join(root,'dist'),{recursive:true});await fs.writeFile(path.join(root,'dist/source-editor-browser-evidence.json'),JSON.stringify({syntheticOnly:true,results},null,2)+'\n');console.log(JSON.stringify({syntheticOnly:true,results}));}finally{await browser.close();}})().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

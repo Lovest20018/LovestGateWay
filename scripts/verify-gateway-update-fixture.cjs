@@ -69,11 +69,10 @@ async function main() {
     await page.waitForFunction(()=>!document.querySelector('#gateway-release-install')?.disabled);
     assert.equal(posts.length,1); assert.equal(posts[0].target.endsWith('/check'),true);
     assert.equal(await page.getByRole('link',{name:'查看此版本更新说明 ↗'}).getAttribute('href'),data.candidate.release_url);
-    page.once('dialog',dialog=>dialog.dismiss());
-    await page.locator('#gateway-release-install').click(); assert.equal(posts.length,1);
+    const upgrade=page.getByRole('dialog',{name:'确认网关升级',exact:true});
+    await page.locator('#gateway-release-install').click();await upgrade.getByRole('button',{name:'取消',exact:true}).click();assert.equal(posts.length,1);
     pause=true; lost=true;
-    page.once('dialog',dialog=>dialog.accept());
-    await page.locator('#gateway-release-install').click();
+    await page.locator('#gateway-release-install').click();await upgrade.getByRole('button',{name:'确认升级',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#notice')?.textContent.includes('暂时断连'));
     assert.equal(posts.length,2); assert.equal(posts[1].body.candidate,'c'.repeat(64));
     const retained=await page.evaluate(()=>JSON.parse(sessionStorage.getItem('lovestgateway-release-job')));
@@ -94,7 +93,7 @@ async function main() {
     await page.setViewportSize({width:1440,height:1000});
     data.installed.version='0.2.1';data.available=true;data.operation=null;
     await page.locator('#gateway-release-query').click();
-    fail=true;page.once('dialog',dialog=>dialog.accept());await page.locator('#gateway-release-install').click();
+    fail=true;await page.locator('#gateway-release-install').click();await upgrade.getByRole('button',{name:'确认升级',exact:true}).click();
     await page.getByText('升级验收失败，已恢复安装前的版本与配置。',{exact:true}).first().waitFor({timeout:15000});
     assert.equal(posts.length,3);assert.equal(await page.evaluate(()=>sessionStorage.getItem('lovestgateway-release-job')),null);
     fail=false;expire=true;await page.locator('#gateway-release-check').click();
@@ -126,7 +125,7 @@ async function main() {
     pause=false;await page.waitForFunction(()=>!sessionStorage.getItem('lovestgateway-release-job'),null,{timeout:15000});
     assert.equal(posts.length,6);
     assert.deepEqual(errors,[]);
-    console.log(JSON.stringify({passed:true,checks:['check-only','pinned-release','cancel','lost-response','restart-refresh','success','rollback','401-resume','unknown-read-retry','idle-check-unlocks','newer-task-stays-locked','mobile'],posts:posts.length}));
+    console.log(JSON.stringify({passed:true,checks:['check-only','pinned-release','cancel','lost-response','restart-refresh','success','rollback','401-resume','unknown-read-retry','idle-check-unlocks','newer-task-stays-locked','mobile'],posts:posts.length,pageErrors:errors}));
   } finally { await browser.close(); }
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

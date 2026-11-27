@@ -54,7 +54,12 @@ const routes=['connections','traffic','distribution','logs','region'];
   }
   if(target==='/sniffbox/probe'){
    let raw='';for await(const chunk of request)raw+=chunk;const body=JSON.parse(raw);if(probe429>0){probe429--;return send(response,{},429);}probeActive++;probeMax=Math.max(probeMax,probeActive);let released=false;const release=()=>{if(!released){released=true;probeActive--;}};response.on('close',release);
-   setTimeout(()=>{release();if(!response.destroyed)send(response,{ok:true,status:200,body:body.udp?'ip=192.0.2.3\nloc=US\nudp=1':body.url.includes('cdn-cgi/trace')?'ip=192.0.2.3\nloc=US':'{}',ms:5,setCookie:[]});},probeDelay);return;
+   setTimeout(()=>{
+    release();if(response.destroyed)return;
+    const enriched=/ipinfo\.io\/widget\/demo|api\.ipapi\.is/.test(body.url||'');
+    const sample=body.udp?'ip=2001:db8::53\nloc=US\nudp=1':body.url.includes('cdn-cgi/trace')?'ip=192.0.2.3\nloc=US':enriched?' {"ip":"2001:db8::53","peer":"192.0.2.3"}':'{}';
+    send(response,{ok:true,status:200,body:sample,ms:5,setCookie:[]});
+   },probeDelay);return;
   }
   if(target==='/configs')return send(response,{mode:'rule'});if(target==='/rules')return send(response,{rules:[]});if(target==='/providers/rules')return send(response,{providers:{}});return send(response,{});
  }catch(error){if(!response.destroyed)send(response,{error:error.message},500);}});
@@ -71,10 +76,15 @@ const routes=['connections','traffic','distribution','logs','region'];
   if(baseline){for(const key of routes){await go(key);await page.waitForTimeout(300);await capture(key,'baseline-desktop');await page.setViewportSize({width:320,height:900});await capture(key,'baseline-mobile-320');await page.setViewportSize({width:1440,height:1000});}console.log('Saved five-page unchanged baseline');return;}
   await go('connections');const conn=page.locator('#connections-page');await page.waitForFunction(()=>document.querySelector('#connections-page tbody tr')?.textContent.includes('host-'));assert.equal(await conn.locator('tbody tr').count(),100);assert.equal(writes().length,0);
   await conn.getByLabel('搜索连接',{exact:true}).fill('host-249.');assert.equal(await conn.locator('tbody tr').count(),1);await page.waitForTimeout(1200);assert.equal(await conn.getByLabel('搜索连接',{exact:true}).inputValue(),'host-249.');await conn.getByLabel('搜索连接',{exact:true}).fill('');
-  connections=connections.slice(1);await page.waitForTimeout(1100);await conn.getByRole('button',{name:/已关闭（/}).click();await conn.getByText('host-0.example.com:443',{exact:true}).first().waitFor();await conn.getByRole('button',{name:/活动（/}).click();
+  connections=connections.slice(1);await page.waitForTimeout(1100);
+  const activeTab=conn.getByRole('tab',{name:/活动（/}),closedTab=conn.getByRole('tab',{name:/已关闭（/});
+  await activeTab.press('ArrowRight');await conn.getByText('host-0.example.com:443',{exact:true}).first().waitFor();
+  assert.equal(await closedTab.getAttribute('aria-selected'),'true');assert.equal(await conn.getByRole('tabpanel',{name:/已关闭（/}).locator('tbody [aria-label^="关闭连接 "]').count(),0);
+  assert.equal(await conn.locator('tbody td[data-column=actions]').first().textContent(),'已关闭');
+  await closedTab.press('ArrowLeft');assert.equal(await activeTab.getAttribute('aria-selected'),'true');
   await conn.getByText('列设置',{exact:true}).click();await conn.getByLabel('入站',{exact:true}).check();assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('conns_cols')).future),true);
   await conn.getByRole('button',{name:'关闭全部',exact:true}).click();await conn.getByRole('button',{name:'取消',exact:true}).click();assert.equal(writes().length,0);await conn.getByRole('button',{name:'关闭连接 connection-1',exact:true}).click();await page.waitForTimeout(250);assert.equal(writes().at(-1).target,'/connections/connection-1');checks.push('connections: bounded rows, filters, history, preferences, explicit close, cancelled close-all');
-  const beforeIdle=connections;connections=null;await conn.getByRole('button',{name:'活动（0）',exact:true}).waitFor();assert.equal(await conn.getByText('连接状态响应无效，请稍后重试。',{exact:true}).count(),0);connections=beforeIdle;checks.push('connections: native null idle list is valid and retains closed history');
+  const beforeIdle=connections;connections=null;await conn.getByRole('tab',{name:'活动（0）',exact:true}).waitFor();assert.equal(await conn.getByText('连接状态响应无效，请稍后重试。',{exact:true}).count(),0);connections=beforeIdle;checks.push('connections: native null idle list, keyboard tabs and closed rows with plain status');
   await hidden(true);const reads=requests.filter(row=>row.target==='/connections').length;await page.waitForTimeout(1200);assert.equal(requests.filter(row=>row.target==='/connections').length,reads);await hidden(false);
   await go('traffic');const flow=page.locator('#traffic-page');await flow.locator('tbody tr').filter({hasText:'.example.com'}).first().waitFor();await flow.getByLabel('流量视图',{exact:true}).selectOption('client');assert.equal(await flow.locator('tbody tr').count(),20);
   await flow.getByLabel('流量视图',{exact:true}).selectOption('full');await flow.getByLabel('搜索流量记录',{exact:true}).fill('host-249.');assert.equal(await flow.locator('tbody tr').count(),1);
@@ -125,6 +135,28 @@ const routes=['connections','traffic','distribution','logs','region'];
   for(let i=0;i<2100;i++)publishLog({msg:'Bulk '+i});await core.getByText('Bulk 2099',{exact:true}).waitFor();assert.equal(await core.locator('.monitor-log-line').count(),400);await core.getByLabel('核心日志显示条数',{exact:true}).selectOption('2000');assert.equal(await core.locator('.monitor-log-line').count(),2000);const logDownload=page.waitForEvent('download');await core.getByRole('button',{name:'核心日志操作',exact:true}).click();await core.getByRole('menuitem',{name:'导出核心日志',exact:true}).click();assert.match(await fs.readFile(await (await logDownload).path(),'utf8'),/Bulk 2099/);checks.push('logs: safe ANSI, two streams, pause and filters, reconnect and overflow, preserved selection and DOM, 2000-line bound');
   await hidden(true);assert.equal(streams.get('/sniffbox/logs/sse').size,0);assert.equal(streams.get('/sniffbox/screen/sse').size,0);await hidden(false);await page.waitForTimeout(150);
   await go('region');const region=page.locator('#region-page');assert.equal(await region.locator('[data-test]').count(),59);assert.equal(await region.locator('.monitor-progress').textContent(),'共 59 项 · 尚未检测');assert.equal(await region.locator('[data-state=waiting] .monitor-region-label').first().textContent(),'');assert.equal(await region.locator('.monitor-region-section[open]').count(),3);const foldedCategory=region.locator('.monitor-region-section').nth(3),foldedName=await foldedCategory.locator('h3').first().textContent();await region.getByLabel('搜索检测项目',{exact:true}).fill(foldedName);assert.equal(await foldedCategory.evaluate(node=>node.open),true);await region.getByLabel('搜索检测项目',{exact:true}).fill('');assert.equal(await foldedCategory.evaluate(node=>node.open),false);assert.equal(probes().length,0);probe429=1;await region.getByRole('button',{name:'检测 出口 IP',exact:true}).click();await region.getByText('本轮检测已完成。',{exact:true}).waitFor();assert.equal(probes().length,2);assert.equal(await region.locator('[data-test=ip] .monitor-region-label').innerText(),'192.0.•••.•••');await region.getByRole('button',{name:'显示 IP',exact:true}).click();assert.equal(await region.locator('[data-test=ip] .monitor-region-label').innerText(),'192.0.2.3');
+  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.fixtureClipboard=text;}}}));
+  const udp=region.locator('[data-test=udp-ip]');
+  await udp.getByRole('button',{name:'检测 UDP出口IP',exact:true}).click();await region.getByText('本轮检测已完成。',{exact:true}).waitFor();
+  assert.equal(await udp.locator('.monitor-region-label').textContent(),'2001:db8::53');
+  await region.getByRole('button',{name:'隐藏 IP',exact:true}).click();
+  assert.ok(await udp.getByRole('button',{name:'复制 IP',exact:true}).isDisabled());
+  await udp.getByRole('button',{name:'UDP出口IP详情',exact:true}).click();
+  const ipDetail=region.getByRole('dialog',{name:'UDP出口IP详情',exact:true});
+  assert.deepEqual(await ipDetail.locator('dl dt').allTextContents(),['检测项','状态','耗时','地区','结果说明']);
+  await ipDetail.locator('summary').click();assert.doesNotMatch(await ipDetail.innerText(),/192\.0\.2\.3|2001:db8::53/i);
+  assert.match(await ipDetail.locator('pre').innerText(),/2001:db8:••••/);
+  await page.keyboard.press('Escape');
+  const reportMenu=region.getByRole('button',{name:'报告',exact:true});
+  await reportMenu.click();await region.getByRole('menuitem',{name:'复制报告',exact:true}).click();
+  await region.getByText('报告已复制。',{exact:true}).waitFor();
+  const clipboard=await page.evaluate(()=>window.fixtureClipboard);
+  const regionDownload=page.waitForEvent('download');await reportMenu.click();await region.getByRole('menuitem',{name:'导出报告',exact:true}).click();
+  const report=await fs.readFile(await (await regionDownload).path(),'utf8');
+  for(const output of [clipboard,report]){assert.doesNotMatch(output,/192\.0\.2\.3|2001:db8::53/i);assert.match(output,/192\.0\.•••\.•••/);assert.match(output,/2001:db8:••••/);}
+  await region.getByRole('button',{name:'显示 IP',exact:true}).click();await udp.getByRole('button',{name:'复制 IP',exact:true}).click();
+  await region.getByText('IP 已复制。',{exact:true}).waitFor();assert.equal(await page.evaluate(()=>window.fixtureClipboard),'2001:db8::53');
+  checks.push('region: hidden IPv4 and IPv6 in tiles, structured details, raw result, clipboard and export');
   probeDelay=40;await region.getByRole('button',{name:'检测全部',exact:true}).click();await region.getByText('本轮检测已完成。',{exact:true}).waitFor();assert.ok(probeMax<=5);assert.equal(await region.locator('[data-state=running]').count(),0);assert.equal(await region.locator('[data-state=waiting]').count(),0);
   probeDelay=500;await region.getByRole('button',{name:'检测全部',exact:true}).click();await page.waitForTimeout(600);await region.getByRole('button',{name:'停止检测',exact:true}).click();const cancelled=probes().length;await page.waitForTimeout(600);assert.equal(probes().length,cancelled);checks.push('region: 59 definitions, no automatic probes, 429 retry, IP masking, five-request cap, queued cancellation');
   deny=true;await region.getByRole('button',{name:'检测全部',exact:true}).click();await page.locator('#shell-status').getByRole('button',{name:'重新登录',exact:true}).waitFor();const denied=probes().length;await page.waitForTimeout(250);assert.equal(probes().length,denied);deny=false;expected=require('node:crypto').createHash('sha256').update('RegionFixturePassword8').digest('hex');await page.locator('#shell-status').getByRole('button',{name:'重新登录',exact:true}).click();await page.getByLabel('管理密码',{exact:true}).fill('RegionFixturePassword8');await page.locator('#reauth-panel').getByRole('button',{name:'登录',exact:true}).click();await page.locator('#reauth-panel').waitFor({state:'detached'});await page.waitForTimeout(250);assert.equal(probes().length,denied);checks.push('region: 401 stops queued probes and reauthentication never reruns a detection');
@@ -135,6 +167,8 @@ const routes=['connections','traffic','distribution','logs','region'];
       await page.setViewportSize({width,height:width===1440?1000:900});
       for(const [theme,label]of [['light','亮色'],['dark','暗色']]){
         if(width<761)await page.locator('#shell-menu').click();await setAppearance(page,theme);if(width<761)await page.keyboard.press('Escape');
+        if(width<761&&key==='connections')assert.ok(await activeTab.evaluate(node=>node.getBoundingClientRect().height>=40));
+        if(width<761&&key==='region')assert.ok(await udp.getByRole('button',{name:'检测 UDP出口IP',exact:true}).evaluate(node=>node.getBoundingClientRect().height>=40));
         if(key==='logs'&&width<761){const menu=logs.getByRole('button',{name:'核心日志操作',exact:true});await menu.click();const bounds=await logs.locator('.monitor-action-popup:not([hidden])').evaluate(node=>({left:node.getBoundingClientRect().left,right:node.getBoundingClientRect().right,width:innerWidth}));assert.ok(bounds.left>=0&&bounds.right<=bounds.width,JSON.stringify(bounds));await capture(key,'menu-'+width+'-'+theme);await menu.click();}
         await capture(key,'source-'+width+'-'+theme);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,key+' must fit '+width+'px');
       }

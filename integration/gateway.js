@@ -53,7 +53,7 @@
         prepared = {submit};
         $('preview-content').replaceChildren(...previewDescription(data, 'config'), el('p', {class:'subtext', text:
           data.save_target === 'local_policy' ? '全局选项、提供商、节点组、规则与更新计划将统一保存。本地覆盖策略不会改写源 YAML。' : 'PPsub 配置与更新计划将统一保存。加载失败时整批恢复。'}));
-        openPreview();
+        openPreview(root.parentElement.querySelector('[data-ppsub-apply]'));
       },
       editorApplied: async () => { dirty.clear(); sourceDraft = null; sourceExpanded = false; await refreshRuntime(); await load(); },
       attachOptions: host => {
@@ -672,7 +672,8 @@
       }
       form.append(el('div',{class:'button-row wide'},[
         el('button',{class:'btn',type:'button',text:'取消切换',onclick:()=>{sourceDraft=null;sourceExpanded=false;notice('');render();}}),
-        el('button',{class:'btn btn-brand',type:'button',text:'预览来源切换',onclick:async()=>{
+        el('button',{class:'btn btn-brand',type:'button',text:'预览来源切换',onclick:async event=>{
+          const trigger=event.currentTarget;
           try {
             if (dirty.size || window.ppgwPpsub?.hasChanges()) throw Error('请先保存或放弃当前编辑，再切换配置来源。');
             if ([...form.querySelectorAll('input,select')].some(node=>!node.reportValidity())) return;
@@ -686,7 +687,7 @@
             const data=await api('preview',body);
             prepared={kind:'config',body,source:true,snapshot};
             $('preview-content').replaceChildren(...previewDescription(data,'config'),el('p',{class:'subtext',text:'确认后切换主配置来源。成功后会重新读取新来源的编辑内容。'}));
-            openPreview();
+            openPreview(trigger);
           } catch(error){notice(error.message,'error');}
         }})]));
       details.append(form); section.append(details);
@@ -891,7 +892,7 @@
         const data = await api('preview', body);
         if (data.action === 'none' && !Object.keys(data.changes || {}).length && !data.changed) { notice('配置没有变化，无需应用。'); return; }
         prepared = {kind, body, snapshot, address: newAddress(data.effects?.web_listen)};
-        $('preview-content').replaceChildren(...previewDescription(data, kind)); openPreview();
+        $('preview-content').replaceChildren(...previewDescription(data, kind)); openPreview($('preview'));
       } catch (error) { notice(error.message, 'error'); }
       finally { updateDirty(); }
     }
@@ -899,7 +900,7 @@
       if (dirty.size || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) { notice('请先完成当前订阅、规则或全局选项修改。', 'error'); return; }
       prepared = {kind: 'policy_reset', body: {base_revision: model.revision}};
       $('preview-content').replaceChildren(el('div', {class: 'notice', text: '将备份并移除本地策略，重启后使用订阅中的原始分组与规则。现有连接可能中断。'}));
-      openPreview();
+      openPreview($('reset-policy'));
     }
     async function startJob(kind, payload, address) {
       if (running || hasPendingTask() || window.ppgwPpsub?.hasChanges() || window.ppgwPpsub?.isBusy()) throw Error('请先完成当前任务或编辑，再应用网关设置。');
@@ -1166,8 +1167,12 @@
     }
     async function gatewayAction(action) {
       if (!coreAvailable() || pendingGateway()) return;
-      if (action === 'update' && (!gatewayUpdate?.available || !confirm(`升级 LovestGateWay 至 v${gatewayUpdate.candidate.version}？\n将先下载并校验发行包，再备份和重启网关。转发和管理页面会短暂断开；升级失败会恢复原版本。`))) return;
-      const id = identifier(), body = {id, ...(action === 'update' ? {candidate:gatewayUpdate.candidate.token} : {})};
+      const candidate=gatewayUpdate?.available&&gatewayUpdate.candidate;
+      if (action === 'update') {
+        if(!candidate || !await options.confirmAction(`升级 LovestGateWay 至 v${candidate.version}？\n将先下载并校验发行包，再备份和重启网关。转发和管理页面会短暂断开；升级失败会恢复原版本。`,{title:'确认网关升级',accept:'确认升级'}))return;
+        if(stopped||pendingGateway()||!coreAvailable()||gatewayUpdate?.candidate?.token!==candidate.token)return;
+      }
+      const id = identifier(), body = {id, ...(action === 'update' ? {candidate:candidate.token} : {})};
       // Retain identity before sending. A lost response is resolved by GET, never another POST.
       sessionStorage.setItem('lovestgateway-release-job', JSON.stringify({id}));
       const finish = beginTaskAction();
@@ -1280,22 +1285,25 @@
       finally { if (!stopped) $('reload').disabled = running; }
     }
     function previewSnapshot(){return JSON.stringify({dirty:[...dirty],source:sourceDraft,passwordConfirmation,proxyCredentials});}
-    function openPreview(){
+    function openPreview(trigger){
       prepared.snapshot??=previewSnapshot();
-      const panel=$('preview-dialog');panel.hidden=false;panel.scrollIntoView({behavior:'smooth',block:'start'});panel.focus({preventScroll:true});
+      options.showDialog($('preview-dialog'),trigger);
     }
+    const previewPanel=$('preview-dialog');
+    previewPanel.addEventListener('close',()=>{if(!previewPanel.open)prepared=null;});
     $('preview').onclick = () => preview();
-    $('cancel-preview').onclick = () => { prepared = null; $('preview-dialog').hidden = true; };
+    $('cancel-preview').onclick = () => previewPanel.close();
     $('apply').onclick = async () => {
       if (!prepared || running) return;
-      const action = prepared; prepared = null; $('preview-dialog').hidden = true;
+      const action = prepared; prepared = null; previewPanel.close();
       if(action.snapshot!==previewSnapshot()){notice('编辑内容已变化，请重新预览后再确认应用。','error');return;}
       try { if (action.submit) await action.submit(); else await startJob(action.kind, action.body, action.address); }
       catch (error) { notice(error.message, 'error'); }
     };
     $('discard').onclick = () => { passwordConfirmation = ''; proxyCredentials = null; dirty.clear(); sessionReset = false; notice(''); render(); };
     $('reload').onclick = async () => {
-      if ((dirty.size) && !confirm('刷新会放弃未保存的修改，继续吗？')) return;
+      if (dirty.size && !await options.confirmAction('刷新会放弃未保存的修改，继续吗？',{title:'刷新配置',accept:'放弃并刷新'})) return;
+      if(stopped||running)return;
       passwordConfirmation = ''; proxyCredentials = null; dirty.clear(); sessionReset = false; notice(''); await load();
     };
     function destroy() {
@@ -1303,7 +1311,7 @@
       lifetime.abort();
       for (const id of timers) clearTimeout(id);
       timers.clear();
-      $('preview-dialog').hidden = true;
+      if(previewPanel.open)previewPanel.close();
       if (current === bridge) current = null;
       document.title = 'LovestGateWay';
     }
@@ -1334,7 +1342,7 @@
       if (window.ppgwPpsub?.isBusy()) { notice('正在保存并应用，请等待任务完成后再离开。'); return false; }
       if (!dirty.size && !sourceDraft?.changed && !window.ppgwPpsub?.hasChanges()) return true;
       if (type === 'leave') return false;
-      return confirm('离开会放弃未保存的修改，继续吗？');
+      return options.confirmAction('离开会放弃未保存的修改，继续吗？',{title:'离开当前页面',accept:'确认离开'});
     };
     const incoming = new URL(location.href);
     if (/^[0-9a-f]{32}$/.test(incoming.searchParams.get('job') || '')) {

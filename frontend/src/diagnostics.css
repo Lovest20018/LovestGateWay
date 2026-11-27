@@ -36,9 +36,6 @@
 .diagnostic-ack{display:flex;align-items:flex-start;gap:10px;margin:14px 0;line-height:1.6}
 .diagnostic-ack input{appearance:auto;flex:none;width:20px;height:20px;margin-top:2px}
 [data-unknown-task]>.btn{margin:8px 8px 0 0}
-.diagnostic-page .diagnostic-preview{margin-top:16px;width:100%;scroll-margin-top:24px;border:1px solid var(--brand);background:var(--panel-solid)}
-.diagnostic-preview .dialog-body{padding:0}
-.diagnostic-preview .dialog-actions{justify-content:flex-end;margin-top:20px}
 @media(max-width:760px){.diagnostic-overview,.diagnostic-backups{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:639.5px){.diagnostic-page .card{padding:16px 15px}.diagnostic-page .page-head{gap:8px}.diagnostic-page .page-head .btn{padding:6px 10px;font-size:12px}.diagnostic-scope{font-size:12px}}
 

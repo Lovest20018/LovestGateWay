@@ -242,7 +242,7 @@ def candidate(admin, body, preview=None):
         system.validate_policy(effective)
         from mihomo_reload import policy_candidate
         reload_plan, update = policy_candidate(snapshot['document'], effective, feature_options(snapshot['baseline']), features,
-            running_materialized_document() if layout.live else None)
+            running_materialized_document() if layout.live else None, renames=renames)
         if update:
             options['mihomo_update'] = update
         if preview is not None: preview['mihomo_reload'] = reload_plan
