@@ -99,9 +99,10 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
     assert.equal(await limit.inputValue(),'9010','appearance selection must retain the draft');
     assert.equal(new URL(page.url()).hash,'#/settings','appearance must not navigate');
-    page.once('dialog',dialog=>dialog.dismiss());await page.goBack();await page.waitForURL('**/#/settings');await page.waitForTimeout(150);
+    const leave=page.getByRole('dialog',{name:'离开当前页面'});
+    await page.goBack();await leave.waitFor();await page.waitForURL('**/#/settings');await leave.getByRole('button',{name:'取消',exact:true}).click();
     assert.equal(await limit.inputValue(),'9010','rejected Back must retain the draft');
-    page.once('dialog',dialog=>dialog.accept());await page.locator('#shell-nav [data-route="proxies"]').click();
+    await page.locator('#shell-nav [data-route="proxies"]').click();await leave.getByRole('button',{name:'确认离开',exact:true}).click();
     await page.locator('#proxies-page').getByText('Fixture Main',{exact:true}).first().waitFor();
     assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),'light');
     // Changing the accepted secret forces the mounted source page to reauth.

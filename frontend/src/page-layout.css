@@ -163,7 +163,7 @@
 .diagnostic-page .diagnostic-backup{padding:12px}
 @media(max-width:760px){
   #shell-menu,#shell-nav .shell-nav-link,#shell-nav #shell-theme,#shell-nav #shell-logout,
-  .page-tabs>button,.monitor-tabs>button,.ppgw-gateway .tabs>button,.monitor-region-tile .monitor-actions .btn,
+  .page-tabs>button,.layout-page .monitor-tabs>.btn,.ppgw-gateway .tabs>button,.monitor-region-tile .monitor-actions .btn,
   .proxy-group>summary>.btn,.rules-page .rule-test form :is(input,.btn),.rules-page .rule-target,
   .layout-page .monitor-sort,.layout-page .monitor-filter-row input,.layout-page .monitor-columns>summary{min-height:40px}
   #shell-menu{min-width:40px}

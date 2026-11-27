@@ -83,7 +83,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     const navigation=page.locator('#shell-nav');
     const settings=()=>navigation.locator('a[href="#/settings"]').click();
     const subscriptions=async()=>{await navigation.locator('a[href="#/subscriptions"]').click();await page.getByRole('tab',{name:'策略编辑',exact:true}).click();};
-    const reload=async(confirm=false)=>{if(confirm)page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'重新读取',exact:true}).click();await ready();};
+    const reload=async(confirm=false)=>{await page.getByRole('button',{name:'重新读取',exact:true}).click();if(confirm)await page.getByRole('dialog',{name:'重新读取配置'}).getByRole('button',{name:'放弃并重新读取',exact:true}).click();await ready();};
     model.revision='b'.repeat(64);model.settings.ini.subtime='8h';model.settings.ini.max_rec=6000;
     await reload();assert.equal(await interval.inputValue(),'8h');
     await health.check();await page.getByRole('button',{name:'保存并应用',exact:true}).click();

@@ -523,6 +523,15 @@ async function main() {
     await page.goBack();
     await page.getByRole('dialog',{name:'离开当前页面'}).getByRole('button',{name:'确认离开',exact:true}).click();
     await page.locator('.ppgw-gateway').waitFor({state: 'detached'});
+    await page.goForward();await page.getByLabel('流量记录上限',{exact:true}).waitFor();
+    await navigation.getByRole('link',{name:'概览',exact:true}).click();await page.locator('#overview-page').waitFor();
+    await page.goBack();await page.getByLabel('流量记录上限',{exact:true}).waitFor();
+    await blur(page.getByLabel('流量记录上限',{exact:true}),'9020');
+    await page.goForward();await page.getByRole('dialog',{name:'离开当前页面'}).waitFor();
+    await page.waitForURL('**/#/settings');await page.getByRole('dialog',{name:'离开当前页面'}).getByRole('button',{name:'取消',exact:true}).click();
+    assert.equal(await page.getByLabel('流量记录上限',{exact:true}).inputValue(),'9020');
+    await page.goForward();await page.getByRole('dialog',{name:'离开当前页面'}).getByRole('button',{name:'确认离开',exact:true}).click();
+    await page.locator('.ppgw-gateway').waitFor({state:'detached'});
     // Aborting an in-flight config read must not write into the next route.
     configDelay = 500;
     await navigation.getByRole('link', {name: '设置', exact: true}).click();

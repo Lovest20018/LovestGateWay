@@ -98,7 +98,11 @@ const report={schema:1,generated_at:1793870400,services:{paopaogw:{active:false,
       await page.waitForFunction(()=>document.querySelector('#shell-nav').getBoundingClientRect().right<=0);
       assert.equal(await page.locator('#shell-page-title').textContent(),'诊断');
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-      assert.ok(await preview.evaluate(node=>{const title=node.querySelector('h2'),r=title.getBoundingClientRect();return node.matches(':modal')&&node.scrollWidth<=node.clientWidth&&title.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}));
+      const modalState=await preview.evaluate(node=>{
+        const title=node.querySelector('h2'),r=title.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+        return {modal:node.matches(':modal'),scrollWidth:node.scrollWidth,clientWidth:node.clientWidth,titleVisible:title.contains(hit),headingTop:r.top,scrollTop:node.scrollTop,hit:hit?.tagName};
+      });
+      assert.ok(modalState.modal&&modalState.scrollWidth<=modalState.clientWidth&&modalState.titleVisible,JSON.stringify(modalState));
       await page.screenshot({path:path.join(root,'dist/diagnostics-preview-'+width+'.png'),timeout:45000});
       await page.keyboard.press('Tab');assert.equal(await page.locator('.diagnostic-preview :focus').textContent(),'返回');
       await page.keyboard.press('Tab');assert.equal(await page.locator('.diagnostic-preview :focus').textContent(),'确认恢复此备份');

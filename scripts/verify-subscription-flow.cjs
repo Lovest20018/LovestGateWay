@@ -87,7 +87,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await page.getByRole('button',{name:'预览来源切换',exact:true}).click();
     await page.getByText('请先保存或放弃当前编辑，再切换配置来源。',{exact:true}).waitFor();
     assert.equal(requests.length,0);
-    await page.getByRole('tab',{name:'策略编辑',exact:true}).click();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'重新读取',exact:true}).click();await ready();await page.getByRole('tab',{name:'配置来源',exact:true}).click();
+    await page.getByRole('tab',{name:'策略编辑',exact:true}).click();await page.getByRole('button',{name:'重新读取',exact:true}).click();await page.getByRole('dialog',{name:'重新读取配置'}).getByRole('button',{name:'放弃并重新读取',exact:true}).click();await ready();await page.getByRole('tab',{name:'配置来源',exact:true}).click();
     await page.getByRole('button',{name:'预览来源切换',exact:true}).click();
     await page.getByText('更换来源与现有本地策略或 PPsub 冲突。确认清除选项后重新预览。',{exact:true}).waitFor();
     await page.locator('#reset-source').check();

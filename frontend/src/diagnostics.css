@@ -29,8 +29,9 @@
 .diagnostic-backup code{font-size:11px;color:var(--text-2)}
 .diagnostic-backup>.btn{margin-top:12px}
 .diagnostic-backup .notice{margin-bottom:0}
-.diagnostic-scope{border-collapse:collapse;width:100%;margin:20px 0;font-size:13px}
-.diagnostic-scope th,.diagnostic-scope td{padding:9px 5px;border-bottom:1px solid var(--edge);text-align:left}
+.diagnostic-scope{border-collapse:collapse;table-layout:fixed;width:100%;margin:20px 0;font-size:13px}
+.diagnostic-scope th,.diagnostic-scope td{padding:9px 5px;border-bottom:1px solid var(--edge);text-align:left;white-space:normal;overflow-wrap:anywhere}
+.diagnostic-scope th:first-child{width:38%}
 .diagnostic-page .diagnostic-task{margin-bottom:16px;border-color:var(--brand)}
 .diagnostic-task p{overflow-wrap:anywhere}
 .diagnostic-ack{display:flex;align-items:flex-start;gap:10px;margin:14px 0;line-height:1.6}

@@ -182,19 +182,18 @@ async function exercise(browser, kind) {
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,JSON.stringify(await page.evaluate(()=>[...document.querySelectorAll('.source-editor *')].map(n=>({tag:n.tagName,cls:n.className,width:n.getBoundingClientRect().width,right:n.getBoundingClientRect().right})).filter(n=>n.right>innerWidth+1&&n.width>0).slice(0,20))));
     compact.mobileHeight=await added.evaluate(item=>item.getBoundingClientRect().height);assert.ok(compact.mobileHeight<=560,'a mobile group must fit within a screen');
     await added.screenshot({path:path.join(root,'dist/compact-node-group-'+kind+'-mobile.png')});
-    await page.setViewportSize({width:1440,height:960});page.once('dialog',dialog=>dialog.accept());await added.getByRole('button',{name:'删除',exact:true}).click();assert.equal(await page.locator('.groups > .item').count(),groupCount);
+    const confirm=(title,name)=>page.getByRole('dialog',{name:title,exact:true}).getByRole('button',{name,exact:true});
+    await page.setViewportSize({width:1440,height:960});await added.getByRole('button',{name:'删除',exact:true}).click();await confirm('删除节点组','确认删除').click();assert.equal(await page.locator('.groups > .item').count(),groupCount);
 
     if (kind === 'ppsub') {
       const name = page.locator('.subs [data-field="name"]').first();
       await name.fill('Temporary draft');
       const readsBeforeCancel = configReads;
-      page.once('dialog', dialog => dialog.dismiss());
-      await reload.click();
+      await reload.click();await confirm('重新读取配置','取消').click();
       assert.equal(await name.inputValue(), 'Temporary draft');
       assert.equal(configReads, readsBeforeCancel);
-      page.once('dialog', dialog => dialog.accept());
       const reread = page.waitForResponse(origin + '/sniffbox/subscription/config');
-      await reload.click(); await reread;
+      await reload.click();await confirm('重新读取配置','放弃并重新读取').click();await reread;
       await page.waitForFunction(() => document.querySelector('.source-editor')?.dataset.editorState==='loaded');
       assert.equal(await name.inputValue(), native.subs[0].name);
       const choosing = page.waitForEvent('filechooser');
@@ -217,8 +216,7 @@ async function exercise(browser, kind) {
       assert.equal(saved,null);
       assert.equal(await interval.inputValue(),'9h');
       assert.equal(await page.evaluate(() => window.fixtureDocument), 'unchanged');
-      page.once('dialog', dialog => dialog.dismiss());
-      await page.getByRole('link', {name: '概览', exact: true}).click();
+      await page.getByRole('link', {name: '概览', exact: true}).click();await confirm('离开当前页面','取消').click();
       assert.equal(new URL(page.url()).hash, '#/subscriptions');
       assert.equal(await name.inputValue(), 'Edited native provider');
     }

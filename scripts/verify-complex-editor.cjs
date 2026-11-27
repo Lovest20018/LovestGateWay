@@ -85,7 +85,8 @@ async function exercise(browser, kind, width) {
     assert.equal(await page.locator('.editor-section > .item[open]').count(),3,'only the first row of each section starts expanded');
     const save=page.locator('[data-ppsub-apply]');assert.equal(await save.isDisabled(),true);
     await groups.last().getByRole('button',{name:'复制',exact:true}).click();assert.equal(await groups.count(),counts.groups+1);assert.equal(await save.isEnabled(),true,'copying a clean row enables saving');
-    page.once('dialog',dialog=>dialog.accept());await groups.last().getByRole('button',{name:'删除',exact:true}).click();assert.equal(await groups.count(),counts.groups);assert.equal(await save.isDisabled(),true,'deleting the unchanged copy restores the clean document');
+    const confirmDelete=page.getByRole('dialog',{name:'删除节点组',exact:true}).getByRole('button',{name:'确认删除',exact:true});
+    await groups.last().getByRole('button',{name:'删除',exact:true}).click();await confirmDelete.click();assert.equal(await groups.count(),counts.groups);assert.equal(await save.isDisabled(),true,'deleting the unchanged copy restores the clean document');
     await groups.last().getByRole('button',{name:'上移',exact:true}).click();assert.equal(await save.isEnabled(),true,'moving a clean row enables saving');await groups.nth(counts.groups-2).getByRole('button',{name:'下移',exact:true}).click();assert.equal(await save.isDisabled(),true,'moving the row back restores the clean document');
     await noOverflow();
     const target=groups.nth(counts.groups-1), editedName=`Edited ${kind} ${width} ${suffix}`;
@@ -106,8 +107,7 @@ async function exercise(browser, kind, width) {
     assert.equal(await target.evaluate(node=>node.open),true,'summary row actions must not collapse the edited row');assert.equal(await groups.last().evaluate(node=>node.open),true,'copied rows open for editing');
     assert.equal(await groups.last().locator('[data-field=name]').inputValue(),editedName+' 副本');
     await measure('moveCopiedGroup',async()=>{await groups.last().getByRole('button',{name:'上移',exact:true}).click();assert.equal(await groups.nth(59).locator('[data-field=name]').inputValue(),editedName+' 副本');});
-    page.once('dialog',dialog=>dialog.accept());
-    await measure('deleteCopiedGroup',async()=>{await groups.nth(59).getByRole('button',{name:'删除',exact:true}).click();assert.equal(await groups.count(),counts.groups);});
+    await measure('deleteCopiedGroup',async()=>{await groups.nth(59).getByRole('button',{name:'删除',exact:true}).click();await confirmDelete.click();assert.equal(await groups.count(),counts.groups);});
     const fixed=groups.last().getByRole('group',{name:'固定节点 / 组',exact:true});
     await fixed.locator(':scope > .btn').click();
     await fixed.locator('[data-field=include]').fill(nodeNames.at(-1));
