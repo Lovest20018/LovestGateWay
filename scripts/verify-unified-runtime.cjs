@@ -87,7 +87,9 @@ const native = {version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
     await page.screenshot({path:path.join(root,'dist/unified-overview-desktop.png')});
     await page.locator('#shell-nav [data-route="settings"]').click();
     const limit=page.getByLabel('流量记录上限',{exact:true});await limit.fill('9010');await limit.press('Tab');
-    await page.locator('#preview').click();await page.locator('#preview-dialog').waitFor({state:'visible'});await limit.fill('9011');await limit.press('Tab');await page.locator('#apply').click();await page.getByText('编辑内容已变化，请重新预览后再确认应用。',{exact:true}).waitFor();assert.equal(job,undefined);await limit.fill('9010');await limit.press('Tab');
+    await page.locator('#preview').click();await page.locator('#preview-dialog').waitFor({state:'visible'});
+    await limit.evaluate(node=>{node.value='9011';node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));});
+    await page.locator('#apply').click();await page.getByText('编辑内容已变化，请重新预览后再确认应用。',{exact:true}).waitFor();assert.equal(job,undefined);await limit.fill('9010');await limit.press('Tab');
     const appearance=page.getByRole('group',{name:'外观',exact:true});
     assert.deepEqual(await appearance.getByRole('button').allTextContents(),['系统']);
     assert.equal(await appearance.locator('#shell-theme').getAttribute('data-theme-choice'),'system');

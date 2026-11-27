@@ -19,11 +19,13 @@ export function mountEditor(host,{navigate}) {
   const edited=event=>{if(event.target!==upload)++editRevision;};
   for(const type of ['input','change','click'])root.addEventListener(type,edited,true);
   upload.onchange=async()=>{
-    const sequence=++importSequence,revision=editRevision,baseline=JSON.stringify(doc),file=upload.files[0];
+    const sequence=++importSequence,baseline=JSON.stringify(doc),file=upload.files[0];
     try{
       if(!file||stopped)return;
       if(window.ppgwPpsub.hasChanges()&&!await confirmAction('导入将替换未保存的编辑内容，继续吗？',{title:'导入 PPsub',accept:'替换并导入',trigger:importMenu.firstElementChild}))return;
-      if(stopped||sequence!==importSequence||revision!==editRevision)return;
+      if(stopped||sequence!==importSequence)return;
+      if(baseline!==JSON.stringify(doc)){importNotice('编辑内容已变化，请重新选择文件。');return;}
+      const revision=editRevision;
       importNotice('正在读取导入文件；期间的新编辑会保留。');
       const raw=await file.text();
       if(stopped||sequence!==importSequence)return;

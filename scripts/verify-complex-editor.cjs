@@ -29,7 +29,8 @@ const baseline = python('from clash_ppsub import editor_config;print(json.dumps(
 const native = {version:'PaoPaoGateWay 3.1', custom:{untouched:{credential:'hidden-extension'}},
   subs:providerNames.map((name,i)=>({name,url:`https://example.com/provider-${i}`,update_mode:i%2?'auto':'manual',update_interval:'6h',extension:{credential:`hidden-${i}`}})),
   'node-groups':groupNames.map((name,i)=>({name,subs:[providerNames[i%counts.providers]],include:['DIRECT',nodeNames[i]],keywords:[`关键词-${i}-${suffix}`],exclude_keywords:['expired'],extension:{keep:i}})),
-  rules:Array.from({length:counts.rules}, (_,i)=>({priority:(i+1)*10,remark:`规则 ${i+1} ${suffix}`,fixrule:[`DOMAIN,fixture-${i}.example.com,${groupNames[i%counts.groups]}`],extension:{keep:i}}))};
+  // Native PPsub keeps manual rule text. The last group is edited without references in this fixture.
+  rules:Array.from({length:counts.rules}, (_,i)=>({priority:(i+1)*10,remark:`规则 ${i+1} ${suffix}`,fixrule:[`DOMAIN,fixture-${i}.example.com,${groupNames[i%(counts.groups-1)]}`],extension:{keep:i}}))};
 
 async function exercise(browser, kind, width) {
   const context = await browser.newContext({viewport:{width,height:900}, reducedMotion:'reduce'});

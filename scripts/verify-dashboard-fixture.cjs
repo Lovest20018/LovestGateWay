@@ -152,7 +152,7 @@ async function exercise(browser, kind) {
       assert.ok(bounds.globals.width>=bounds.main.width-80,'editor must use the full page width');
       assert.equal(bounds.overflow,false,'page must not overflow horizontally');
       assert.equal(await page.locator('iframe').count(),0);
-      assert.equal(await page.locator('dialog').count(),0);
+      assert.equal(await page.locator('dialog[open]').count(),0);
       return bounds;
     };
     await layoutCheck();

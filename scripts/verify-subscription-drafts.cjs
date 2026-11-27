@@ -91,7 +91,6 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.equal(requests.at(-1).body.settings_revision,model.revision);
     assert.match(await page.locator('.source-override').first().textContent(),/节点组、规则/);
     assert.match(await page.locator('#preview-content .source-override').textContent(),/此次将使用本地覆盖/);
-    await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.match(await page.locator('.source-card .source-override').textContent(),/已保存与当前来源绑定的本地覆盖/);await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
     assert.match(await page.locator('[data-change-section="subscriptions"]').textContent(),/修改 1.*修改：Airport/s);
     assert.match(await page.locator('[data-change-section="node_groups"]').textContent(),/新增 1.*顺序已调整/s);
     assert.match(await page.locator('[data-change-section="rules"]').textContent(),/1 → 2/);
@@ -103,7 +102,9 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.equal(await page.locator('#preview-dialog').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
     await page.screenshot({path:path.join(root,'dist/change-preview-mobile.png'),fullPage:true});
     await page.setViewportSize({width:1440,height:980});
-    await page.locator('#cancel-preview').click();await reload(true);
+    await page.locator('#cancel-preview').click();
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.match(await page.locator('.source-card .source-override').textContent(),/已保存与当前来源绑定的本地覆盖/);await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
+    await reload(true);
     for(const plan of [{action:'reload',core_active:true,pending_load:false,services:[]},{action:'auxiliary',core_active:true,pending_load:false,services:['api']},{action:'auxiliary',core_active:false,pending_load:false,services:['api']},{action:'auxiliary',core_active:null,pending_load:false,services:['api']},{action:'none',core_active:false,pending_load:true,services:[]}]){
       previewPlan=plan;await health.check();await page.getByRole('button',{name:'保存并应用',exact:true}).click();
       await page.locator('#preview-dialog').waitFor({state:'visible'});
