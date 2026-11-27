@@ -25,7 +25,7 @@ class MihomoPolicyError(ManagementError):
 
 
 def policy_validation_detail(output):
-    """Extract only a known error category and a numeric position from Mihomo diagnostics."""
+    """Extract only a known error category and an optional position from Mihomo diagnostics."""
     for line in reversed(output[-8192:].splitlines()):
         log = re.fullmatch(r'time=(?:"(?:[^"\\]|\\.)*"|[^\s"]+)\s+level=(?:error|fatal)\s+msg="((?:[^"\\]|\\.)*)"\s*', line)
         error = log[1] if log is not None else line
@@ -36,6 +36,8 @@ def policy_validation_detail(output):
             continue
         if re.match(r'(?:nsenter:|(?:open|read|stat)\s+.+:\s*(?:permission denied|no such file or directory)\b)', error, re.I):
             continue
+        if re.fullmatch(r'sub-rule error: circular references \[.+->.+\]', error):
+            return '子规则存在循环引用，请检查引用关系。'
         position = re.match(
             r'(rules|proxy group|proxy|rule[- ]providers?|sub-rules?)'
             r'(?:\[[^\]\r\n]+\](?=\[))?\s*(?:\[(\d{1,6})\]|(\d{1,6})\b)',

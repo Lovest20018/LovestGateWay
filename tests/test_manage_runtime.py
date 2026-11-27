@@ -75,15 +75,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
 
         result.stderr = ''
-        result.stdout = (
-            'time="2026-11-27T02:07:46Z" level=error msg="rules[0] '
-            '[IP-CIDR,bogus-synthetic-fixture,DIRECT] error: payloadRule error"\n'
-            'configuration file /etc/test/private.yaml test failed'
+        diagnostics = (
+            ('rules[0] [IP-CIDR,bogus-synthetic-fixture,DIRECT] error: payloadRule error',
+             '第 1 条规则：请检查字段和语法。'),
+            ('sub-rule error: circular references [fixture-private-a->fixture-private-b->fixture-private-a]',
+             '子规则存在循环引用，请检查引用关系。'),
         )
-        with self.assertRaises(MihomoPolicyError) as caught:
-            self.system.validate_policy({'rules': ['MATCH,DIRECT']})
-        self.assertEqual(caught.exception.detail, '第 1 条规则：请检查字段和语法。')
-        self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
+        for message, detail in diagnostics:
+            with self.subTest(detail=detail):
+                result.stdout = (f'time="2026-11-27T02:07:46Z" level=error msg="{message}"\n'
+                                 'configuration file /etc/test/private.yaml test failed')
+                with self.assertRaises(MihomoPolicyError) as caught:
+                    self.system.validate_policy({'rules': ['MATCH,DIRECT']})
+                self.assertEqual(caught.exception.detail, detail)
+                self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
 
         for raw, expected in [
             ('Parse config error: proxy group 0: missing name', '第 1 条节点组'),
@@ -105,6 +110,8 @@ class RuntimeTests(unittest.TestCase):
             'time="fixture" level=fatal msg="Parse config error: open /etc/test/private.yaml: no such file or directory"',
             'time="fixture" level=error msg="runtime initialization failed"',
             'time="fixture" level=info msg="Parse config error: rules[0] could not be read"',
+            'time="fixture" level=info msg="sub-rule error: circular references [a->a]"',
+            'time="fixture" level=error msg="runtime error: sub-rule error: circular references [a->a]"',
             'unexpected prefix time="fixture" level=error msg="rules[0] [fixture] error: payloadRule error"',
         ):
             with self.subTest(diagnostic=diagnostic):
