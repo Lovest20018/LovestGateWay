@@ -147,7 +147,7 @@ def group_view(row):
 
 
 def provider_view(row):
-    return {key: row.get(key, default) for key, default in
+    return {key: default if row.get(key) is None else row[key] for key, default in
             (('name', ''), ('url', ''), ('behavior', DEFAULT_RULE_BEHAVIOR), ('format', 'yaml'),
              ('interval', DEFAULT_RULE_INTERVAL), ('proxy', ''))}
 
@@ -369,9 +369,13 @@ def merge_editor(document, baseline, submitted):
         mode_changed = edited['mode'] != previous['mode']
         if not identity or mode_changed:
             group['type'] = 'select' if edited['mode'] == 'smart' else edited['mode']
-        if mode_changed and edited['mode'] in {'select', 'smart'} and original.get('type') in {'url-test', 'fallback'}:
-            for key in ('url', 'interval', 'expected-status', 'max-failed-times'):
-                group.pop(key, None)
+        if mode_changed:
+            if edited['mode'] in {'select', 'smart'} and original.get('type') in {'url-test', 'fallback'}:
+                for key in ('url', 'interval'):
+                    group.pop(key, None)
+            if original.get('type') == 'fallback':
+                for key in ('expected-status', 'max-failed-times'):
+                    group.pop(key, None)
         if edited['mode'] == 'smart':
             group['proxies'] = list(dict.fromkeys(group.get('proxies', []) + ['smartspeedtest@hide']))
         elif 'proxies' in group and 'smartspeedtest@hide' in group['proxies']:

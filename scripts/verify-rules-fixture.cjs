@@ -13,7 +13,7 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
   providers:{[provider]:{name:provider,vehicleType:'HTTP',behavior:'domain',ruleCount:201,updatedAt:'2026-11-06T00:00:00Z'},[evil]:{name:evil,vehicleType:'File',behavior:'classical',ruleCount:1}},
   proxies:{[main]:{type:'Selector',all:[alpha,beta,'Fixture Auto','Fixture Smart',main],now:alpha},'Fixture Auto':{type:'URLTest',all:[alpha,beta],now:alpha},'Fixture Smart':{type:'Selector',smart:true,all:[alpha,beta],now:alpha},[alpha]:{type:'Trojan',delay:45},[beta]:{type:'Shadowsocks',delay:80},DIRECT:{type:'Direct'}},mode:'rule'};
 (async()=>{
-  await fs.mkdir(evidence,{recursive:true});const browser=await chromium.launch({channel:'chrome',headless:true});let releasePending=()=>{};
+  await fs.mkdir(evidence,{recursive:true});const browser=await chromium.launch({channel:'chrome',headless:true,args:process.platform==='win32'?['--disable-gpu']:[]});let releasePending=()=>{};
   try{
     const context=await browser.newContext({viewport:{width:1440,height:1050},reducedMotion:'reduce'}),page=await context.newPage(),errors=[],requests=[],unexpected=[];
     page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));
@@ -67,7 +67,7 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
       }
       try{const name=target==='/ui/'?'index.html':path.basename(target);return route.fulfill({body:await fs.readFile(path.join(output,name)),contentType:target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':'text/html'});}catch{return route.fulfill({status:404,body:''});}
     });
-    const capture=async name=>{await page.evaluate(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(evidence,name),fullPage:true,animations:'disabled'});};
+    const capture=async name=>{await page.evaluate(async()=>{scrollTo(0,0);await document.fonts.ready;await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));});await page.screenshot({path:path.join(evidence,name),fullPage:true,animations:'disabled',timeout:45000});};
     await sessions.install(page);
     await page.goto(origin+'/ui/#/rules');
     if(baseline){await page.locator('#runtime-panel').getByRole('heading',{name:'规则',exact:true}).waitFor();await page.locator('#runtime-panel tbody tr').first().waitFor();await capture('rules-baseline-desktop.png');await page.setViewportSize({width:320,height:900});await capture('rules-baseline-mobile-320.png');console.log('Saved unchanged compatibility baseline');return;}

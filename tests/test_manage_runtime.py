@@ -4,7 +4,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'integration'))
-from manage_common import Layout
+from manage_common import Layout, ManagementError
 from manage_model import load_settings
 from manage_runtime import MihomoPolicyError, System, policy_validation_detail
 
@@ -74,6 +74,19 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(caught.exception.detail, '第 4 条规则：找不到规则的目标代理或节点组。')
         self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
         self.assertEqual(policy_validation_detail('nsenter: /etc/test/private.yaml: failed'), '')
+        for raw, expected in [
+            ('Parse config error: proxy group 0: missing name', '第 1 条节点组'),
+            ('Parse config error: proxy group[3]: invalid name', '第 4 条节点组'),
+            ('Parse config error: sub-rules[synthetic-rule][2] failure', '第 3 条子规则'),
+            ('Parse config error: rule provider 4: invalid format', '第 5 条规则集'),
+        ]:
+            with self.subTest(raw=raw):
+                self.assertTrue(policy_validation_detail(raw).startswith(expected))
+
+        result.stderr = 'nsenter: cannot open mount namespace /proc/123/ns/mnt'
+        with self.assertRaisesRegex(ManagementError, '^SYSTEM_OPERATION_FAILED:nsenter$') as failure:
+            self.system.validate_policy({'rules': ['MATCH,DIRECT']})
+        self.assertNotIsInstance(failure.exception, MihomoPolicyError)
 
     def test_rollback_keeps_the_job_worker_alive_and_restores_other_units(self):
         states = {unit: {'active': True, 'enabled': True} for unit in ('paopaogw', 'paopaogw-settings', 'paopaogw-api')}

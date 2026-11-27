@@ -147,6 +147,33 @@ class UnifiedEditorTests(unittest.TestCase):
         with self.assertRaisesRegex(ManagementError, 'INVALID_PPSUB_ROW'):
             editor.validate_ppsub(invalid)
 
+    def test_legacy_ppsub_optional_nulls_and_manual_rule_kind_round_trip(self):
+        value = {
+            'exported_at': 'fixture', 'subs': [{'name': 'S', 'url': 'https://example.org/sub'}],
+            'node-groups': [{
+                'name': 'Old', 'subs': None, 'include': None, 'keywords': None,
+                'exclude_keywords': None, 'speedtest_url': None, 'monitor_url': None,
+            }],
+            'rules': [
+                {'type': 'rules', 'url': 'https://example.org/old', 'fixrule': ['MATCH,Old']},
+                {'type': 'rules', 'fixrule': None},
+                {'type': 'rule-set', 'name': 'ads', 'url': 'https://example.org/ads',
+                 'format': None, 'behavior': None, 'interval': None, 'proxy': None},
+                {'type': None, 'priority': None, 'url': None},
+            ],
+        }
+        self.assertEqual(json.loads(editor.validate_ppsub(value)), value)
+        for field in ('format', 'behavior', 'interval', 'proxy'):
+            with self.subTest(field=field):
+                invalid = deepcopy(value)
+                invalid['rules'][2][field] = False
+                with self.assertRaises(ManagementError):
+                    editor.validate_ppsub(invalid)
+        invalid = deepcopy(value)
+        invalid['rules'][0]['fixrule'] = ['MATCH,Missing']
+        with self.assertRaisesRegex(ManagementError, 'UNKNOWN_RULE_TARGET'):
+            editor.validate_ppsub(invalid)
+
     def test_preview_and_save_return_safe_field_errors_over_http(self):
         from http.client import HTTPConnection
         from http.server import ThreadingHTTPServer
@@ -163,20 +190,25 @@ class UnifiedEditorTests(unittest.TestCase):
             thread.start()
             try:
                 with patch.object(source, 'CORE_TOKEN', token):
-                    for dry_run in (True, False):
+                    def post(payload):
                         connection = HTTPConnection('127.0.0.1', server.server_port, timeout=3)
                         try:
-                            connection.request('POST', '/api/subscription', json.dumps({**body, 'dry_run': dry_run}),
+                            connection.request('POST', '/api/subscription', json.dumps(payload),
                                                {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + 'a' * 64,
                                                 'Origin': f'http://127.0.0.1:{server.server_port}'})
                             response = connection.getresponse()
-                            self.assertEqual(response.status, 400)
-                            self.assertEqual(json.loads(response.read()), {
-                                'error': 'INVALID_RULE_FORMAT',
-                                'issue': {'section': 'rules', 'index': 0, 'field': 'format'},
-                            })
+                            return response.status, json.loads(response.read())
                         finally:
                             connection.close()
+                    for dry_run in (True, False):
+                        self.assertEqual(post({**body, 'dry_run': dry_run}), (400, {
+                            'error': 'INVALID_RULE_FORMAT',
+                            'issue': {'section': 'rules', 'index': 0, 'field': 'format'},
+                        }))
+                    with patch.object(self.system, 'validate_policy',
+                                      side_effect=ManagementError('SYSTEM_OPERATION_FAILED:nsenter')):
+                        self.assertEqual(post({**self.request(), 'dry_run': True}),
+                                         (503, {'error': 'SYSTEM_OPERATION_FAILED'}))
             finally:
                 server.shutdown()
                 thread.join(2)

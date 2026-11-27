@@ -27,19 +27,29 @@ class MihomoPolicyError(ManagementError):
 def policy_validation_detail(output):
     """Extract only a known error category and a numeric position from Mihomo diagnostics."""
     for line in reversed(output[-8192:].splitlines()):
-        position = re.search(r'\b(rules|proxy group|proxy)\[?(\d{1,6})\]?(?!\d)', line, re.I)
-        if not position and 'parse config error' not in line.lower():
+        marker = re.search(r'\bparse config error\s*:\s*', line, re.I)
+        if marker is None:
             continue
+        error = line[marker.end():]
+        position = re.match(
+            r'(rules|proxy group|proxy|rule[- ]providers?|sub-rules?)'
+            r'(?:\[[^\]\r\n]+\](?=\[))?\s*(?:\[(\d{1,6})\]|(\d{1,6})\b)',
+            error, re.I,
+        )
         reason = '请检查字段和语法。'
-        if re.search(r'\b(?:rule set|rule provider) \[.*?\] not found\b', line, re.I):
+        if re.search(r'\b(?:rule set|rule provider) \[.*?\] not found\b', error, re.I):
             reason = '找不到引用的规则集。'
-        elif re.search(r'\bproxy \[.*?\] not found\b', line, re.I):
+        elif re.search(r'\bproxy \[.*?\] not found\b', error, re.I):
             reason = '找不到规则的目标代理或节点组。'
-        elif re.search(r'\bsub-rule \[.*?\] not found\b', line, re.I):
+        elif re.search(r'\bsub-rule \[.*?\] not found\b', error, re.I):
             reason = '找不到引用的子规则。'
         if position:
-            label = {'rules': '规则', 'proxy group': '节点组', 'proxy': '代理'}[position[1].lower()]
-            return f'第 {int(position[2]) + 1} 条{label}：{reason}'
+            kind = position[1].lower().replace('-', ' ').removesuffix('s')
+            label = {'rule': '规则', 'proxy group': '节点组', 'proxy': '代理',
+                     'rule provider': '规则集', 'sub rule': '子规则'}[kind]
+            return f'第 {int(position[2] or position[3]) + 1} 条{label}：{reason}'
+        if reason == '请检查字段和语法。' and re.match(r'rule[- ]providers?\b', error, re.I):
+            return '请检查规则集定义。'
         return reason
     return ''
 
@@ -168,7 +178,9 @@ class System:
                                       '-t', '-d', '/etc/config/clash', '-f', str(candidate), check=False)
                 if result.returncode:
                     detail = policy_validation_detail(result.stderr or '') or policy_validation_detail(result.stdout or '')
-                    raise MihomoPolicyError(detail)
+                    if detail:
+                        raise MihomoPolicyError(detail)
+                    raise ManagementError('SYSTEM_OPERATION_FAILED:nsenter')
             finally: candidate.unlink(missing_ok=True)
     def prepare(self, action, before):
         self._old_runtime = None

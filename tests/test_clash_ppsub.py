@@ -166,6 +166,13 @@ class ClashPpsubTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'UNSUPPORTED_RULE_PROVIDER_TYPE'):
             merge_editor(document, baseline, submitted)
 
+    def test_clash_provider_optional_nulls_preserve_untouched_yaml(self):
+        document = self.document()
+        document['rule-providers']['China'].update(format=None, behavior=None, interval=None, proxy=None)
+        baseline, _ = editor_config(document)
+        result, _, _ = merge_editor(document, baseline, deepcopy(baseline))
+        self.assertEqual(result, document)
+
     def test_compound_rule_renames_ignore_regex_payload_and_remove_comments(self):
         document = self.document()
         document['rules'] = [
@@ -198,6 +205,12 @@ class ClashPpsubTests(unittest.TestCase):
         self.assertEqual(result_group['type'], 'select')
         self.assertFalse(set(result_group) & {'url', 'interval', 'expected-status', 'max-failed-times'})
         self.assertEqual(result_group['tolerance'], old['tolerance'])
+        group.update(speedtest_url='https://example.org/test', interval=180)
+        result, _, _ = merge_editor(document, baseline, submitted)
+        result_group = result['proxy-groups'][1]
+        self.assertEqual(result_group['type'], 'url-test')
+        self.assertEqual(result_group['interval'], 180)
+        self.assertFalse(set(result_group) & {'expected-status', 'max-failed-times'})
 
     def test_does_not_invent_default_groups_or_rules(self):
         config, counts = editor_config({'proxy-groups': [], 'rules': []})

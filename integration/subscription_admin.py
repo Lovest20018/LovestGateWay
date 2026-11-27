@@ -702,6 +702,8 @@ class Handler(BaseHTTPRequestHandler):
                 if details:
                     return self.respond(400, details)
             code = str(error).split(':', 1)[0]
+            if code == 'SYSTEM_OPERATION_FAILED' and self.path == '/api/subscription':
+                return self.respond(503, {'error': code})
             allowed = {'CONFIG_REVISION_CONFLICT', 'SOURCE_CHANGE_REQUIRES_SWITCH', 'MANAGEMENT_BUSY', 'RECOVERY_REQUIRED',
                        'INVALID_EDITOR_REQUEST', 'INVALID_PPSUB', 'INVALID_URL', 'CONFIG_CHANGED'}
             return self.respond(409 if code in {'CONFIG_REVISION_CONFLICT', 'MANAGEMENT_BUSY', 'CONFIG_CHANGED'} else 400,

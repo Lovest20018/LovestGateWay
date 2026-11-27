@@ -47,6 +47,7 @@
     INVALID_SS_CONFIG: 'Shadowsocks 加密方式或密码无效，请检查填写内容。',
     RESERVED_PROVIDER_NAME: '提供商名称与系统生成的名称冲突。',
     MIHOMO_POLICY_INVALID: 'Mihomo 未接受此配置。',
+    SYSTEM_OPERATION_FAILED: '暂时无法运行配置校验，请检查网关核心状态后重试。',
   };
   function knownEditorError(data) {
     const mapped = Object.hasOwn(editorErrors, data?.error) ? editorErrors[data.error] : '';

@@ -85,27 +85,29 @@ def validate_ppsub(value):
     for index, row in enumerate(groups):
         for field in ('subs', 'include', 'keywords', 'exclude_keywords'):
             try:
-                strings(row.get(field, []))
+                if row.get(field) is not None:
+                    strings(row[field])
             except ValueError:
                 raise EditorIssue('INVALID_EDITOR_LIST', 'node-groups', index, field) from None
         for field in ('speedtest_url', 'monitor_url'):
-            if row.get(field, '') != '':
+            if row.get(field) not in (None, ''):
                 check_ppsub_url(row, 'node-groups', index, field)
 
     rows = check_ppsub_rows(value, 'rules', 5000)
     providers = set()
+    manual_rows = []
     for index, row in enumerate(rows):
-        kind = row.get('type', '')
-        if not isinstance(kind, str) or kind not in {'', 'manual', 'url', 'rule-set'}:
+        kind = '' if row.get('type') is None else row['type']
+        if not isinstance(kind, str) or kind not in {'', 'manual', 'rules', 'url', 'rule-set'}:
             raise EditorIssue('INVALID_RULE_KIND', 'rules', index, 'type')
-        priority = row.get('priority', 0)
+        priority = 0 if row.get('priority') is None else row['priority']
         if type(priority) is not int or not -(2**63) <= priority < 2**63:
             raise EditorIssue('INVALID_RULE_PRIORITY', 'rules', index, 'priority')
         if kind == 'rule-set':
             provider = provider_view(row)
-            if row.get('format', '') == '':
+            if row.get('format') in (None, ''):
                 provider['format'] = 'auto'
-            if row.get('behavior', '') == '':
+            if row.get('behavior') in (None, ''):
                 provider['behavior'] = DEFAULT_RULE_BEHAVIOR
             check_http_rule_provider(provider, index, native=True)
             name = provider['name']
@@ -115,15 +117,14 @@ def validate_ppsub(value):
             if name in providers:
                 raise EditorIssue('DUPLICATE_RULE_PROVIDER', 'rules', index, 'name')
             providers.add(name)
-        elif kind == 'url' or (kind == '' and row.get('url', '') != ''):
+        elif kind == 'url' or (kind == '' and row.get('url') not in (None, '')):
             check_ppsub_url(row, 'rules', index)
+        else:
+            manual_rows.append((index, row.get('fixrule')))
 
-    for index, row in enumerate(rows):
-        kind = row.get('type', '')
-        if kind in {'rule-set', 'url'} or (kind == '' and row.get('url')):
-            continue
+    for index, field in manual_rows:
         try:
-            lines = strings(row.get('fixrule', []))
+            lines = strings([] if field is None else field)
         except ValueError:
             raise EditorIssue('INVALID_EDITOR_LIST', 'rules', index, 'fixrule') from None
         for number, line in enumerate(lines):

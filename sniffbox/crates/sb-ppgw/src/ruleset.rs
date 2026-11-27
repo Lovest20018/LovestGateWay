@@ -92,9 +92,11 @@ fn detect_format_with_behavior(url: &str, bytes: &[u8], behavior: &str) -> Optio
     if bytes.starts_with(&ZSTD_MAGIC) {
         return Some("mrs");
     }
-    let text = std::str::from_utf8(bytes)
-        .ok()?
-        .trim_start_matches('\u{feff}');
+    if bytes.contains(&0) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.trim_start_matches('\u{feff}');
     if has_yaml_feature(text) {
         return Some("yaml");
     }
@@ -132,10 +134,10 @@ fn looks_like_text_ruleset(text: &str, behavior: &str) -> bool {
 }
 
 fn looks_like_domain_rule(line: &str) -> bool {
-    let line = line.strip_prefix("+.").unwrap_or(line);
-    let line = line.strip_prefix('.').unwrap_or(line);
+    let suffix = line.strip_prefix("+.").or_else(|| line.strip_prefix('.'));
+    let line = suffix.unwrap_or(line);
     let line = line.strip_suffix('.').unwrap_or(line);
-    line.contains('.')
+    (suffix.is_some() || line.contains('.'))
         && line.split('.').all(|label| {
             label == "*"
                 || (!label.is_empty()
@@ -613,6 +615,36 @@ mod tests {
         );
         assert_eq!(
             detect_format_with_behavior(url, b"192.0.2.0/255\n", "ipcidr"),
+            None
+        );
+    }
+
+    #[test]
+    fn detects_legacy_encoded_comments_and_domain_suffix_labels() {
+        assert_eq!(
+            detect_format(
+                "https://example.com/yaml.txt",
+                b"# \xff\xfe\npayload:\n  - a.example\n"
+            ),
+            Some("yaml")
+        );
+        assert_eq!(
+            detect_format(
+                "https://example.com/text.txt",
+                b"# \xff\xfe\nDOMAIN,example.com\n"
+            ),
+            Some("text")
+        );
+        assert_eq!(
+            detect_format_with_behavior(
+                "https://example.com/domains",
+                b"# \xff\xfe\n+.cn\n.jp\n",
+                "domain"
+            ),
+            Some("text")
+        );
+        assert_eq!(
+            detect_format("https://example.com/binary", b"DOMAIN,example.org\0"),
             None
         );
     }
