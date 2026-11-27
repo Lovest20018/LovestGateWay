@@ -18,6 +18,35 @@ export function logEvent(value,at=Date.now()) {
   if(!row||typeof row!=='object'||typeof row.msg!=='string')return null;
   const level=text(row.level).toLowerCase();return {ts:number(row.ts)||at,source:text(row.source)||'?',level:Object.hasOwn(levels,level)?level:'info',raw:row.msg,text:stripAnsi(row.msg)};
 }
+export function logReplay() {
+  let epoch=null,sequence=0;
+  return {
+    url(){
+      const cursor=new URLSearchParams({since:String(sequence)});
+      if(epoch!==null)cursor.set('epoch',String(epoch));
+      return '/sniffbox/logs/sse?'+cursor;
+    },
+    accept(raw){
+      let value;
+      try{value=typeof raw==='string'?JSON.parse(raw):raw;}catch{return {};}
+      if(value?.hello===true&&Number.isSafeInteger(value.epoch)&&value.epoch>=0){
+        const restarted=epoch!==null&&epoch!==value.epoch;
+        if(epoch!==value.epoch)sequence=0;
+        epoch=value.epoch;
+        if(Number.isSafeInteger(value.after)&&value.after>=0&&value.after<sequence)sequence=value.after;
+        return {gap:value.gap===true,restarted};
+      }
+      if(value?.gap===true)return {gap:true};
+      const row=logEvent(value);
+      if(!row)return {};
+      if(epoch!==null&&Number.isSafeInteger(value.seq)&&value.seq>0){
+        if(value.seq<=sequence)return {};
+        sequence=value.seq;
+      }
+      return {row};
+    }
+  };
+}
 export function logBuffer(limit=2000) {
   let rows=[],pending=[],paused=false,sequence=0;
   return {

@@ -3,7 +3,7 @@ use crate::{auth, http::ReqHead};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read};
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -44,6 +44,15 @@ impl Default for Sessions {
     }
 }
 fn digest(value: &str) -> String { hex::encode(Sha256::digest(value.as_bytes())) }
+
+fn source_prefix(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(address) => {
+            IpAddr::V6(Ipv6Addr::from_bits(address.to_bits() & (u128::MAX << 64)))
+        }
+        ipv4 => ipv4,
+    }
+}
 impl Sessions {
     #[cfg(test)]
     pub(crate) fn with_limits(absolute: Duration, idle: Duration) -> Self {
@@ -64,18 +73,29 @@ impl Sessions {
             keep
         });
     }
-    // Every login attempt counts, including successful requests. Memory is bounded.
-    pub fn attempt(&self, ip: IpAddr, now: Instant) -> bool {
+    // All requests observe the current limits, and only rejected credentials spend the quota.
+    pub fn attempt(&self, ip: IpAddr, now: Instant, failed: bool) -> bool {
+        let ip = source_prefix(ip);
         let mut state = self.state.lock().unwrap();
         let recent = |time: &Instant| now.duration_since(*time) < Duration::from_secs(60);
         state.global_attempts.retain(recent);
-        state.attempts.retain(|_, rows| { rows.retain(recent); !rows.is_empty() });
-        if state.global_attempts.len() >= 100 { return false; }
-        if !state.attempts.contains_key(&ip) && state.attempts.len() >= MAX_SOURCES { return false; }
-        let rows = state.attempts.entry(ip).or_default();
-        if rows.len() >= 10 { return false; }
-        rows.push_back(now);
-        state.global_attempts.push_back(now);
+        state.attempts.retain(|_, rows| {
+            rows.retain(recent);
+            !rows.is_empty()
+        });
+        if state.global_attempts.len() >= 100 {
+            return false;
+        }
+        if state.attempts.get(&ip).is_some_and(|rows| rows.len() >= 10) {
+            return false;
+        }
+        if failed {
+            if !state.attempts.contains_key(&ip) && state.attempts.len() >= MAX_SOURCES {
+                return false;
+            }
+            state.attempts.entry(ip).or_default().push_back(now);
+            state.global_attempts.push_back(now);
+        }
         true
     }
     pub fn issue(&self, credential: &str, old: Option<&str>, now: Instant) -> io::Result<String> {
@@ -186,14 +206,34 @@ pub async fn handle(stream: &mut tokio::net::TcpStream, req: &ReqHead, cfg: &cra
             })
         }
         ("POST", "/sniffbox/auth/login") if same_origin(req) && cookie_allowed(req) => {
-            if !cfg.sessions.attempt(ip, Instant::now()) {
-                return respond::send(stream, 429, "Too Many Requests", &[("Cache-Control", "no-store"), ("Retry-After", "60"), ("Content-Type", "application/json")], br#"{"error":"LOGIN_RATE_LIMITED"}"#, ka).await;
-            }
             let parsed = serde_json::from_slice::<serde_json::Value>(body).ok();
             let proof = parsed.as_ref().filter(|v| v.as_object().is_some_and(|v| v.len() == 1)).and_then(|v| v.get("proof")).and_then(|v| v.as_str());
             let credential = cfg.token.load();
-            if proof.is_some_and(|proof| proof.len() == 64 && auth::check_bearer(Some(format!("Bearer {proof}").as_bytes()), credential.as_str())) {
-                match cfg.sessions.issue(credential.as_str(), cookie(req), Instant::now()) {
+            let correct = proof.is_some_and(|proof| {
+                proof.len() == 64
+                    && auth::check_bearer(
+                        Some(format!("Bearer {proof}").as_bytes()),
+                        credential.as_str(),
+                    )
+            });
+            let now = Instant::now();
+            if !cfg.sessions.attempt(ip, now, !correct) {
+                return respond::send(
+                    stream,
+                    429,
+                    "Too Many Requests",
+                    &[
+                        ("Cache-Control", "no-store"),
+                        ("Retry-After", "60"),
+                        ("Content-Type", "application/json"),
+                    ],
+                    br#"{"error":"LOGIN_RATE_LIMITED"}"#,
+                    ka,
+                )
+                .await;
+            }
+            if correct {
+                match cfg.sessions.issue(credential.as_str(), cookie(req), now) {
                     Ok(raw) => { set_cookie = Some(cookie_header(req, &raw, ABSOLUTE_SECONDS)); (200, "OK", serde_json::json!({"authenticated":true})) },
                     Err(_) => (503, "Service Unavailable", serde_json::json!({"error":"SESSION_UNAVAILABLE"})),
                 }
@@ -241,15 +281,41 @@ mod tests {
     }
     #[test]
     fn limits_are_bounded_and_do_not_evict_existing_sessions() {
-        let sessions = Sessions::default(); let now = Instant::now(); let ip = "192.0.2.1".parse().unwrap();
-        for _ in 0..10 { assert!(sessions.attempt(ip, now)); }
-        assert!(!sessions.attempt(ip, now)); assert!(sessions.attempt(ip, now + Duration::from_secs(60)));
+        let sessions = Sessions::default();
+        let now = Instant::now();
+        let ip = "192.0.2.1".parse().unwrap();
+        for _ in 0..10 {
+            assert!(sessions.attempt(ip, now, true));
+        }
+        assert!(!sessions.attempt(ip, now, true));
+        assert!(sessions.attempt(ip, now + Duration::from_secs(60), true));
         let first = sessions.issue("proof", None, now).unwrap();
         for _ in 1..MAX_SESSIONS { sessions.issue("proof", None, now).unwrap(); }
         assert!(sessions.issue("proof", None, now).is_err());
         assert!(sessions.authorize(&first, "proof", now).is_some());
-        for value in 1..=100 { let _ = sessions.attempt(format!("192.0.2.{value}").parse().unwrap(), now); }
-        assert!(!sessions.attempt("198.51.100.1".parse().unwrap(), now));
+        for value in 1..=100 {
+            let _ = sessions.attempt(format!("192.0.2.{value}").parse().unwrap(), now, true);
+        }
+        assert!(!sessions.attempt("198.51.100.1".parse().unwrap(), now, true));
+    }
+    #[test]
+    fn failed_credentials_share_aligned_ip_buckets_without_counting_successes() {
+        let sessions = Sessions::default();
+        let now = Instant::now();
+        let v4 = "192.0.2.1".parse().unwrap();
+        let mapped = "::ffff:192.0.2.1".parse().unwrap();
+        for _ in 0..30 {
+            assert!(sessions.attempt(v4, now, false));
+        }
+        for _ in 0..10 {
+            assert!(sessions.attempt(mapped, now, true));
+        }
+        assert!(!sessions.attempt(v4, now, true));
+        for _ in 0..10 {
+            assert!(sessions.attempt("2001:db8:1:2::1".parse().unwrap(), now, true));
+        }
+        assert!(!sessions.attempt("2001:db8:1:2::fe".parse().unwrap(), now, true));
+        assert!(sessions.attempt("2001:db8:1:3::fe".parse().unwrap(), now, true));
     }
     #[test]
     fn cookie_csrf_and_internal_boundaries_are_strict() {

@@ -12,8 +12,17 @@ const routes=['connections','traffic','distribution','logs','region'];
  let traffic=Array.from({length:250},(_,i)=>({client:'192.0.2.'+(i%20+1),domain:'host-'+i+'.example.com',down:1024+i,up:100,conns:2,ts:Date.now()-60000,last_seen:Date.now(),dport:[443],head:'Fixture Head',sniff:i%2?['tls']:['Video'],transport:'tcp',inbound:['TUN']}));
  let nodes=[{node:'Fixture Node',up:1024,down:2048,total:3072},{node:'DIRECT',up:512,down:100,total:612}];
  const send=(response,data,status=200,headers={})=>{response.writeHead(status,{'Content-Type':'application/json',...headers});response.end(JSON.stringify(data));};
- const event=(response,value)=>response.write(String(typeof value==='string'?value:JSON.stringify(value)).split('\n').map(line=>'data: '+line).join('\n')+'\n\n');
- const broadcast=(name,value)=>{for(const response of streams.get(name)||[])event(response,value);};
+ const event=(response,value)=>response.write((value?.seq?'id: '+value.seq+'\n':'')+String(typeof value==='string'?value:JSON.stringify(value)).split('\n').map(line=>'data: '+line).join('\n')+'\n\n');
+ const broadcast=(name,value)=>{for(const response of streams.get(name)||[])if(!response.writableEnded)event(response,value);};
+ const logPath='/sniffbox/logs/sse',logEpoch=1793890000000,logHistory=[],logCursors=[];
+ let logSequence=0;
+ const publishLog=value=>{
+  const row={ts:Date.now(),source:'clash',level:'info',...value,seq:++logSequence};
+  logHistory.push(row);
+  broadcast(logPath,row);
+  return row;
+ };
+ publishLog({msg:'\x1b[31mFixture core <img src=x onerror=alert(1)>\x1b[0m'});
  const server=http.createServer(async(request,response)=>{try{
   const url=new URL(request.url,'http://localhost'),target=url.pathname,method=request.method;
   if(target.startsWith('/ui/')){try{const filename=path.join(output,target==='/ui/'?'index.html':path.basename(target));response.writeHead(200,{'Content-Type':target.endsWith('.js')?'application/javascript':target.endsWith('.css')?'text/css':target.endsWith('.svg')?'image/svg+xml':target.endsWith('.woff2')?'font/woff2':'text/html'});response.end(await fs.readFile(filename));}catch{response.writeHead(404);response.end();}return;}
@@ -28,7 +37,21 @@ const routes=['connections','traffic','distribution','logs','region'];
   if(target==='/sniffbox/nodes')return send(response,{since:1793890000000,nodes});
   if(target==='/sniffbox/nodes/clear'){nodes=[];return send(response,{cleared:true});}
   if(target==='/sniffbox/screen'){response.writeHead(200,{'Content-Type':'text/plain',...(!screenAvailable?{'X-Screen-Status':'unavailable'}:{})});return response.end('Fixture terminal\n\x1b[32mGreen terminal\x1b[0m');}
-  if(target.endsWith('/sse')){response.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});response.write(': fixture\n\n');if(!streams.has(target))streams.set(target,new Set());streams.get(target).add(response);response.on('close',()=>streams.get(target).delete(response));if(target==='/sniffbox/traffic/sse')event(response,traffic);if(target==='/sniffbox/logs/sse')event(response,{ts:Date.now(),source:'clash',level:'info',msg:'\x1b[31mFixture core <img src=x onerror=alert(1)>\x1b[0m'});if(target==='/sniffbox/screen/sse')event(response,'Fixture live terminal');return;}
+  if(target.endsWith('/sse')){
+   response.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+   response.write(': fixture\n\n');
+   if(!streams.has(target))streams.set(target,new Set());
+   streams.get(target).add(response);response.on('close',()=>streams.get(target).delete(response));
+   if(target==='/sniffbox/traffic/sse')event(response,traffic);
+   if(target===logPath){
+    const epoch=url.searchParams.get('epoch'),after=Number(url.searchParams.get('since')||0);
+    logCursors.push({epoch,after});
+    event(response,{hello:true,epoch:logEpoch,after,gap:epoch===String(logEpoch)&&after<(logHistory[0]?.seq||1)-1});
+    for(const row of logHistory)if(row.seq>after)event(response,row);
+   }
+   if(target==='/sniffbox/screen/sse')event(response,'Fixture live terminal');
+   return;
+  }
   if(target==='/sniffbox/probe'){
    let raw='';for await(const chunk of request)raw+=chunk;const body=JSON.parse(raw);if(probe429>0){probe429--;return send(response,{},429);}probeActive++;probeMax=Math.max(probeMax,probeActive);let released=false;const release=()=>{if(!released){released=true;probeActive--;}};response.on('close',release);
    setTimeout(()=>{release();if(!response.destroyed)send(response,{ok:true,status:200,body:body.udp?'ip=192.0.2.3\nloc=US\nudp=1':body.url.includes('cdn-cgi/trace')?'ip=192.0.2.3\nloc=US':'{}',ms:5,setCookie:[]});},probeDelay);return;
@@ -38,13 +61,13 @@ const routes=['connections','traffic','distribution','logs','region'];
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin='http://127.0.0.1:'+server.address().port;
  const heartbeat=setInterval(()=>{for(const set of streams.values())for(const response of set)response.write(': heartbeat\n\n');},5000);
  let browser;try{
-  browser=await chromium.launch({channel:'chrome',headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce',acceptDownloads:true}),page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
+  browser=await chromium.launch({channel:'chrome',headless:true,...(process.platform==='win32'?{args:['--disable-gpu']}:{})});const context=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce',acceptDownloads:true}),page=await context.newPage();page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
   await context.route('**/*',route=>route.request().url().startsWith(origin+'/')?route.continue():route.abort());
   await page.addInitScript(()=>{if(!localStorage.getItem('PaoPaoGateWay'))localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]}));localStorage.setItem('conns_cols',JSON.stringify({future:true}));localStorage.setItem('traffic_cols',JSON.stringify({future:true}));});
   const writes=()=>requests.filter(row=>row.method!=='GET'),probes=()=>requests.filter(row=>row.target==='/sniffbox/probe');
   async function go(key){if(!page.url().startsWith(origin))await page.goto(origin+'/ui/#/'+key);else{if(await page.locator('#shell-menu').isVisible())await page.locator('#shell-menu').click();await page.locator('#shell-nav [data-route='+key+']').click();}await page.locator(baseline?'#runtime-panel h1':'#'+key+'-page h1').first().waitFor();}
   async function hidden(value){await page.evaluate(value=>{Object.defineProperty(document,'hidden',{configurable:true,get:()=>value});document.dispatchEvent(new Event('visibilitychange'));},value);await page.waitForTimeout(150);}
-  async function capture(key,suffix){await page.screenshot({path:path.join(evidence,key+'-'+suffix+'.png')});}
+  async function capture(key,suffix){await page.screenshot({path:path.join(evidence,key+'-'+suffix+'.png'),timeout:45000});}
   if(baseline){for(const key of routes){await go(key);await page.waitForTimeout(300);await capture(key,'baseline-desktop');await page.setViewportSize({width:320,height:900});await capture(key,'baseline-mobile-320');await page.setViewportSize({width:1440,height:1000});}console.log('Saved five-page unchanged baseline');return;}
   await go('connections');const conn=page.locator('#connections-page');await page.waitForFunction(()=>document.querySelector('#connections-page tbody tr')?.textContent.includes('host-'));assert.equal(await conn.locator('tbody tr').count(),100);assert.equal(writes().length,0);
   await conn.getByLabel('搜索连接',{exact:true}).fill('host-249.');assert.equal(await conn.locator('tbody tr').count(),1);await page.waitForTimeout(1200);assert.equal(await conn.getByLabel('搜索连接',{exact:true}).inputValue(),'host-249.');await conn.getByLabel('搜索连接',{exact:true}).fill('');
@@ -65,8 +88,41 @@ const routes=['connections','traffic','distribution','logs','region'];
   await flow.getByLabel('搜索流量记录',{exact:true}).fill('');await flow.getByRole('button',{name:'暂停刷新',exact:true}).click();await page.waitForTimeout(150);assert.equal(streams.get('/sniffbox/traffic/sse').size,0);await flow.getByRole('button',{name:'恢复刷新',exact:true}).click();await page.waitForTimeout(150);assert.equal(streams.get('/sniffbox/traffic/sse').size,1);checks.push('traffic: aggregation, filters, JSON export, stream pause/resume');
   await go('distribution');const distribution=page.locator('#distribution-page');await distribution.getByText('Fixture Node',{exact:true}).waitFor();assert.equal(streams.get('/sniffbox/traffic/sse').size,1);assert.equal(await distribution.locator('.monitor-ranking-grid').count(),2);assert.equal(await distribution.locator('.monitor-ranking').count(),6);assert.equal(await distribution.locator('.monitor-ranking-grid>.monitor-card:visible').count(),2);for(const metric of ['duration','conns','total']){await distribution.getByLabel('排行视图',{exact:true}).selectOption(metric);assert.equal(await distribution.locator('.monitor-ranking-grid>.monitor-card:visible').count(),2);assert.equal(await distribution.locator('.monitor-ranking-grid>.monitor-card:visible h3').count(),2);}await distribution.getByRole('button',{name:'清空节点统计',exact:true}).click();await distribution.getByRole('button',{name:'取消',exact:true}).click();assert.equal(requests.filter(row=>row.target==='/sniffbox/nodes/clear').length,0);await distribution.getByRole('button',{name:'清空节点统计',exact:true}).click();await distribution.getByRole('button',{name:'确认',exact:true}).click();await page.waitForTimeout(200);assert.equal(requests.filter(row=>row.target==='/sniffbox/nodes/clear').length,1);checks.push('distribution: six rankings, node snapshot, explicit confirmed reset, one stream');
   await go('logs');const logs=page.locator('#logs-page');await logs.getByText(/Fixture core <img/).waitFor();assert.equal(await logs.locator('img').count(),0);await page.setViewportSize({width:1120,height:1000});const toolbarBounds=await logs.locator('.monitor-log-toolbar').first().evaluate(node=>[...node.children].map(child=>child.getBoundingClientRect().top));assert.ok(Math.abs(toolbarBounds[0]-toolbarBounds[1])<6,'log search and controls share one desktop row');await page.setViewportSize({width:1440,height:1000});await logs.getByLabel('日志视图',{exact:true}).selectOption('both');await logs.getByText('Green terminal',{exact:true}).waitFor();await logs.getByText('Fixture live terminal',{exact:true}).waitFor();await logs.getByRole('button',{name:'纵向分屏',exact:true}).click();
-  const core=logs.locator('.monitor-log-pane').first();await core.getByRole('button',{name:'暂停',exact:true}).click();broadcast('/sniffbox/logs/sse',{ts:Date.now(),source:'sniffbox',level:'warn',msg:'Paused fixture line'});await page.waitForTimeout(300);assert.equal(await core.getByText('Paused fixture line',{exact:true}).count(),0);await core.getByRole('button',{name:'恢复',exact:true}).click();await core.getByText('Paused fixture line',{exact:true}).waitFor();await logs.getByLabel('搜索核心日志',{exact:true}).fill('Paused fixture');assert.equal(await core.locator('.monitor-log-line').count(),1);await logs.getByLabel('搜索核心日志',{exact:true}).fill('');
-  for(let i=0;i<2100;i++)broadcast('/sniffbox/logs/sse',{ts:Date.now(),source:'clash',level:'info',msg:'Bulk '+i});await page.waitForTimeout(500);assert.equal(await core.locator('.monitor-log-line').count(),400);await core.getByLabel('核心日志显示条数',{exact:true}).selectOption('2000');assert.equal(await core.locator('.monitor-log-line').count(),2000);const logDownload=page.waitForEvent('download');await core.getByRole('button',{name:'核心日志操作',exact:true}).click();await core.getByRole('menuitem',{name:'导出核心日志',exact:true}).click();assert.match(await fs.readFile(await (await logDownload).path(),'utf8'),/Bulk 2099/);checks.push('logs: safe ANSI, two streams, pause buffer, independent filters, 2000-line bound');
+  const core=logs.locator('.monitor-log-pane').first();await core.getByRole('button',{name:'暂停',exact:true}).click();publishLog({source:'sniffbox',level:'warn',msg:'Paused fixture line'});await page.waitForTimeout(300);assert.equal(await core.getByText('Paused fixture line',{exact:true}).count(),0);await core.getByRole('button',{name:'恢复',exact:true}).click();await core.getByText('Paused fixture line',{exact:true}).waitFor();await logs.getByLabel('搜索核心日志',{exact:true}).fill('Paused fixture');assert.equal(await core.locator('.monitor-log-line').count(),1);await logs.getByLabel('搜索核心日志',{exact:true}).fill('');
+
+  const logBody=core.getByLabel('核心日志内容',{exact:true});
+  await logBody.evaluate(body=>{window.fixtureLogLine=body.querySelector('.monitor-log-line');});
+  for(let i=0;i<60;i++)publishLog({msg:'History '+i});
+  await core.getByText('History 59',{exact:true}).waitFor();
+  assert.ok(await logBody.evaluate(body=>window.fixtureLogLine===body.querySelector('.monitor-log-line')),'live append retains existing DOM');
+  const selected=await logBody.evaluate(body=>{
+   body.scrollTop=0;
+   const text=body.querySelector('.monitor-log-line span:last-child'),range=new Range();
+   range.selectNodeContents(text);
+   const selection=window.getSelection();selection.removeAllRanges();selection.addRange(range);
+   return selection.toString();
+  });
+  const previous=logSequence;
+  for(const response of streams.get(logPath))response.end();
+  const offline=publishLog({msg:'During reconnect'});
+  await core.getByRole('button',{name:'1 条新日志，回到底部'}).waitFor();
+  assert.deepEqual(logCursors.at(-1),{epoch:String(logEpoch),after:previous});
+  assert.equal(await core.getByText('During reconnect',{exact:true}).count(),0);
+  assert.equal(await page.evaluate(()=>window.getSelection().toString()),selected);
+  broadcast(logPath,offline);
+  await core.getByRole('button',{name:/回到底部/}).click();
+  await core.getByText('During reconnect',{exact:true}).waitFor();
+  assert.equal(await core.getByText('During reconnect',{exact:true}).count(),1);
+  assert.ok(await logBody.evaluate(body=>window.fixtureLogLine===body.querySelector('.monitor-log-line')),'resume appends to the same DOM');
+
+  for(const response of streams.get(logPath))response.end();
+  publishLog({msg:'Lost before reconnect'});
+  logHistory.length=0;
+  publishLog({msg:'Resumed after overflow'});
+  await logs.getByText('部分日志已超出缓存范围。已补读仍保留的记录。',{exact:true}).waitFor();
+  await core.getByText('Resumed after overflow',{exact:true}).waitFor();
+  assert.equal(await core.getByText('Lost before reconnect',{exact:true}).count(),0);
+  for(let i=0;i<2100;i++)publishLog({msg:'Bulk '+i});await core.getByText('Bulk 2099',{exact:true}).waitFor();assert.equal(await core.locator('.monitor-log-line').count(),400);await core.getByLabel('核心日志显示条数',{exact:true}).selectOption('2000');assert.equal(await core.locator('.monitor-log-line').count(),2000);const logDownload=page.waitForEvent('download');await core.getByRole('button',{name:'核心日志操作',exact:true}).click();await core.getByRole('menuitem',{name:'导出核心日志',exact:true}).click();assert.match(await fs.readFile(await (await logDownload).path(),'utf8'),/Bulk 2099/);checks.push('logs: safe ANSI, two streams, pause and filters, reconnect and overflow, preserved selection and DOM, 2000-line bound');
   await hidden(true);assert.equal(streams.get('/sniffbox/logs/sse').size,0);assert.equal(streams.get('/sniffbox/screen/sse').size,0);await hidden(false);await page.waitForTimeout(150);
   await go('region');const region=page.locator('#region-page');assert.equal(await region.locator('[data-test]').count(),59);assert.equal(await region.locator('.monitor-progress').textContent(),'共 59 项 · 尚未检测');assert.equal(await region.locator('[data-state=waiting] .monitor-region-label').first().textContent(),'');assert.equal(await region.locator('.monitor-region-section[open]').count(),3);const foldedCategory=region.locator('.monitor-region-section').nth(3),foldedName=await foldedCategory.locator('h3').first().textContent();await region.getByLabel('搜索检测项目',{exact:true}).fill(foldedName);assert.equal(await foldedCategory.evaluate(node=>node.open),true);await region.getByLabel('搜索检测项目',{exact:true}).fill('');assert.equal(await foldedCategory.evaluate(node=>node.open),false);assert.equal(probes().length,0);probe429=1;await region.getByRole('button',{name:'检测 出口 IP',exact:true}).click();await region.getByText('本轮检测已完成。',{exact:true}).waitFor();assert.equal(probes().length,2);assert.equal(await region.locator('[data-test=ip] .monitor-region-label').innerText(),'192.0.•••.•••');await region.getByRole('button',{name:'显示 IP',exact:true}).click();assert.equal(await region.locator('[data-test=ip] .monitor-region-label').innerText(),'192.0.2.3');
   probeDelay=40;await region.getByRole('button',{name:'检测全部',exact:true}).click();await region.getByText('本轮检测已完成。',{exact:true}).waitFor();assert.ok(probeMax<=5);assert.equal(await region.locator('[data-state=running]').count(),0);assert.equal(await region.locator('[data-state=waiting]').count(),0);

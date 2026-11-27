@@ -27,7 +27,9 @@ async fn send_representation<W: AsyncWrite + Unpin>(
     head_only: bool, keep_alive: bool,
 ) -> io::Result<()> {
     let mut head = format!("HTTP/1.1 {status} {reason}\r\n");
-    head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    if status != 304 {
+        head.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    }
     head.push_str(if keep_alive {
         "Connection: keep-alive\r\n"
     } else {
@@ -48,19 +50,10 @@ async fn send_representation<W: AsyncWrite + Unpin>(
 
 pub async fn not_modified<W: AsyncWrite + Unpin>(
     w: &mut W,
-    etag: &str,
+    headers: &[(&str, &str)],
     keep_alive: bool,
 ) -> io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 304 Not Modified\r\nETag: {etag}\r\nCache-Control: no-cache\r\n{}{SECURITY_HEADERS}\r\n",
-        if keep_alive {
-            "Connection: keep-alive\r\n"
-        } else {
-            "Connection: close\r\n"
-        }
-    );
-    w.write_all(head.as_bytes()).await?;
-    w.flush().await
+    send_representation(w, 304, "Not Modified", headers, b"", true, keep_alive).await
 }
 
 pub async fn redirect<W: AsyncWrite + Unpin>(
@@ -133,10 +126,15 @@ pub async fn file<W: AsyncWrite + Unpin>(
 }
 
 pub async fn encoded_file<W: AsyncWrite + Unpin>(
-    w: &mut W, content_type: &str, cache_control: &str, body: &[u8],
-    gzip: bool, head_only: bool, keep_alive: bool,
+    w: &mut W,
+    headers: &[(&str, &str)],
+    body: &[u8],
+    gzip: bool,
+    head_only: bool,
+    keep_alive: bool,
 ) -> io::Result<()> {
-    let mut headers = vec![("Content-Type", content_type), ("Cache-Control", cache_control), ("Vary", "Accept-Encoding")];
+    let mut headers = headers.to_vec();
+    headers.push(("Vary", "Accept-Encoding"));
     if gzip { headers.push(("Content-Encoding", "gzip")); }
     send_representation(w, 200, "OK", &headers, body, head_only, keep_alive).await
 }
@@ -149,7 +147,16 @@ mod tests {
     async fn encoded_get_and_head_have_matching_representation_metadata() {
         for head_only in [false, true] {
             let mut out = Vec::new();
-            encoded_file(&mut out, "text/css", "no-cache", b"fixture-gzip", true, head_only, true).await.unwrap();
+            encoded_file(
+                &mut out,
+                &[("Content-Type", "text/css"), ("Cache-Control", "no-cache")],
+                b"fixture-gzip",
+                true,
+                head_only,
+                true,
+            )
+            .await
+            .unwrap();
             let wire = String::from_utf8(out).unwrap();
             assert!(wire.contains("Content-Length: 12\r\n"));
             assert!(wire.contains("Content-Encoding: gzip\r\n"));
@@ -171,7 +178,13 @@ mod tests {
             assert!(wire.ends_with("\r\n\r\nfixture"));
         }
         let mut out = Vec::new();
-        not_modified(&mut out, "fixture", true).await.unwrap();
+        not_modified(
+            &mut out,
+            &[("ETag", "fixture"), ("Cache-Control", "no-cache")],
+            true,
+        )
+        .await
+        .unwrap();
         assert!(String::from_utf8(out).unwrap().contains(SECURITY_HEADERS));
     }
 

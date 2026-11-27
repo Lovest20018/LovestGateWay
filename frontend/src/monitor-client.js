@@ -55,7 +55,8 @@ export function monitorClient({onUnauthorized=()=>{}, onPause=()=>{}, onResume=(
     return observe(async signal => {
       onState(failures?'reconnecting':'connecting');
       try {
-        await request(url,{signal,headerTimeoutOnly:true,headers:{Accept:'text/event-stream'},consume:async (response,requestSignal)=>{
+        const source=typeof url==='function'?url():url;
+        await request(source,{signal,headerTimeoutOnly:true,headers:{Accept:'text/event-stream'},consume:async (response,requestSignal)=>{
           if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw Error('实时数据响应无效，请重新连接。');
           const reader=response.body.getReader(), decoder=new TextDecoder(), events=eventDecoder(value=>{if(!signal.aborted&&!disposed&&!unauthorized)onData(value);});
           let idle;

@@ -1,6 +1,6 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
-use sb_web::{LogEvent, LogSource, LogTx};
+use sb_web::{LogHub, LogSource, LogTx};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -333,16 +333,18 @@ struct BroadcastLayer {
 
 impl<S: Subscriber> Layer<S> for BroadcastLayer {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        if self.tx.receiver_count() == 0 {
+        let level = event.metadata().level();
+        if matches!(*level, Level::DEBUG | Level::TRACE) && self.tx.receiver_count() == 0 {
             return;
         }
         let mut msg = String::new();
         let mut v = MsgVisitor { out: &mut msg };
         event.record(&mut v);
-        let level = event.metadata().level().as_str().to_ascii_lowercase();
-        let _ = self
-            .tx
-            .send(Arc::new(LogEvent::new(LogSource::Sniffbox, level, msg)));
+        self.tx.emit(
+            LogSource::Sniffbox,
+            level.as_str().to_ascii_lowercase(),
+            msg,
+        );
     }
 }
 
@@ -389,7 +391,7 @@ pub fn init(level: &str, timestamp: bool) {
             !(meta.target().starts_with("sniffbox::smart_speed") && *meta.level() == Level::DEBUG)
         }));
 
-    let (tx, _rx0) = tokio::sync::broadcast::channel::<Arc<LogEvent>>(1024);
+    let tx = LogHub::new(1024, 2000, 4 * 1024 * 1024);
     let _ = LOG_TX.set(tx.clone());
     let bcast_layer = BroadcastLayer { tx };
 
@@ -552,11 +554,21 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_preserves_message_ansi_color_codes() {
-        use std::sync::Arc;
-        use tokio::sync::broadcast;
+    fn informational_messages_are_captured_before_the_browser_connects() {
+        let hub = LogHub::new(8, 8, 4096);
+        let layer = BroadcastLayer { tx: hub.clone() };
+        let _guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
+        tracing::info!("startup complete");
+        tracing::debug!("verbose trace");
+        let events = hub.replay(0).events;
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].msg, "startup complete");
+    }
 
-        let (tx, mut rx) = broadcast::channel::<Arc<sb_web::LogEvent>>(8);
+    #[test]
+    fn broadcast_preserves_message_ansi_color_codes() {
+        let tx = LogHub::new(8, 8, 4096);
+        let mut rx = tx.subscribe();
         let bcast_layer = BroadcastLayer { tx };
         let _guard =
             tracing::subscriber::set_default(tracing_subscriber::registry().with(bcast_layer));

@@ -27,6 +27,7 @@ impl AggKey {
     }
 }
 
+#[derive(Clone)]
 struct AggRow {
     first_ms: u64,
     last_ms: u64,
@@ -56,8 +57,14 @@ impl AggRow {
     }
 }
 
+#[derive(Default)]
+struct AggRows {
+    values: HashMap<AggKey, AggRow>,
+    revision: u64,
+}
+
 pub struct AggTable {
-    rows: Mutex<HashMap<AggKey, AggRow>>,
+    rows: Mutex<AggRows>,
     window: Duration,
     json: ArcSwap<String>,
 }
@@ -65,13 +72,13 @@ pub struct AggTable {
 impl AggTable {
     pub fn new(window: Duration) -> Self {
         Self {
-            rows: Mutex::new(HashMap::new()),
+            rows: Mutex::new(AggRows::default()),
             window,
             json: ArcSwap::from_pointee("[]".to_string()),
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<AggKey, AggRow>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, AggRows> {
         self.rows.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -89,8 +96,9 @@ impl AggTable {
             rec.inbound.as_str()
         };
 
+        let head = rec.head_hex();
         let mut rows = self.lock();
-        let row = rows.entry(key).or_insert_with(|| AggRow::new(now));
+        let row = rows.values.entry(key).or_insert_with(|| AggRow::new(now));
         row.up += fu;
         row.down += fd;
         row.last_ms = now;
@@ -100,20 +108,36 @@ impl AggTable {
         row.dports.insert(rec.dst.1);
         row.sniffs.insert(sniff);
         row.inbounds.insert(inbound);
-        if let Some(h) = rec.head_hex() {
+        if let Some(h) = head {
             row.head = Some(h);
         }
     }
 
     pub fn rebuild(&self, max_rows: usize) {
+        let (revision, snapshot) = self.snapshot_rows(max_rows);
+        self.publish(revision, Arc::new(serialize(&snapshot)));
+    }
+
+    fn snapshot_rows(&self, max_rows: usize) -> (u64, HashMap<AggKey, AggRow>) {
         let mut rows = self.lock();
-        prune_rows(&mut rows, self.window, max_rows);
-        self.json.store(Arc::new(serialize(&rows)));
+        prune_rows(&mut rows.values, self.window, max_rows);
+        rows.revision += 1;
+        (rows.revision, rows.values.clone())
+    }
+
+    fn publish(&self, revision: u64, snapshot: Arc<String>) {
+        let rows = self.lock();
+        if rows.revision != revision {
+            return;
+        }
+        let previous = self.json.swap(snapshot);
+        drop(rows);
+        drop(previous);
     }
 
     pub fn prune(&self, max_rows: usize) {
         let mut rows = self.lock();
-        prune_rows(&mut rows, self.window, max_rows);
+        prune_rows(&mut rows.values, self.window, max_rows);
     }
 
     pub fn snapshot_json(&self) -> Arc<String> {
@@ -122,21 +146,25 @@ impl AggTable {
 
     pub fn clear(&self) {
         let mut rows = self.lock();
-        rows.clear();
-        self.json.store(Arc::new("[]".to_string()));
+        rows.revision += 1;
+        let removed = std::mem::take(&mut rows.values);
+        let previous = self.json.swap(Arc::new("[]".to_string()));
+        drop(rows);
+        drop(removed);
+        drop(previous);
     }
 
     pub fn len(&self) -> usize {
-        self.lock().len()
+        self.lock().values.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.lock().is_empty()
+        self.lock().values.is_empty()
     }
 
     #[cfg(test)]
     fn age_rows_ms(&self, ms: u64) {
-        for r in self.lock().values_mut() {
+        for r in self.lock().values.values_mut() {
             r.last_ms = r.last_ms.saturating_sub(ms);
         }
     }
@@ -225,6 +253,23 @@ mod tests {
 
     fn parse(t: &AggTable) -> Vec<serde_json::Value> {
         serde_json::from_str(&t.snapshot_json()).unwrap()
+    }
+
+    #[test]
+    fn an_older_rebuild_cannot_replace_a_newer_snapshot_or_undo_clear() {
+        let table = AggTable::new(Duration::from_secs(60));
+        let record = rec("192.0.2.1", 443, Some("fixture.test"));
+        table.fold(&record, 1, 0);
+        let (revision, snapshot) = table.snapshot_rows(10);
+        table.fold(&record, 2, 0);
+        table.rebuild(10);
+        table.publish(revision, Arc::new(serialize(&snapshot)));
+        assert_eq!(parse(&table)[0]["up"], 3);
+
+        let (revision, snapshot) = table.snapshot_rows(10);
+        table.clear();
+        table.publish(revision, Arc::new(serialize(&snapshot)));
+        assert!(parse(&table).is_empty());
     }
 
     fn serialize_via_value(rows: &HashMap<AggKey, AggRow>) -> String {

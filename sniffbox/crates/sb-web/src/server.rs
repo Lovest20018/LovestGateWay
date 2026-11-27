@@ -483,31 +483,83 @@ async fn serve_static(
     let Some(file_path) = static_files::resolve_prefixed(webroot, req.path_only(), prefix) else {
         return respond::forbidden(stream, "bad path\n", ka).await;
     };
-    match tokio::fs::read(&file_path).await {
-        Ok(bytes) => {
-            let ct = static_files::content_type(&file_path);
-            let cc = static_files::cache_control(&file_path);
-            let accepts = req.headers.iter().filter(|(name, _)| name.eq_ignore_ascii_case("accept-encoding"))
-                .map(|(_, value)| String::from_utf8_lossy(value)).collect::<Vec<_>>();
-            let accepted = accepts.join(",");
-            let accepted = if accepts.is_empty() { None } else { Some(accepted.as_str()) };
-            let compressed = if prefix == "/ui" && static_files::prefer_gzip(accepted, true) == Some(true) && matches!(file_path.extension().and_then(|v| v.to_str()), Some("html" | "js" | "css")) {
-                let mut name = file_path.as_os_str().to_owned(); name.push(".gz");
-                tokio::fs::read(Path::new(&name)).await.ok()
-            } else { None };
-            match static_files::prefer_gzip(accepted, compressed.is_some()) {
-                Some(gzip) => respond::encoded_file(stream, ct, cc, if gzip { compressed.as_deref().unwrap() } else { &bytes }, gzip, req.method == "HEAD", ka).await,
-                None => respond::send(stream, 406, "Not Acceptable", &[("Vary", "Accept-Encoding")], b"", ka).await,
-            }
-        }
-        Err(_) => respond::not_found(stream, ka).await,
+    if !tokio::fs::metadata(&file_path)
+        .await
+        .is_ok_and(|entry| entry.is_file())
+    {
+        return respond::not_found(stream, ka).await;
     }
+
+    let accepts = req
+        .headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("accept-encoding"))
+        .map(|(_, value)| String::from_utf8_lossy(value))
+        .collect::<Vec<_>>();
+    let accepted = accepts.join(",");
+    let accepted = (!accepts.is_empty()).then_some(accepted.as_str());
+    let compressed = if prefix == "/ui"
+        && static_files::prefer_gzip(accepted, true) == Some(true)
+        && matches!(
+            file_path.extension().and_then(|v| v.to_str()),
+            Some("html" | "js" | "css")
+        ) {
+        let mut name = file_path.as_os_str().to_owned();
+        name.push(".gz");
+        tokio::fs::read(Path::new(&name)).await.ok()
+    } else {
+        None
+    };
+    let gzip = compressed.is_some();
+    if static_files::prefer_gzip(accepted, gzip).is_none() {
+        return respond::send(
+            stream,
+            406,
+            "Not Acceptable",
+            &[("Vary", "Accept-Encoding")],
+            b"",
+            ka,
+        )
+        .await;
+    }
+    let body = match compressed {
+        Some(bytes) => bytes,
+        None => match tokio::fs::read(&file_path).await {
+            Ok(bytes) => bytes,
+            Err(_) => return respond::not_found(stream, ka).await,
+        },
+    };
+    let cache = static_files::cache_control(&file_path);
+    let etag = static_files::etag(&body, gzip);
+    if matches!(req.method.as_str(), "GET" | "HEAD")
+        && req.headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("if-none-match")
+                && static_files::if_none_match_hits(value, &etag)
+        })
+    {
+        return respond::not_modified(
+            stream,
+            &[
+                ("ETag", &etag),
+                ("Cache-Control", cache),
+                ("Vary", "Accept-Encoding"),
+            ],
+            ka,
+        )
+        .await;
+    }
+    let headers = [
+        ("Content-Type", static_files::content_type(&file_path)),
+        ("Cache-Control", cache),
+        ("ETag", &etag),
+    ];
+    respond::encoded_file(stream, &headers, &body, gzip, req.method == "HEAD", ka).await
 }
 
 #[cfg(test)]
 mod session_http_tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     fn config() -> Arc<ServerConfig> {
         Arc::new(ServerConfig {
             listen: "127.0.0.1:0".parse().unwrap(), token: crate::auth::token_handle(crate::auth::derive_secret("synthetic-password")),
@@ -536,6 +588,113 @@ mod session_http_tests {
     fn request(method: &str, path: &str, extra: &str, body: &str) -> String {
         format!("{method} {path} HTTP/1.1\r\nHost: gateway.test\r\nConnection: close\r\nContent-Length: {}\r\n{extra}\r\n{body}", body.len())
     }
+
+    async fn read_sse_event(reader: &mut BufReader<TcpStream>) -> (Option<u64>, serde_json::Value) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            let mut id = None;
+            let mut data = None;
+            loop {
+                let mut line = String::new();
+                assert_ne!(
+                    reader.read_line(&mut line).await.unwrap(),
+                    0,
+                    "unexpected SSE EOF"
+                );
+                if let Some(value) = line.strip_prefix("id: ") {
+                    id = Some(value.trim_end().parse().unwrap());
+                } else if let Some(value) = line.strip_prefix("data: ") {
+                    data = Some(serde_json::from_str(value).unwrap());
+                } else if line.trim_end().is_empty()
+                    && let Some(data) = data
+                {
+                    return (id, data);
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for an SSE event")
+    }
+
+    #[tokio::test]
+    async fn logs_sse_authenticates_and_replays_retained_sequences_with_gap_and_epoch() {
+        use crate::events::{LogHub, LogSource};
+
+        let hub = LogHub::new(8, 2, 4096);
+        let mut cfg = config();
+        Arc::get_mut(&mut cfg).unwrap().log_tx = Some(hub.clone());
+        let raw = cfg
+            .sessions
+            .issue(cfg.token.load().as_str(), None, std::time::Instant::now())
+            .unwrap();
+        let cookie = format!("Cookie: ppgw_session={raw}\r\n");
+        let epoch = hub.epoch();
+        hub.emit(LogSource::Sniffbox, "info", "evicted");
+        hub.emit(LogSource::Clash, "info", "retained one");
+        hub.emit(LogSource::Sniffbox, "warn", "retained two");
+        let denied = exchange(
+            cfg.clone(),
+            request("GET", "/sniffbox/logs/sse?since=0", "", ""),
+            true,
+        )
+        .await;
+        assert!(denied.starts_with("HTTP/1.1 401"));
+
+        for (query, expected, gap) in [
+            (format!("?since=0&epoch={epoch}"), vec![2, 3], true),
+            (format!("?since=2&epoch={epoch}"), vec![3], false),
+            (format!("?since=9&epoch={}", epoch - 1), vec![2, 3], false),
+            (String::new(), vec![], false),
+        ] {
+            let last_before = hub.replay(0).events.last().unwrap().seq;
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (stop, shutdown) = watch::channel(false);
+            let served = cfg.clone();
+            let server = tokio::spawn(async move {
+                let (stream, _) = listener.accept().await.unwrap();
+                handle_conn(stream, "192.0.2.10:1234".parse().unwrap(), served, shutdown)
+                    .await
+                    .unwrap();
+            });
+            let mut reader = BufReader::new(TcpStream::connect(address).await.unwrap());
+            reader
+                .get_mut()
+                .write_all(
+                    request("GET", &format!("/sniffbox/logs/sse{query}"), &cookie, "").as_bytes(),
+                )
+                .await
+                .unwrap();
+            let mut headers = String::new();
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while !headers.ends_with("\r\n\r\n") {
+                    assert_ne!(reader.read_line(&mut headers).await.unwrap(), 0);
+                }
+            })
+            .await
+            .unwrap();
+            assert!(headers.starts_with("HTTP/1.1 200"));
+            if !query.is_empty() {
+                let (id, hello) = read_sse_event(&mut reader).await;
+                assert_eq!(id, None);
+                assert_eq!(hello["hello"], true);
+                assert_eq!(hello["epoch"], epoch);
+                assert_eq!(hello["gap"], gap);
+                for sequence in expected {
+                    let (id, row) = read_sse_event(&mut reader).await;
+                    assert_eq!(id, Some(sequence));
+                    assert_eq!(row["seq"], sequence);
+                }
+            } else {
+                hub.emit(LogSource::Sniffbox, "info", "new live log");
+                let (id, row) = read_sse_event(&mut reader).await;
+                assert_eq!(id, Some(last_before + 1));
+                assert_eq!(row["msg"], "new live log");
+            }
+            stop.send(true).unwrap();
+            server.await.unwrap();
+        }
+    }
+
     struct MutationCounter(std::sync::atomic::AtomicUsize);
     impl crate::traffic::TrafficSource for MutationCounter {
         fn snapshot_json(&self) -> Arc<String> { Arc::new("[]".to_string()) }
@@ -663,7 +822,20 @@ mod session_http_tests {
         assert!(logout.contains("Max-Age=0"));
         let denied = exchange(cfg.clone(), request("GET", "/configs", &header, ""), true).await;
         assert!(denied.starts_with("HTTP/1.1 401"));
-        for _ in 0..9 { let _ = exchange(cfg.clone(), request("POST", "/sniffbox/auth/login", "Origin: http://gateway.test\r\n", "{}"), true).await; }
+        for _ in 0..10 {
+            let failure = exchange(
+                cfg.clone(),
+                request(
+                    "POST",
+                    "/sniffbox/auth/login",
+                    "Origin: http://gateway.test\r\n",
+                    "{}",
+                ),
+                true,
+            )
+            .await;
+            assert!(failure.starts_with("HTTP/1.1 401"));
+        }
         let limited = exchange(cfg, request("POST", "/sniffbox/auth/login", "Origin: http://gateway.test\r\n", &payload), true).await;
         assert!(limited.starts_with("HTTP/1.1 429")); assert!(limited.contains("Retry-After: 60"));
     }
@@ -718,35 +890,91 @@ mod session_http_tests {
 mod static_response_tests {
     use super::*;
 
-    async fn exchange(method: &str, encoding: Option<&str>, with_gzip: bool) -> Vec<u8> {
+    async fn exchange(
+        method: &str,
+        encoding: Option<&str>,
+        with_gzip: bool,
+        etag: Option<&str>,
+    ) -> Vec<u8> {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("app.js"), b"fixture-raw").unwrap();
         if with_gzip { std::fs::write(root.path().join("app.js.gz"), b"fixture-gzip").unwrap(); }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let req = http::ReqHead { method: method.into(), path: "/ui/app.js".into(), http11: true,
-            headers: encoding.map(|v| vec![("Accept-Encoding".into(), v.as_bytes().to_vec())]).unwrap_or_default() };
-        let serve = async { let (mut stream, _) = listener.accept().await.unwrap(); serve_static(&mut stream, root.path(), &req, "/ui", false).await.unwrap(); };
-        let read = async { let mut stream = TcpStream::connect(address).await.unwrap(); let mut bytes = Vec::new(); stream.read_to_end(&mut bytes).await.unwrap(); bytes };
-        let (_, bytes) = tokio::join!(serve, read); bytes
+        let headers = [("Accept-Encoding", encoding), ("If-None-Match", etag)]
+            .into_iter()
+            .filter_map(|(key, value)| {
+                value.map(|value| (key.to_string(), value.as_bytes().to_vec()))
+            })
+            .collect();
+        let req = http::ReqHead {
+            method: method.into(),
+            path: "/ui/app.js".into(),
+            http11: true,
+            headers,
+        };
+        let serve = async {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            serve_static(&mut stream, root.path(), &req, "/ui", false)
+                .await
+                .unwrap();
+        };
+        let read = async {
+            let mut stream = TcpStream::connect(address).await.unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).await.unwrap();
+            bytes
+        };
+        let (_, bytes) = tokio::join!(serve, read);
+        bytes
+    }
+
+    #[tokio::test]
+    async fn static_http_revalidates_the_selected_representation() {
+        let compressed =
+            String::from_utf8(exchange("GET", Some("gzip"), true, None).await).unwrap();
+        let etag = compressed
+            .lines()
+            .find_map(|line| line.strip_prefix("ETag: "))
+            .unwrap();
+        for method in ["GET", "HEAD"] {
+            let conditional = format!("\"other\", W/{etag}");
+            let unchanged =
+                String::from_utf8(exchange(method, Some("gzip"), true, Some(&conditional)).await)
+                    .unwrap();
+            assert!(unchanged.starts_with("HTTP/1.1 304 "));
+            assert!(unchanged.contains(&format!("ETag: {etag}\r\n")));
+            assert!(unchanged.contains("Vary: Accept-Encoding\r\n"));
+            assert!(unchanged.contains("Cache-Control: public, max-age=31536000, immutable\r\n"));
+            assert!(!unchanged.contains("Content-Length:"));
+            assert!(unchanged.ends_with("\r\n\r\n"));
+        }
+        let raw = String::from_utf8(exchange("GET", None, true, Some(etag)).await).unwrap();
+        assert!(raw.starts_with("HTTP/1.1 200 "));
+        assert!(raw.ends_with("\r\n\r\nfixture-raw"));
+        assert_ne!(
+            raw.lines().find_map(|line| line.strip_prefix("ETag: ")),
+            Some(etag)
+        );
     }
 
     #[tokio::test]
     async fn static_http_negotiates_encoding_and_preserves_head_metadata() {
-        let wire = String::from_utf8(exchange("GET", Some("gzip"), true).await).unwrap();
+        let wire = String::from_utf8(exchange("GET", Some("gzip"), true, None).await).unwrap();
         assert!(wire.contains("Content-Encoding: gzip\r\n"));
         assert!(wire.contains("Content-Type: application/javascript; charset=utf-8\r\n"));
         assert!(wire.contains("Content-Length: 12\r\n"));
         assert!(wire.ends_with("\r\n\r\nfixture-gzip"));
-        let head = String::from_utf8(exchange("HEAD", Some("gzip"), true).await).unwrap();
+        let head = String::from_utf8(exchange("HEAD", Some("gzip"), true, None).await).unwrap();
         assert!(head.contains("Content-Length: 12\r\n")); assert!(head.ends_with("\r\n\r\n"));
         for encoding in [None, Some("gzip;q=0,*;q=1"), Some("gzip;q=0.5,identity;q=1")] {
-            let raw = String::from_utf8(exchange("GET", encoding, true).await).unwrap();
+            let raw = String::from_utf8(exchange("GET", encoding, true, None).await).unwrap();
             assert!(!raw.contains("Content-Encoding:")); assert!(raw.contains("Vary: Accept-Encoding\r\n"));
             assert!(raw.ends_with("\r\n\r\nfixture-raw"));
         }
         for (encoding, available) in [("*;q=0", true), ("gzip,identity;q=0", false)] {
-            let wire = String::from_utf8(exchange("GET", Some(encoding), available).await).unwrap();
+            let wire =
+                String::from_utf8(exchange("GET", Some(encoding), available, None).await).unwrap();
             assert!(wire.starts_with("HTTP/1.1 406 "));
         }
     }

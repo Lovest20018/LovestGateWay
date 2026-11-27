@@ -5,7 +5,7 @@
 ## 对比基准
 
 - 已合入官方基线：`4a5757e93a46669a54c9e5864d7b4a8d5484da76`。
-- 当日读取官方 `main`：`f45e3d9f523c3a09c2093cc95e31b5f42c8458dc`。本轮仅复用规则格式自动识别所需后端改动，没有整批替换上游面板、离线编辑器或 Cargo.lock。
+- 已评审的官方 `main` 为 `8a165c2b1dcbb3f21426791e155ec88e4c5e9a84`，对应发布 `20261120-8a165c2`。移植和排除项见[上游台账](../.github/upstream.json)。
 - 官方项目为 [kkkgo/PaoPaoGateWay](https://github.com/kkkgo/PaoPaoGateWay)。此处比较仓库代码，不代表已核验上游镜像每个 tag 的二进制。
 
 ## 当前主要差异
@@ -31,6 +31,17 @@ FakeIP、透明 TCP/UDP、嗅探、显式 HTTP/SOCKS5 代理、Mihomo 面板、�
 上游 [f45e3d9：fix ruleset auto](https://github.com/kkkgo/PaoPaoGateWay/commit/f45e3d9f523c3a09c2093cc95e31b5f42c8458dc) 补充 PPsub 自动格式识别：未知后缀先按 YAML 推测，`.list`/`.conf` 按文本处理；首次未识别的自动规则集在 Mihomo 启动后再检查，更新重试状态及输出摘要。
 
 复用范围包括 `ruleset.rs`、`ppsub/rules.rs`、`ppsub/state.rs`、`ppsub/retry.rs` 和对应命令入口，不包含无关的依赖更新或面板替换。
+
+## Web 性能与日志补读
+
+从[上游 Web 优化提交](https://github.com/kkkgo/PaoPaoGateWay/commit/8a165c2b1dcbb3f21426791e155ec88e4c5e9a84)选择性适配以下行为。
+
+- `/connections` 在阻塞任务中序列化，聚合统计在采集锁外序列化快照，清空后不会重新发布清空前的快照。
+- 前端静态资源按 `Accept-Encoding` 协商构建期 gzip，压缩文件和原文件各自使用内容 ETag。匹配 `If-None-Match` 时返回 `304`。
+- 管理登录保持 HttpOnly 会话。失败配额按单个 IPv4 或 IPv6 `/64` 统计，IPv4 映射地址归入对应 IPv4。成功请求不会增加失败次数。
+- 核心日志在网关进程中保留最近最多 2000 行或 4 MiB，`debug`、`trace` 只实时推送。日志页短暂断线后按进程纪元和序号补读，缓存淘汰时提示缺口。Mihomo 日志仍由既有空闲订阅控制，补读范围是网关已经收到并保留的记录。
+
+Cloudflared、上游认证实现、DoH/DoT 与 TLS 改动、上游 Web 制品和 ISO 脚本属于本次移植的排除项。依赖升级另行评审。
 
 ## 实际应用方式
 

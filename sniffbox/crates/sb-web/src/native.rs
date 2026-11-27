@@ -76,7 +76,7 @@ pub async fn handle(
             Ok(ka)
         }
         "/sniffbox/logs/sse" => {
-            logs_sse(stream, cfg, shutdown).await?;
+            logs_sse(stream, req, cfg, shutdown).await?;
             Ok(false)
         }
         "/sniffbox/screen" => {
@@ -322,9 +322,10 @@ async fn proxies_get(
     let etag = snapshot.etag();
     if req
         .header("if-none-match")
-        .is_some_and(|v| if_none_match_hits(v, etag))
+        .is_some_and(|v| crate::static_files::if_none_match_hits(v, etag))
     {
-        return respond::not_modified(stream, etag, ka).await;
+        return respond::not_modified(stream, &[("ETag", etag), ("Cache-Control", "no-cache")], ka)
+            .await;
     }
     respond::send(
         stream,
@@ -335,18 +336,6 @@ async fn proxies_get(
         ka,
     )
     .await
-}
-
-fn if_none_match_hits(header: &[u8], etag: &str) -> bool {
-    let Ok(header) = std::str::from_utf8(header) else {
-        return false;
-    };
-    let strip_weak = |t: &str| t.strip_prefix("W/").unwrap_or(t).to_string();
-    let current = strip_weak(etag);
-    header
-        .split(',')
-        .map(str::trim)
-        .any(|t| t == "*" || strip_weak(t) == current)
 }
 
 async fn proxy_detail_get(
@@ -781,29 +770,77 @@ async fn traffic_sse(
 
 async fn logs_sse(
     stream: &mut TcpStream,
+    req: &ReqHead,
     cfg: &ServerConfig,
     shutdown: &tokio::sync::watch::Receiver<bool>,
 ) -> io::Result<()> {
-    let Some(tx) = cfg.log_tx.as_ref() else {
+    let Some(hub) = cfg.log_tx.as_ref() else {
         return respond::not_found(stream, false).await;
     };
-    let mut rx = tx.subscribe();
+    // Subscribe before taking the replay snapshot. The cursor then deduplicates
+    // events delivered by both the snapshot and the receiver.
+    let mut rx = hub.subscribe();
     sse::write_headers(stream).await?;
+    let requested = query_param(&req.path, "since");
+    let mut last_sent = 0;
+    if let Some(since) = requested.as_ref() {
+        let epoch = query_param(&req.path, "epoch").and_then(|value| value.parse::<u64>().ok());
+        let same_epoch = epoch == Some(hub.epoch());
+        let after = if epoch.is_some() && !same_epoch {
+            0
+        } else {
+            since.parse().unwrap_or(0)
+        };
+        let replay = hub.replay(after);
+        let hello = serde_json::json!({
+            "hello": true,
+            "epoch": hub.epoch(),
+            "after": replay.after,
+            "gap": same_epoch && (replay.gap || replay.after != after),
+        });
+        sse::event(stream, &hello.to_string()).await?;
+        last_sent = send_log_replay(stream, replay).await?;
+    }
+
     let mut hb = tokio::time::interval(Duration::from_secs(15));
     hb.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
     let mut sd = shutdown.clone();
     loop {
         tokio::select! {
             _ = sd.changed() => { if *sd.borrow() { return Ok(()); } }
             r = rx.recv() => match r {
-                Ok(ev) => sse::event(stream, &ev.to_json()).await?,
-                Err(RecvError::Lagged(n)) => sse::comment(stream, &format!("lagged {n}")).await?,
+                Ok(event) if event.seq > last_sent => {
+                    sse::numbered_event(stream, event.seq, &event.to_json()).await?;
+                    last_sent = event.seq;
+                }
+                Ok(_) => {}
+                Err(RecvError::Lagged(count)) if requested.is_some() => {
+                    let replay = hub.replay(last_sent);
+                    if replay.gap {
+                        sse::event(stream, r#"{"gap":true}"#).await?;
+                    } else {
+                        sse::comment(stream, &format!("lagged {count}, replaying retained logs")).await?;
+                    }
+                    last_sent = send_log_replay(stream, replay).await?;
+                }
+                Err(RecvError::Lagged(count)) => sse::comment(stream, &format!("lagged {count}")).await?,
                 Err(RecvError::Closed) => return Ok(()),
             },
             _ = hb.tick() => sse::comment(stream, "ping").await?,
         }
     }
+}
+
+async fn send_log_replay(
+    stream: &mut TcpStream,
+    replay: crate::events::LogReplay,
+) -> io::Result<u64> {
+    let mut last = replay.after;
+    for event in replay.events {
+        sse::numbered_event(stream, event.seq, &event.to_json()).await?;
+        last = event.seq;
+    }
+    Ok(last)
 }
 
 async fn screen_snapshot(stream: &mut TcpStream, cfg: &ServerConfig, ka: bool) -> io::Result<()> {
@@ -866,7 +903,8 @@ async fn read_screen_async(dev: PathBuf) -> Option<String> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{if_none_match_hits, pct_decode, query_param};
+    use super::{pct_decode, query_param};
+    use crate::static_files::if_none_match_hits;
 
     fn etag_of(body: &[u8]) -> String {
         crate::ProxySnapshot::new(String::from_utf8(body.to_vec()).unwrap()).etag().to_owned()

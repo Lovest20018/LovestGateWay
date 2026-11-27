@@ -28,19 +28,30 @@
       "commit": "8a165c2b1dcbb3f21426791e155ec88e4c5e9a84",
       "status": "partially_ported",
       "ported": [
-        "活跃连接生命周期、手动和月度流量清零、增量结算"
+        "活跃连接生命周期、手动和月度流量清零、增量结算",
+        "sniffbox/crates/sb-web/src/connections.rs",
+        "sniffbox/crates/sb-stats/src/agg.rs",
+        "sniffbox/crates/sb-web/src/events.rs",
+        "sniffbox/crates/sb-web/src/clash_logs.rs",
+        "sniffbox/crates/sb-web/src/native.rs",
+        "sniffbox/crates/sb-web/src/sse.rs",
+        "sniffbox/crates/sniffbox/src/logging.rs",
+        "frontend/src/logs.js",
+        "sniffbox/crates/sb-web/src/server.rs",
+        "sniffbox/crates/sb-web/src/static_files.rs",
+        "sniffbox/crates/sb-web/src/respond.rs",
+        "sniffbox/crates/sb-web/src/session.rs"
       ],
       "not_adopted": [
         "上游面板与 ISO 构建改动",
         "Cloudflared 探测和自动更新",
-        "已有本地实现的登录限流、POST 限制、安全响应头和静态资源压缩"
+        "sniffbox/crates/sb-ppgw/src/dohdot.rs",
+        "sniffbox/crates/sb-ppgw/src/tls.rs",
+        "上游 Bearer 登录限流与运行期压缩；继续使用 HttpOnly 会话及构建期 gzip",
+        "已有本地实现的 POST 限制与安全响应头"
       ],
-      "deferred": [
-        "SSE 日志回放与断线补读",
-        "静态资源 ETag 和原生连接快照序列化优化",
-        "sniffbox/Cargo.lock"
-      ],
-      "reason": "按 Debian 网关的连接生命周期移植统计修复，并补齐实时图表和持久历史的清零边界。日志补读、缓存与依赖改动分别评审。"
+      "deferred": ["sniffbox/Cargo.lock"],
+      "reason": "已按 Debian 网关适配统计清零、连接快照、SSE 日志补读、静态资源缓存和登录来源归一。DoH/DoT 与 TLS 改动未纳入 Web 性能移植，依赖更新单独评审。"
     }
   ]
 }

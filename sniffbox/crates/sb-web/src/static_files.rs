@@ -1,6 +1,23 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
+use sha2::{Digest, Sha256};
 use std::path::{Component, Path, PathBuf};
+
+pub fn etag(bytes: &[u8], gzip: bool) -> String {
+    let variant = if gzip { "gzip" } else { "identity" };
+    format!("\"{variant}-{}\"", hex::encode(Sha256::digest(bytes)))
+}
+
+pub fn if_none_match_hits(header: &[u8], etag: &str) -> bool {
+    let Ok(header) = std::str::from_utf8(header) else {
+        return false;
+    };
+    let etag = etag.strip_prefix("W/").unwrap_or(etag);
+    header
+        .split(',')
+        .map(str::trim)
+        .any(|tag| tag == "*" || tag.strip_prefix("W/").unwrap_or(tag) == etag)
+}
 
 // None means that neither available representation is acceptable.
 pub fn prefer_gzip(accept: Option<&str>, available: bool) -> Option<bool> {

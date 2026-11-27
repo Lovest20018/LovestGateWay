@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {eventDecoder,rateWindow,csv} from '../src/monitor-model.js';
 import {connectionTracker} from '../src/connection-model.js';
 import {trafficSnapshot,aggregateTraffic,filterTraffic,distributions,apex,nodeSnapshot} from '../src/traffic-model.js';
-import {ansiSegments,stripAnsi,logBuffer,logEvent} from '../src/log-model.js';
+import {ansiSegments,stripAnsi,logBuffer,logEvent,logReplay} from '../src/log-model.js';
 import {regionTests,categories} from '../src/region-catalog.js';
 import {valueOf,predicate,runRegionTest,probePool} from '../src/region-engine.js';
 
@@ -28,6 +28,21 @@ test('traffic projection, filters, grouping and ranking preserve business meanin
 });
 test('logs retain a bounded paused buffer and ANSI is text with safe color metadata',()=>{
  const raw='\x1b[31m<img src=x onerror=alert(1)>\x1b[0m';assert.equal(stripAnsi(raw),'<img src=x onerror=alert(1)>');const parts=ansiSegments(raw);assert.ok(parts[0].fg);assert.equal(parts[0].text,stripAnsi(raw));assert.equal(logEvent('invalid'),null);const buffer=logBuffer(3);buffer.append([logEvent({msg:'one',level:'info'}),logEvent({msg:'two',level:'debug'})]);buffer.pause(true);for(let i=0;i<5;i++)buffer.append([logEvent({msg:'line'+i,level:'error'})]);assert.equal(buffer.rows.length,2);assert.equal(buffer.pending,3);buffer.pause(false);assert.equal(buffer.rows.length,3);assert.equal(buffer.filter({query:'line4',level:'error'}).length,1);buffer.clear();assert.equal(buffer.pending,0);
+});
+test('log replay resumes by epoch and sequence, deduplicates, and passes gap notices through',()=>{
+ const replay=logReplay();
+ assert.equal(replay.url(),'/sniffbox/logs/sse?since=0');
+ assert.equal(replay.accept({msg:'legacy'}).row.text,'legacy');
+ assert.deepEqual(replay.accept({hello:true,epoch:31,after:0}),{gap:false,restarted:false});
+ assert.equal(replay.accept({seq:2,msg:'two'}).row.text,'two');
+ assert.equal(replay.accept({seq:2,msg:'duplicate'}).row,undefined);
+ assert.equal(replay.url(),'/sniffbox/logs/sse?since=2&epoch=31');
+ assert.deepEqual(replay.accept({hello:true,epoch:31,after:2,gap:true}),{gap:true,restarted:false});
+ assert.equal(replay.accept({seq:5,msg:'five'}).row.text,'five');
+ assert.deepEqual(replay.accept({gap:true}),{gap:true});
+ assert.deepEqual(replay.accept({hello:true,epoch:32,after:0}),{gap:false,restarted:true});
+ assert.equal(replay.accept({seq:1,msg:'after restart'}).row.text,'after restart');
+ assert.equal(replay.url(),'/sniffbox/logs/sse?since=1&epoch=32');
 });
 test('59 detection definitions execute without unknown DSL expressions and retain dependencies',async()=>{
  assert.equal(regionTests.length,59);assert.equal(new Set(regionTests.map(test=>test.id)).size,59);assert.equal(categories.length,8);

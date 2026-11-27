@@ -16,7 +16,26 @@ pub async fn write_headers<W: AsyncWrite + Unpin>(w: &mut W) -> io::Result<()> {
 }
 
 pub async fn event<W: AsyncWrite + Unpin>(w: &mut W, data: &str) -> io::Result<()> {
-    let mut buf = Vec::with_capacity(data.len() + 16);
+    write_event(w, None, data).await
+}
+
+pub async fn numbered_event<W: AsyncWrite + Unpin>(
+    w: &mut W,
+    id: u64,
+    data: &str,
+) -> io::Result<()> {
+    write_event(w, Some(id), data).await
+}
+
+async fn write_event<W: AsyncWrite + Unpin>(
+    w: &mut W,
+    id: Option<u64>,
+    data: &str,
+) -> io::Result<()> {
+    let mut buf = Vec::with_capacity(data.len() + 32);
+    if let Some(id) = id {
+        buf.extend_from_slice(format!("id: {id}\n").as_bytes());
+    }
 
     let normalized = data.replace("\r\n", "\n");
     for line in normalized.split(['\n', '\r']) {
