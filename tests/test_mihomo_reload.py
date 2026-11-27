@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import PropertyMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'integration'))
 from mihomo_reload import GROUP_TYPES, observed_rules, plan, policy_candidate, rule_rows, reload_verified
 from manage_common import ManagementError
@@ -143,6 +144,60 @@ class ReloadTests(unittest.TestCase):
             controller=Controller();setattr(controller,kind,True);written=[]
             with self.assertRaises(ManagementError):reload_verified(BASE,self.candidate(),controller,lambda doc:None,written.append)
             self.assertEqual(written,[])
+
+    def test_candidate_payload_reaches_apply_policy_and_preview_has_no_effects(self):
+        import tempfile
+        from manage_common import Layout
+        from manage_config import ConfigManager
+        from manage_model import settings_revision
+        from manage_runtime import System
+
+        changed = self.candidate()
+        renamed = deepcopy(BASE)
+        renamed['proxy-groups'][0]['name'] = 'New main'
+        renamed['rules'] = ['MATCH,New main']
+        scenarios = ((changed, {}, True), (renamed, {'MAIN': 'New main'}, True), (changed, {}, False))
+        for after, renames, include_map in scenarios:
+            with self.subTest(renames=renames, include_map=include_map), tempfile.TemporaryDirectory() as directory:
+                layout = Layout(directory)
+                ini = layout.path('etc/paopaogw/files/ppgw.ini')
+                ini.parent.mkdir(parents=True)
+                ini.write_text('#paopao-gateway\nmode=yaml\nclash_web_password=long-fixture-password\n')
+                policy = ini.parent/'clash-policy.json'
+                system = System(layout)
+                manager = ConfigManager(layout, system)
+                result, update = policy_candidate(BASE, after, {}, {}, renames=renames)
+                self.assertTrue(result['eligible'])
+                if not include_map:
+                    del update['renames']
+                args = dict(policy_update=b'{"fixture":true}', mihomo_update=update)
+                original = {'boot_id': 'fixture'}
+                system._old_runtime = original
+                with (patch.object(Layout, 'live', new_callable=PropertyMock, return_value=True),
+                      patch.object(layout, 'require_root'),
+                      patch.object(system, 'command', side_effect=AssertionError('unexpected system call')),
+                      patch.object(system, 'preflight'), patch.object(system, 'prepare') as prepare,
+                      patch.object(system, 'status', return_value={'paopaogw': {'active': True, 'enabled': False}}),
+                      patch.object(system, 'wait', return_value={**original, 'status': 'running'}),
+                      patch('mihomo_reload.apply_policy', return_value={'method': 'mihomo_reload'}) as apply):
+                    preview = manager.apply({}, settings_revision(layout), dry_run=True, **args)
+                    self.assertEqual(preview['action'], 'mihomo_reload')
+                    self.assertFalse(hasattr(system, '_mihomo_update'))
+                    self.assertFalse(policy.exists()); self.assertIsNone(manager.journal())
+                    self.assertFalse(layout.path('var/lib/paopaogw/admin/management.lock').exists())
+                    prepare.assert_not_called(); apply.assert_not_called()
+                    for invalid in ({'renames': None}, {'renames': []}, {'renames': {False: 'New'}},
+                                    {'renames': {'MAIN': ''}}, {'renames': {'MAIN': 1}},
+                                    {'renames': {'': 'New'}}, {'other': 1}):
+                        with self.assertRaisesRegex(ManagementError, 'MIHOMO_RELOAD_UNSUPPORTED'):
+                            manager.apply({}, settings_revision(layout), dry_run=True,
+                                          policy_update=args['policy_update'], mihomo_update={**update, **invalid})
+                    result = manager.apply({}, settings_revision(layout), **args)
+                    self.assertEqual(result['action'], 'mihomo_reload')
+                    self.assertEqual(result['runtime']['application']['method'], 'mihomo_reload')
+                    self.assertEqual(apply.call_args.args[1], update)
+                    self.assertEqual(policy.read_bytes(), args['policy_update'])
+
     def test_config_transaction_reports_hot_action_and_rolls_back_persistent_policy_on_failure(self):
         import tempfile
         from manage_common import Layout

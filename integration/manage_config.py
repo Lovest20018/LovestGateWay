@@ -44,11 +44,19 @@ class ConfigManager:
         def policy_action():
             if mihomo_update is not None:
                 from mihomo_reload import plan
-                if (set(mihomo_update) != {'before', 'after'} or policy_update in (None, False)
+                if (not isinstance(mihomo_update, dict)
+                        or mihomo_update.keys() not in ({'before', 'after'}, {'before', 'after', 'renames'})):
+                    raise ManagementError('MIHOMO_RELOAD_UNSUPPORTED')
+                renames = mihomo_update.get('renames', {})
+                if (not isinstance(renames, dict)
+                        or not all(isinstance(name, str) and name and isinstance(target, str) and target
+                                   for name, target in renames.items())
+                        or policy_update in (None, False)
                         or not plan(mihomo_update['before'], mihomo_update['after'])['eligible']):
                     raise ManagementError('MIHOMO_RELOAD_UNSUPPORTED')
                 if not changes and ppsub_update is None and not restart:
-                    self.system._mihomo_update = mihomo_update
+                    if not dry_run:
+                        self.system._mihomo_update = mihomo_update
                     return 'mihomo_reload'
             return 'restart'
         if ppsub_update is not None and (not isinstance(ppsub_update, bytes) or len(ppsub_update) > 1024*1024):

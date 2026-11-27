@@ -51,13 +51,19 @@ def main():
             raw=sock.recv(count-len(result));assert raw;result+=raw
         return result
     def connection():
-        sock=socket.create_connection(('127.0.0.1',1080),timeout=4);sock.settimeout(4)
+        sock=socket.create_connection(('127.0.0.1',1079),timeout=4);sock.settimeout(4)
         sock.sendall(b'\x05\x01\x00');assert receive(sock,2)==b'\x05\x00'
         sock.sendall(b'\x05\x01\x00\x01\x7f\x00\x00\x01'+struct.pack('!H',server.server_address[1]))
         reply=receive(sock,4);assert reply[1]==0;receive(sock,6);return sock
     def echo(sock,value):sock.sendall(value);assert receive(sock,len(value))==value
     try:
-        atomic_write(layout,'etc/paopaogw/files/reload-fixture.yaml',b'proxies: []\nproxy-groups: [{name: MAIN, type: select, proxies: [DIRECT, REJECT]}]\nrules: ["MATCH,MAIN"]\n')
+        atomic_write(layout,'etc/paopaogw/files/reload-fixture.yaml',b'''proxies: []
+proxy-groups:
+  - {name: MAIN, type: select, proxies: [DIRECT, CHILD]}
+  - {name: CHILD, type: select, proxies: [REJECT, DIRECT]}
+  - {name: AUTO, type: url-test, proxies: [DIRECT, CHILD], url: "http://127.0.0.1:1/health", interval: 3600, lazy: true}
+rules: ["MATCH,MAIN"]
+''')
         layout.path('etc/paopaogw/files/clash-policy.json').unlink(missing_ok=True)
         updates,_=render_updates(layout,{'ini':{'mode':'yaml','yamlfile':'reload-fixture.yaml','fast_node':'no','dns_burn':False}})
         for name,raw in updates.items():atomic_write(layout,name,raw)
@@ -80,15 +86,24 @@ def main():
         assert status['apply_method']=='mihomo_reload' and 'rules' in status['local_sections']
         assert client.request('GET','/configs')[0]['mode']=='global'
         passed('unified_editor_preview_and_apply_verify_native_persistence_without_restarting_core_or_mihomo')
+        for group, selection in (('CHILD','DIRECT'), ('MAIN','CHILD'), ('AUTO','CHILD'), ('GLOBAL','MAIN')):
+            client.request('PUT','/proxies/'+group,{'name':selection})
         manager=PolicyManager(layout,system);snapshot=manager.show()
         body={'snapshot_id':snapshot['snapshot_id'],'base_revision':snapshot['base_revision'],
               'policy':{key:snapshot[key] for key in ('groups','providers','rules')}}
         body['policy']['rules'].insert(0,'DOMAIN,second.test,DIRECT')
+        names={'MAIN':'MAIN-NEXT','CHILD':'CHILD-NEXT','AUTO':'AUTO-NEXT'}
+        for group in body['policy']['groups']:
+            group['name']=names[group['name']]
         assert manager.preview(body)['action']=='mihomo_reload'
         result=manager.apply(body);assert result['action']=='mihomo_reload'
         assert runtime()['boot_id']==old['boot_id'];echo(keep,b'after-native-policy')
+        proxies, current_peer=client.request('GET','/proxies');groups=proxies['proxies']
+        assert current_peer==peer
+        assert groups['MAIN-NEXT']['now']=='CHILD-NEXT' and groups['CHILD-NEXT']['now']=='DIRECT'
+        assert groups['AUTO-NEXT']['fixed']=='CHILD-NEXT' and groups['GLOBAL']['now']=='MAIN-NEXT'
         accepted=running_document();policy=layout.path('etc/paopaogw/files/clash-policy.json').read_bytes()
-        passed('native_policy_api_uses_verified_reload_and_keeps_existing_tcp')
+        passed('native_policy_api_preserves_tcp_and_restores_renamed_group_selections_and_lock')
         snapshot=manager.show();body={'snapshot_id':snapshot['snapshot_id'],'base_revision':snapshot['base_revision'],
               'policy':{key:snapshot[key] for key in ('groups','providers','rules')}}
         body['policy']['rules'].insert(0,'DOMAIN,uncertain.test,REJECT')
