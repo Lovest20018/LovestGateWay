@@ -27,15 +27,28 @@ class MihomoPolicyError(ManagementError):
 def policy_validation_detail(output):
     """Extract only a known error category and a numeric position from Mihomo diagnostics."""
     for line in reversed(output[-8192:].splitlines()):
-        marker = re.search(r'\bparse config error\s*:\s*', line, re.I)
-        if marker is None:
+        log = re.fullmatch(r'time=(?:"(?:[^"\\]|\\.)*"|[^\s"]+)\s+level=(?:error|fatal)\s+msg="((?:[^"\\]|\\.)*)"\s*', line)
+        error = log[1] if log is not None else line
+        marker = re.match(r'\s*parse config error\s*:\s*', error, re.I)
+        if marker:
+            error = error[marker.end():]
+        elif log is None:
             continue
-        error = line[marker.end():]
+        if re.match(r'(?:nsenter:|(?:open|read|stat)\s+.+:\s*(?:permission denied|no such file or directory)\b)', error, re.I):
+            continue
         position = re.match(
             r'(rules|proxy group|proxy|rule[- ]providers?|sub-rules?)'
             r'(?:\[[^\]\r\n]+\](?=\[))?\s*(?:\[(\d{1,6})\]|(\d{1,6})\b)',
             error, re.I,
         )
+        provider = re.match(r'(?:parse\s+)?rule[- ]providers?\b', error, re.I)
+        if position is None and marker is None:
+            if re.match(r'yaml:\s+(?:unmarshal errors?\b|line [0-9]+:)', error, re.I):
+                return '请检查字段和语法。'
+            if re.match(r'unsupported format type:\s+\S', error, re.I):
+                return '请检查规则集定义。'
+            if not provider or not re.search(r'\b(?:payloadRule error|format invalid|duplicate name|circular references|not found)\b', error, re.I):
+                continue
         reason = '请检查字段和语法。'
         if re.search(r'\b(?:rule set|rule provider) \[.*?\] not found\b', error, re.I):
             reason = '找不到引用的规则集。'
@@ -48,7 +61,7 @@ def policy_validation_detail(output):
             label = {'rule': '规则', 'proxy group': '节点组', 'proxy': '代理',
                      'rule provider': '规则集', 'sub rule': '子规则'}[kind]
             return f'第 {int(position[2] or position[3]) + 1} 条{label}：{reason}'
-        if reason == '请检查字段和语法。' and re.match(r'rule[- ]providers?\b', error, re.I):
+        if reason == '请检查字段和语法。' and provider:
             return '请检查规则集定义。'
         return reason
     return ''

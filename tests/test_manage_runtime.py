@@ -73,20 +73,45 @@ class RuntimeTests(unittest.TestCase):
             self.system.validate_policy({'rules': ['MATCH,DIRECT']})
         self.assertEqual(caught.exception.detail, '第 4 条规则：找不到规则的目标代理或节点组。')
         self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
-        self.assertEqual(policy_validation_detail('nsenter: /etc/test/private.yaml: failed'), '')
+
+        result.stderr = ''
+        result.stdout = (
+            'time="2026-11-27T02:07:46Z" level=error msg="rules[0] '
+            '[IP-CIDR,bogus-synthetic-fixture,DIRECT] error: payloadRule error"\n'
+            'configuration file /etc/test/private.yaml test failed'
+        )
+        with self.assertRaises(MihomoPolicyError) as caught:
+            self.system.validate_policy({'rules': ['MATCH,DIRECT']})
+        self.assertEqual(caught.exception.detail, '第 1 条规则：请检查字段和语法。')
+        self.assertEqual(list(self.layout.path('var/lib/paopaogw/admin/candidates').iterdir()), [])
+
         for raw, expected in [
             ('Parse config error: proxy group 0: missing name', '第 1 条节点组'),
             ('Parse config error: proxy group[3]: invalid name', '第 4 条节点组'),
             ('Parse config error: sub-rules[synthetic-rule][2] failure', '第 3 条子规则'),
             ('Parse config error: rule provider 4: invalid format', '第 5 条规则集'),
+            ('time="fixture" level=error msg="proxy group[0]: TEST: \'UNKNOWN\' not found"', '第 1 条节点组'),
+            ('time="fixture" level=error msg="unsupported format type: synthetic-format"', '请检查规则集定义。'),
+            ('time="fixture" level=error msg="parse rule provider test: format invalid"', '请检查规则集定义。'),
+            (r'time="fixture" level=error msg="yaml: unmarshal errors:\n  line 1: private text"', '请检查字段和语法。'),
         ]:
             with self.subTest(raw=raw):
                 self.assertTrue(policy_validation_detail(raw).startswith(expected))
 
-        result.stderr = 'nsenter: cannot open mount namespace /proc/123/ns/mnt'
-        with self.assertRaisesRegex(ManagementError, '^SYSTEM_OPERATION_FAILED:nsenter$') as failure:
-            self.system.validate_policy({'rules': ['MATCH,DIRECT']})
-        self.assertNotIsInstance(failure.exception, MihomoPolicyError)
+        result.stdout = 'configuration file /etc/test/private.yaml test failed'
+        for diagnostic in (
+            'nsenter: cannot open mount namespace /proc/123/ns/mnt',
+            'time="fixture" level=error msg="open /etc/test/private.yaml: permission denied"',
+            'time="fixture" level=fatal msg="Parse config error: open /etc/test/private.yaml: no such file or directory"',
+            'time="fixture" level=error msg="runtime initialization failed"',
+            'time="fixture" level=info msg="Parse config error: rules[0] could not be read"',
+            'unexpected prefix time="fixture" level=error msg="rules[0] [fixture] error: payloadRule error"',
+        ):
+            with self.subTest(diagnostic=diagnostic):
+                result.stderr = diagnostic
+                with self.assertRaisesRegex(ManagementError, '^SYSTEM_OPERATION_FAILED:nsenter$') as failure:
+                    self.system.validate_policy({'rules': ['MATCH,DIRECT']})
+                self.assertNotIsInstance(failure.exception, MihomoPolicyError)
 
     def test_rollback_keeps_the_job_worker_alive_and_restores_other_units(self):
         states = {unit: {'active': True, 'enabled': True} for unit in ('paopaogw', 'paopaogw-settings', 'paopaogw-api')}
