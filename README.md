@@ -25,6 +25,8 @@
 
 ## 与上游的区别
 
+**LovestGateWay 独立维护和发版。** GitHub Actions 每周检查 PaoPaoGateWay 的 `main` 和最新稳定版，有变化时只创建或更新差异报告草稿 PR。上游代码由维护者评审后按需手动移植，通过验收后再合并。 [上游跟进流程](docs/upstream-maintenance.md)
+
 以下以已审查的 PaoPaoGateWay `20261120-8a165c2` 为对照。 [上游源码](https://github.com/kkkgo/PaoPaoGateWay/tree/8a165c2b1dcbb3f21426791e155ec88e4c5e9a84)
 
 | 范围 | PaoPaoGateWay | LovestGateWay |
@@ -40,8 +42,6 @@
 如果节点组正使用固定 IP 副本，先切回对应的原始节点，再到 **设置 → 高级选项 → 节点 DNS 预解析** 关闭并应用。应用后核对常用节点组的选点、FakeIP DNS 查询和 HTTPS 代理出站。已在 Debian 实例验证，关闭预解析后通过 UDP 和 TCP 查询均返回 FakeIP，原始域名节点可正常代理出站。
 
 LovestSub 合并订阅的有效 `hosts`，网关的基础 DNS 和 `paopaogateway.dns` 仍由 `base.yaml` 决定。节点使用 `hosts` 域名别名时会展开到目标域名并保留原 TLS SNI。 [完整差异与上游评审记录](docs/project-differences-and-web-settings.md)
-
-GitHub Actions 每周检查上游 `main` 和最新稳定版。上游变化经评审和验收后选择性移植，LovestGateWay 独立发版。 [上游跟进流程](docs/upstream-maintenance.md)
 
 ## v0.2.9
 
