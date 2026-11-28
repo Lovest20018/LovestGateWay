@@ -2,6 +2,13 @@
 
 正式安装包及发布清单见 [GitHub Releases](https://github.com/Lovest20018/LovestGateWay/releases)。本页索引用户可见变化，完整发布说明保存在 `docs/releases/`。
 
+## [v0.2.9](docs/releases/0.2.9.md) · 2026-11-28
+
+- 代理页与规则页区分「手动 · 故障转移」并保留手动切换，顶部模式切换收口为「规则」与「全局」。
+- 订阅与策略编辑器收口为原生 LovestSub 流程，统一面板文案与默认导出名 `lovestsub.json`，兼容既有本机配置与旧文件导入。
+- 多订阅私有 DoH/DoT 按节点域名隔离写入 Mihomo `proxy-server-nameserver-policy`，安全合并 `base.yaml` DNS 与 `hosts`。
+- 保留并展开订阅 `hosts` 域名别名至节点 `server`，按协议保护原有 TLS `sni`/`servername`。
+
 ## [v0.2.8](docs/releases/0.2.8.md) · 2026-11-27
 
 - 改善规则和规则集校验及错误定位，增加 Mihomo 子规则循环引用提示。

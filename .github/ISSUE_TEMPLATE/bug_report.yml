@@ -12,7 +12,7 @@ body:
     attributes:
       label: LovestGateWay 版本
       description: 填写面板显示的版本；源码构建请附提交号。
-      placeholder: v0.2.8
+      placeholder: v0.2.9
     validations:
       required: true
   - type: input

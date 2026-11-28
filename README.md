@@ -25,13 +25,13 @@
 
 LovestSub 通过 Mihomo 的 `proxy-server-nameserver-policy`，让各订阅的节点域名使用各自的 DoH/DoT 实时解析。合并 `base.yaml` 时，订阅的有效 `hosts` 会补充到配置中，网关的 DNS 基础设置和 `paopaogateway.dns` 由 `base.yaml` 决定。开启节点 DNS 预解析还可生成固定 IP 节点副本。
 
-## v0.2.8
+## v0.2.9
 
-- 规则与订阅编辑可定位校验错误，规则测试可直接跳到命中项。
-- 静态策略热重载继承改名节点组的选择，实时日志支持断线补读。
-- 手机端改善配置预览和草稿保护。区域检测开启隐藏 IP 后，详情、复制和导出也会脱敏。
+- 代理与规则页显示「手动 · 故障转移」并保留手动切换；顶部模式切换收口为「规则」与「全局」，外部直连时提示恢复。
+- 订阅与策略编辑器收口为原生 LovestSub（默认导出 `lovestsub.json`，兼容旧 `ppsub.json`），支持三模式选择与手动组故障转移。
+- 多订阅私有 DoH/DoT 按节点域名隔离写入 Mihomo `proxy-server-nameserver-policy`，保留并展开 `hosts` 域名别名且保护 TLS SNI。
 
-升级沿用已有的组模式及故障转移、历史采集开关。详细说明见 [v0.2.8 发布说明](docs/releases/0.2.8.md)。
+升级沿用已有的配置、订阅及节点组设置。详细说明见 [v0.2.9 发布说明](docs/releases/0.2.9.md)。
 
 ## 界面预览
 

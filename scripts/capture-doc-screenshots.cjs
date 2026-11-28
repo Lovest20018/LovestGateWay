@@ -11,18 +11,18 @@ const origin='http://127.0.0.1:18897';
 const names=['🇭🇰 香港 01','🇭🇰 香港 02','🇯🇵 日本 01','🇯🇵 日本 02','🇸🇬 新加坡 01','🇺🇸 美国 01','🇩🇪 德国 01','🇬🇧 英国 01'];
 const delays=[28,36,51,58,67,142,188,201];
 const proxies={GLOBAL:{type:'Selector',all:['节点选择','自动选择','流媒体','DIRECT'],now:'节点选择'},
-  '节点选择':{type:'Selector',all:[...names,'DIRECT'],now:names[0]},
+  '节点选择':{type:'Selector',failover:true,all:[...names,'DIRECT'],now:names[0]},
   '自动选择':{type:'URLTest',all:names,now:names[0]},
   '流媒体':{type:'Selector',all:[names[2],names[4],names[5]],now:names[2]},DIRECT:{type:'Direct',delay:1}};
 for(const [i,name]of names.entries())proxies[name]={type:'Shadowsocks',udp:true,alive:true,delay:delays[i],hist:[delays[i]+4,delays[i]-2,delays[i]+1,delays[i]]};
-const demoAt=Date.parse('2026-11-21T08:00:00Z')/1000;
+const demoAt=Date.parse('2026-11-28T08:00:00Z')/1000;
 const historyPoints=Array.from({length:288},(_,i)=>{
   const download=(1.5+Math.sin(i*.13)*.4)*1024**2,upload=(180+Math.cos(i*.17)*30)*1024;
   return {at:demoAt-(287-i)*300,samples:300,coverage_seconds:300,download_bytes:download*300,upload_bytes:upload*300,
     download_rate:download,upload_rate:upload,cpu_percent:12+Math.sin(i*.2)*4,memory_bytes:(1.1+Math.sin(i*.1)*.05)*1024**3,
     connected:120,failed:i%11===0?1:0,failure_percent:i%11===0?100/121:0,latency_ms:28+Math.sin(i*.15)*5,gaps:0};
 });
-const info={version:'0.2.8 · 演示',clash_version:'v1.19.34',clash_meta:true,mode:'suburl',kernel:'6.1',
+const info={version:'0.2.9 · 演示',clash_version:'v1.19.34',clash_meta:true,mode:'suburl',kernel:'6.1',
   timestamp:demoAt,uptime:90061,integration:{data:{boot_id:'documentation-demo'}},
   memory:{total:4*1024**3,available:2.9*1024**3,sniffbox_rss:42*1024**2,sniffbox_uptime:90000,clash_rss:86*1024**2,clash_uptime:90000},
   cpu:{model:'4 核虚拟处理器',cores:4,freq_min:800,freq_max:3200,usage:12.5,per_core:[10,15,20,5],freq:2400,temp:46.5,sniffbox:2.5,clash:3.5},

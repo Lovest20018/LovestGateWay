@@ -34,12 +34,12 @@ Web 更新仅支持较新的 amd64 正式发行版，检查结果 30 分钟内�
 
 ## 离线安装或指定版本
 
-从 [Releases](https://github.com/Lovest20018/LovestGateWay/releases) 下载安装包及同名 `.sha256`，传到目标机器。示例使用 `0.2.8`。
+从 [Releases](https://github.com/Lovest20018/LovestGateWay/releases) 下载安装包及同名 `.sha256`，传到目标机器。示例使用 `0.2.9`。
 
 ```sh
-sha256sum -c lovestgateway-0.2.8-debian-amd64.tar.gz.sha256
-tar -xzf lovestgateway-0.2.8-debian-amd64.tar.gz
-cd lovestgateway-0.2.8-debian-amd64
+sha256sum -c lovestgateway-0.2.9-debian-amd64.tar.gz.sha256
+tar -xzf lovestgateway-0.2.9-debian-amd64.tar.gz
+cd lovestgateway-0.2.9-debian-amd64
 sudo sh install.sh
 ```
 
