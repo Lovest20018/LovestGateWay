@@ -8,7 +8,7 @@
 
 运行在 **Debian 12/13 · amd64 · systemd** 上的 Rust FakeIP 网关，通过 Web 管理订阅、节点、分流策略和运行状态。支持原生 Debian 部署，源自 [PaoPaoGateWay](https://github.com/kkkgo/PaoPaoGateWay)，保留上游来源与 GPL-3.0 许可。
 
-[安装](#一键安装) · [升级](#升级) · [使用文档](docs/README.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/Lovest20018/LovestGateWay/issues)
+[安装](#一键安装) · [升级](#升级) · [与上游的区别](#与上游的区别) · [使用文档](docs/README.md) · [更新记录](CHANGELOG.md) · [问题反馈](https://github.com/Lovest20018/LovestGateWay/issues)
 
 ## 能做什么
 
@@ -23,7 +23,23 @@
 
 桌面与手机使用同一套面板，支持侧栏收起、亮暗主题和大列表分批展示。日常使用无需开启对外观测 API。
 
-LovestSub 通过 Mihomo 的 `proxy-server-nameserver-policy`，让各订阅的节点域名使用各自的 DoH/DoT 实时解析。合并 `base.yaml` 时，订阅的有效 `hosts` 会补充到配置中，网关的 DNS 基础设置和 `paopaogateway.dns` 由 `base.yaml` 决定。开启节点 DNS 预解析还可生成固定 IP 节点副本。
+## 与上游的区别
+
+以下以已审查的 PaoPaoGateWay `20261120-8a165c2` 为对照。 [上游源码](https://github.com/kkkgo/PaoPaoGateWay/tree/8a165c2b1dcbb3f21426791e155ec88e4c5e9a84)
+
+| 范围 | PaoPaoGateWay | LovestGateWay |
+| --- | --- | --- |
+| 节点 DNS | PPsub 开启 `dns_burn` 时可用订阅提供的 DNS 预解析节点，生成 `@subdns` 等固定 IP 副本 | LovestSub 将订阅专属 DoH/DoT 按节点域名写入 Mihomo 的 `proxy-server-nameserver-policy`，连接节点时按对应策略实时解析 |
+| 订阅与配置 | PPsub 编辑器导出 JSON，由 `ppgw.ini` 或镜像指定来源 | LovestSub 支持每个订阅独立更新和手动组故障转移。网页支持切换到 LovestSub 并导入其 JSON，已有完整 Clash/Mihomo 配置可继续运行 |
+| 部署 | 面向虚拟机的 ISO，可用 Docker 定制 | Debian 12/13 amd64 原生安装包，由 systemd 管理服务，安装沿用宿主 IP 和默认路由 |
+| 管理与维护 | 上游 Web 面板及配套脚本 | 自维护 Web 面板支持配置预览、加载验收、备份和失败回退。网关程序与 Mihomo 分别更新 |
+| 运行观测 | 面板提供实时连接和流量信息 | 增加独立的可选观测 API 和持久运行历史 |
+
+**LovestSub 使用原始域名节点时可以关闭节点 DNS 预解析。** 关闭后停止生成 `@subdns` 等固定 IP 副本，已配置的订阅专属 DoH/DoT 和引导 DNS 继续生效。需要对多个固定 IP 入口测速或选点时，可以开启预解析。`dns_burn` 在 v0.2.9 默认开启。
+
+如果节点组正使用固定 IP 副本，先切回对应的原始节点，再到 **设置 → 高级选项 → 节点 DNS 预解析** 关闭并应用。应用后核对常用节点组的选点、FakeIP DNS 查询和 HTTPS 代理出站。已在 Debian 实例验证，关闭预解析后通过 UDP 和 TCP 查询均返回 FakeIP，原始域名节点可正常代理出站。
+
+LovestSub 合并订阅的有效 `hosts`，网关的基础 DNS 和 `paopaogateway.dns` 仍由 `base.yaml` 决定。节点使用 `hosts` 域名别名时会展开到目标域名并保留原 TLS SNI。 [完整差异与上游评审记录](docs/project-differences-and-web-settings.md)
 
 ## v0.2.9
 
