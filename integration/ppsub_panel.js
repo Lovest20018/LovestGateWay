@@ -5,29 +5,26 @@
 
   const editorErrors = {
     CONFIG_REVISION_CONFLICT: '配置已变化，请重新读取后再保存。',
-    SOURCE_CHANGE_REQUIRES_SWITCH: '请通过上方“切换配置来源”完成来源更换。',
+    SOURCE_CHANGE_REQUIRES_SWITCH: '请在“配置来源”切换到 LovestSub。',
     MANAGEMENT_BUSY: '其他管理操作正在进行，请稍后重试。',
-    CONFIG_CHANGED: '运行配置或快照已变化，请重新读取后再保存。',
+    CONFIG_CHANGED: '配置已变化，请重新读取后再保存。',
     RECOVERY_REQUIRED: '网关有待恢复的配置，请先检查诊断页面。',
     INVALID_EDITOR_REQUEST: '编辑请求有误，请重新读取配置后再试。',
     INVALID_EDITOR_CONFIG: '编辑内容格式无效，请检查配置结构。',
-    INVALID_PPSUB: 'PPsub 配置应包含订阅和正确的列表结构。',
+    INVALID_PPSUB: 'LovestSub 配置应包含订阅和正确的列表结构。',
     INVALID_PPSUB_ROW: '此条配置必须是对象。',
     INVALID_PPSUB_NAME: '名称不能为空或包含无效字符。',
     DUPLICATE_PPSUB_NAME: '名称重复，请改用其他名称。',
     INVALID_SUBSCRIPTION_SCHEDULE: '更新计划无效，请检查更新方式和间隔。',
     INVALID_EDITOR_LIST: '列表中应逐项填写文本。',
-    INVALID_EDITOR_GROUP: '节点组格式无效。',
+    INVALID_EDITOR_GROUP: '重试次数须为 0 至 100 的整数。',
     INVALID_EDITOR_RULE: '规则条目格式无效。',
     INVALID_EDITOR_ID: '条目标识已失效，请重新读取配置。',
     INVALID_GROUP_NAME: '节点组名称为空或包含无效字符。',
     DUPLICATE_GROUP_NAME: '节点组名称重复。',
     UNKNOWN_PROXY_PROVIDER: '找不到节点组使用的订阅提供商。',
     INVALID_TEST_INTERVAL: '测速间隔应在 30 至 86400 秒之间。',
-    CLASH_RULE_KIND_CHANGED: '已有规则的类型无法直接更改。',
-    CLASH_RULE_URL_UNSUPPORTED: '请填写手写规则，或改用规则集提供商。',
-    CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED: '请在完整 Clash 配置中保留原有订阅提供商条目。',
-    CLASH_SUBSCRIPTION_RENAME_UNSUPPORTED: '完整 Clash 配置仅支持更改订阅链接。',
+    CLASH_YAML_EDITING_UNSUPPORTED: '本版本仅支持通过 LovestSub 编辑器维护配置，请先在“配置来源”切换到 LovestSub。',
     INVALID_URL: '请输入不含用户名、密码或片段的 HTTP 或 HTTPS 链接。',
     INVALID_RULE_KIND: '请选择有效的规则类型。',
     INVALID_RULE_PRIORITY: '规则优先级应为整数。',
@@ -35,9 +32,9 @@
     DUPLICATE_RULE_PROVIDER: '规则集名称重复，请使用不同名称。',
     INVALID_RULE_PROVIDER_URL: '规则集链接无效，请填写 HTTP 或 HTTPS 链接。',
     INVALID_RULE_BEHAVIOR: '请选择有效的规则行为。',
-    INVALID_RULE_FORMAT: '请选择与规则行为匹配的格式。完整 Clash 模式需要明确格式。',
+    INVALID_RULE_FORMAT: '请选择与规则行为匹配的格式。',
     INVALID_RULE_PROVIDER_PROXY: '规则集下载代理的名称无效。',
-    INVALID_POLICY_INTERVAL: '请填写不超过 604800 的整数。完整 Clash 的更新间隔至少为 60 秒。',
+    INVALID_POLICY_INTERVAL: '请填写不超过 604800 的整数。',
     UNSUPPORTED_RULE_PROVIDER_TYPE: '文件和内联规则集仅支持重命名。',
     INVALID_RULE_LINE: '规则格式无效，请检查类型、匹配内容和目标。',
     UNKNOWN_RULE_TARGET: '找不到此行指定的目标代理组。请创建该组或改用已有目标。',
@@ -92,9 +89,9 @@
   }
 
   function mount(editor) {
-    const state = { ...editor, available: false, writeAllowed: false, revision: '', editKind: 'ppsub',
-      snapshotId: null, settingsRevision: '', syntheticSource:false, nodeChoices: [], active: false, stopped: false, timer: null, providerTimer: null, locked: [],
-      loaded: false, loading: false, settingsBusy: false, editingLocked: false, baseline: null };
+    const state = { ...editor, available: false, writeAllowed: false, revision: '',
+      settingsRevision: '', nodeChoices: [], active: false, stopped: false, timer: null, providerTimer: null, locked: [],
+      loaded: false, loading: false, settingsBusy: false, baseline: null };
     state.needsReload = false;
     const lifetime = new AbortController();
     state.authPaused = false;
@@ -136,23 +133,10 @@
     const explanationText = document.createElement('p');
     explanation.append(summary, explanationText);
     notice.append(text, view, explanation);
-    const backup = document.createElement('button');
-    backup.type='button'; backup.className='btn'; backup.textContent='备份运行 YAML'; backup.hidden=true;
-    backup.dataset.fullBackup='';
-    backup.onclick=async()=>{
-      try {
-        const data=await request('apply',{kind:'export_yaml',snapshot_id:state.snapshotId,base_revision:state.revision});
-        const url=URL.createObjectURL(new Blob([data.content],{type:'application/yaml'}));
-        const link=document.createElement('a');link.href=url;link.download=data.filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-      } catch(error){show(error.message,true);}
-    };
-    const exportNote=document.createElement('p');exportNote.className='ppgw-export-note';
-    exportNote.textContent='“导出编辑内容”仅保存 PPsub 编辑数据；完整配置请使用“备份运行 YAML”。备份包含当前运行配置与凭据，不包含尚未保存的修改。';
-    exportNote.hidden=true;
     const refreshNodes = document.createElement('button');
     refreshNodes.type='button'; refreshNodes.className='btn'; refreshNodes.textContent='更新全部订阅';
     refreshNodes.dataset.refreshNodes=''; refreshNodes.disabled=true;
-    const cacheNote=document.createElement('p'); cacheNote.className='ppgw-export-note'; cacheNote.dataset.nodeCache=''; cacheNote.hidden=true;
+    const cacheNote=document.createElement('p'); cacheNote.className='ppgw-node-cache-note'; cacheNote.dataset.nodeCache=''; cacheNote.hidden=true;
     let providerStates = [];
     function showCache(data) {
       const rows=data?.subscriptions||[];
@@ -174,7 +158,7 @@
       finally { state.providerPolling = false; if (!state.stopped && !state.authPaused) state.providerTimer = setTimeout(pollProviders, 5000); }
     }
     async function refreshProviders(names) {
-      if(state.loading||state.active||state.settingsBusy||!state.loaded)return;
+      if(state.loading||state.active||state.settingsBusy||!state.loaded||!state.writeAllowed)return;
       if(hasChanges()||window.ppgwGateway?.editorOptionsChanged()){show('请先保存或放弃当前编辑，再更新订阅节点。',true);return;}
       try{
         state.active=true;syncEditing();updateApply();show('正在手动获取订阅节点；更新失败时保留原节点…');
@@ -186,9 +170,9 @@
     refreshNodes.onclick=()=>refreshProviders();
     refreshNodes.title='立即更新全部订阅，包括仅手动更新的机场';
     const commitbar=document.createElement('div');commitbar.className='editor-commitbar glass';commitbar.hidden=true;commitbar.append(dirtyState,apply);
-    const feedback=document.createElement('div');feedback.className='layout-feedback editor-feedback';feedback.append(notice,exportNote,cacheNote);
+    const feedback=document.createElement('div');feedback.className='layout-feedback editor-feedback';feedback.append(notice,cacheNote);
     const importStatus=editor.header.parentElement.querySelector('[data-import-status]');if(importStatus)feedback.append(importStatus);
-    editor.header.append(backup,refreshNodes);editor.header.after(feedback);
+    editor.header.append(refreshNodes);editor.header.after(feedback);
     editor.header.parentElement.insertBefore(commitbar,editor.header.parentElement.querySelector('.editor-body'));
     const optionsHost = document.createElement('div');
     optionsHost.className = 'ppgw-global-settings';
@@ -200,7 +184,7 @@
     state.setSettingsBusy = busy => { state.settingsBusy = busy; syncEditing(); updateApply(); };
     function show(message, failed = false, loadedNotice = false) {
       if (state.stopped) return;
-      const detailed = loadedNotice && String(message || '').length > 64;
+      const detailed = loadedNotice && state.writeAllowed && String(message || '').length > 64;
       text.textContent = detailed ? '已读取当前配置，修改后保存应用。' : message;
       explanation.hidden = !detailed;
       explanation.open = false;
@@ -227,7 +211,6 @@
 
     function lockEditing(busy) {
       if (busy) {
-        state.editingLocked = true;
         const unlocked = Array.from(editor.header.parentElement.querySelectorAll('input,select,textarea,button'))
           .filter(element => element !== apply && !element.hasAttribute('data-reauth') && !element.disabled);
         unlocked.forEach(element => { element.disabled = true; });
@@ -235,7 +218,6 @@
       } else {
         state.locked.forEach(element => { element.disabled = false; });
         state.locked = [];
-        state.editingLocked = false;
       }
     }
 
@@ -265,7 +247,6 @@
           };
           update.onclick=()=>refreshProviders([item.querySelector('.row input').value]);
         }
-        controls.hidden=state.editKind!=='ppsub';
         const saved=providerStates.find(value=>value.name===row.name);
         const when=value=>value?new Date(value*1000).toLocaleString():'尚无记录';
         const results={updated:'已更新',unchanged:'内容未变，无需重新加载',retained:'获取失败，沿用旧节点',unavailable:'尚无可用节点',failed:'更新失败，保留原配置',saved:'已保存节点'};
@@ -284,32 +265,15 @@
       });
     }
 
-    function restrictCapabilities() {
-      providerControls();
-      const full=state.editKind==='clash_patch';
-      const root=editor.header.parentElement;
-      root.dataset.editKind=state.editKind;
-      root.dataset.syntheticSource=String(state.syntheticSource);
-      backup.hidden=!full; backup.disabled=state.loading||state.active||state.settingsBusy||!state.loaded;
-      exportNote.hidden=!full;
-      const menus=editor.header.querySelectorAll('.menuwrap');
-      const exportButton=menus[0]?.querySelector('button');
-      if(exportButton){exportButton.dataset.nativeLabel ||= exportButton.textContent;const label=full?'导出编辑内容':exportButton.dataset.nativeLabel;if(exportButton.textContent!==label)exportButton.textContent=label;}
-      const importButton=menus[1]?.querySelector('button');
-      if(importButton){menus[1].hidden=full;importButton.disabled=full||state.loading||state.active||state.settingsBusy;importButton.title=full?'更换 PPsub 来源请使用上方“切换配置来源”。':'';}
-      const providerTitle=root.querySelector('.subs .editor-section-heading > h3, .subs > h3');
-      if(providerTitle){providerTitle.dataset.nativeLabel ||= providerTitle.textContent;const label=full?'配置内节点提供商':providerTitle.dataset.nativeLabel;if(providerTitle.textContent!==label)providerTitle.textContent=label;}
-      root.querySelectorAll('.rules .rd').forEach(label=>{ const radio=label.querySelector('input'); label.hidden=full&&(radio?.value==='url'||/URL\s*(下载|Download)/i.test(label.textContent)); });
-      root.querySelectorAll('.subs .item').forEach(item=>{
-        const name=item.querySelector('.row input'); if(name) name.readOnly=full;
-      });
-    }
     editor.header.parentElement.addEventListener('ppgw:editor-render',syncEditing,{signal:lifetime.signal});
     editor.header.parentElement.addEventListener('input',event=>{
       if(event.target.matches('.subs [data-field="name"]'))providerControls();
     },{signal:lifetime.signal});
-    editor.header.parentElement.addEventListener('contextmenu',event=>{if(state.editKind==='clash_patch'&&event.target.closest('.subs')){event.preventDefault();event.stopPropagation();}},{capture:true,signal:lifetime.signal});
-    function syncEditing() { lockEditing(state.loading || state.active || state.settingsBusy || (state.loaded && !state.writeAllowed)); restrictCapabilities(); window.ppgwGateway?.setEditorBusy(state.loading||state.active); }
+    function syncEditing() {
+      lockEditing(state.loading || state.active || state.settingsBusy || (state.loaded && !state.writeAllowed));
+      providerControls();
+      window.ppgwGateway?.setEditorBusy(state.loading||state.active);
+    }
 
     function fingerprint() {
       const config = editor.exportConfig();
@@ -327,10 +291,8 @@
       const dirtyText=state.loaded?(changed?'有未保存的修改':'没有未保存的修改'):'';
       commitbar.hidden=!state.loaded;
       if(dirtyState.textContent!==dirtyText)dirtyState.textContent=dirtyText;
-      refreshNodes.hidden=state.editKind!=='ppsub';
       refreshNodes.disabled=state.stopped||state.loading||state.active||state.settingsBusy||!state.loaded||!state.writeAllowed;
-      apply.disabled = state.stopped || state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed ||
-        (state.editKind === 'clash_patch' && !state.snapshotId) || !changed;
+      apply.disabled = state.stopped || state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed || !changed;
     }
 
     async function refresh() {
@@ -343,7 +305,6 @@
         showCache(data.node_cache);
         state.active = operation?.status === 'applying';
         state.writeAllowed = data.ppsub_write_allowed !== false;
-        state.editKind = data.edit_kind || 'ppsub';
         updateApply();
         if (operation) {
           const stages={fetching:'获取订阅',validating:'校验配置',saving:'保存配置',applying:'应用配置',verifying:'验证运行',rolling_back:'恢复原配置'};
@@ -355,7 +316,7 @@
             syncEditing();
             if (applied || !state.loaded) {
               const message = operation.message;
-              if (await state.loadCurrent(editor.importConfig, false)) show(message, operation.status === 'failed');
+              if (await state.loadCurrent(editor.importConfig, false) && state.writeAllowed) show(message, operation.status === 'failed');
               if(!state.stopped)showProxyLink(applied);
               if (operation.status !== 'failed') window.ppgwGateway?.editorApplied();
             }
@@ -364,7 +325,7 @@
         if (state.active) state.timer = setTimeout(refresh, 1500);
       } catch (error) {
         if (state.active && error.status !== 401) {
-          show('正在重启网关并加载 PPsub 配置…');
+          show('正在重启网关并加载 LovestSub 配置…');
           if (!state.stopped) state.timer = setTimeout(refresh, 1500);
         } else { show(error.message, true); }
       }
@@ -384,12 +345,9 @@
         if (state.stopped) return false;
         state.revision = data.base_revision;
         state.writeAllowed = data.write_allowed !== false;
-        state.editKind = data.edit_kind || 'ppsub';
-        state.snapshotId = data.snapshot_id || null;
         state.settingsRevision=data.settings_revision || '';
         await window.ppgwGateway?.syncEditor(data);
         if (state.stopped) return false;
-        state.syntheticSource=Boolean(data.synthetic_source);
         state.nodeChoices = data.node_choices || [];
         importConfig(data.config);
         showCache(data.node_cache);
@@ -411,15 +369,14 @@
     };
 
     apply.onclick = async () => {
-      if (state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed || (state.editKind === 'clash_patch' && !state.snapshotId) || !(hasChanges()||window.ppgwGateway?.editorOptionsChanged())) return;
+      if (state.loading || state.active || state.settingsBusy || !state.loaded || !state.writeAllowed || !(hasChanges()||window.ppgwGateway?.editorOptionsChanged())) return;
       try {
         const config=editor.exportConfig();
-        if (state.editKind!=='clash_patch'&&(!config.subs?.length||config.subs.some(item=>!item.name?.trim()||!item.url?.trim()))) throw Error('请先填写订阅提供商的名称和订阅链接。');
-        if(state.editKind==='ppsub'&&config.subs?.some(row=>row.update_mode==='auto'&&!/^[1-9][0-9]{0,3}[mhd]$/.test(row.update_interval||'')))throw Error('机场自动更新间隔请填写 30m、6h、1d 等有效值。');
+        if (!config.subs?.length||config.subs.some(item=>!item.name?.trim()||!item.url?.trim())) throw Error('请先填写订阅提供商的名称和订阅链接。');
+        if(config.subs.some(row=>row.update_mode==='auto'&&!/^[1-9][0-9]{0,3}[mhd]$/.test(row.update_interval||'')))throw Error('机场自动更新间隔请填写 30m、6h、1d 等有效值。');
         const settingsPatch=window.ppgwGateway?.editorPatch(state.settingsRevision)||{};
-        const body={kind:'editor',edit_kind:state.editKind,value:JSON.stringify(config),settings_patch:settingsPatch,
+        const body={kind:'editor',edit_kind:'ppsub',value:JSON.stringify(config),settings_patch:settingsPatch,
           settings_revision:state.settingsRevision,base_revision:state.revision,
-          ...(state.editKind==='clash_patch'?{snapshot_id:state.snapshotId}:{}),
           operation_id:'editor_'+Date.now()+'_'+Math.random().toString(36).slice(2)};
         state.loading=true;syncEditing();updateApply();show('正在预览统一保存的变更…');
         const previewFingerprint=fingerprint();
@@ -457,9 +414,8 @@
       state.available = true;
       state.revision = data.base_revision;
       state.writeAllowed = data.ppsub_write_allowed !== false;
-      state.editKind = data.edit_kind || 'ppsub';
       if (data.operation?.status === 'applying') { state.active = true; await refresh(); }
-      else { await state.loadCurrent(editor.importConfig, false); if(data.operation)showOperation(data.operation); }
+      else { await state.loadCurrent(editor.importConfig, false); if(data.operation&&state.writeAllowed)showOperation(data.operation); }
     }).catch(error => {
       if (state.stopped) return;
       // Keep the explicit read button available so a temporary failure is retryable.
@@ -476,7 +432,7 @@
       clearTimeout(state.providerTimer);
       syncEditing();
       window.ppgwGateway?.setEditorBusy(false);
-      editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); backup.remove(); exportNote.remove(); refreshNodes.remove(); cacheNote.remove();
+      editor.header.parentElement.querySelectorAll('[data-provider-plan]').forEach(element=>element.remove()); refreshNodes.remove();
       detachOptions?.(); optionsHost.remove();
       dirtyState.remove();apply.remove();commitbar.remove();feedback.remove();
       notice.remove();
@@ -488,7 +444,6 @@
   window.ppgwPpsub = {
     mount,
     isAvailable: () => Boolean(current?.available),
-    clashEditing: () => current?.editKind === 'clash_patch',
     nodeChoices: () => (current?.nodeChoices || []).map(name => ({ name, type: 'group' })),
     loadCurrent: importConfig => current?.loadCurrent(importConfig),
     hasChanges: () => Boolean(current?.loaded && (() => {

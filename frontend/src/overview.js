@@ -7,7 +7,7 @@ import {icon} from './icons.js';
 const number=value=>typeof value==='number'&&Number.isFinite(value)&&value>=0?value:null;
 const list=value=>Array.isArray(value)?value:[];
 const text=value=>typeof value==='string'?value:'—';
-export const modeLabel=data=>data?.ppsub?'原生 PPsub':({free:'直连',socks5:'SOCKS5',ovpn:'OpenVPN',yaml:'本地 YAML',suburl:'订阅'})[data?.mode]||text(data?.mode);
+export const modeLabel=data=>data?.ppsub?'LovestSub':({free:'直连',socks5:'SOCKS5',ovpn:'OpenVPN',yaml:'本地 YAML',suburl:'订阅'})[data?.mode]||text(data?.mode);
 
 export function trafficSample(previous,traffic,at,boot=''){
   const down=number(traffic?.downloadTotal),up=number(traffic?.uploadTotal);

@@ -295,5 +295,28 @@ class SubscriptionCacheTransactionTests(unittest.TestCase):
                         baseline.replace('[{name: A, password: yes, port: 443}, {name: B}]', '[{name: B}, {name: A, password: yes, port: 443}]')):
             self.assertNotEqual(content(baseline), content(changed))
 
+    def test_comparison_tracks_dns_resolvers_and_policy_but_ignores_yaml_formatting(self):
+        def content(text): return payload_content(json.dumps({'raw_yaml': text}).encode())
+        baseline = '''\
+proxies: [{name: A, server: node.example}]
+dns:
+  nameserver: [https://doh.example/dns-query/original]
+  proxy-server-nameserver-policy:
+    node.example: [https://doh.example/dns-query/private]
+    other.example: [tls://dot.example]
+'''
+        reordered = '''\
+dns:
+  proxy-server-nameserver-policy:
+    other.example: [tls://dot.example] # formatting only
+    node.example: [https://doh.example/dns-query/private]
+  nameserver: [https://doh.example/dns-query/original]
+proxies: [{server: node.example, name: A}]
+'''
+        self.assertEqual(content(baseline), content(reordered))
+        self.assertNotEqual(content(baseline), content(baseline.replace('/original', '/rotated')))
+        self.assertNotEqual(content(baseline), content(baseline.replace('/private', '/rotated')))
+        self.assertNotEqual(content(baseline), content(baseline.replace('    node.example:', '    new.example:')))
+
 
 if __name__ == '__main__': unittest.main()

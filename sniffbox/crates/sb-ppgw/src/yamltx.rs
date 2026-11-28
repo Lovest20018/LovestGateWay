@@ -1,6 +1,8 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
-use crate::dnsutil;
+use crate::dohdot::{sanitize_dns_list, sanitize_mihomo_bootstrap_ip, sanitize_mihomo_dns_spec};
+use crate::ppsub::ystr;
+use crate::{dnsutil, dohdot};
 use std::collections::HashSet;
 use std::net::IpAddr;
 use yaml_rust2::yaml::Hash;
@@ -22,14 +24,146 @@ pub enum YamlTxErr {
 
 pub fn combine(files: &[String]) -> Result<String, YamlTxErr> {
     let mut result = Hash::new();
+    let hosts_key = ystr("hosts");
+    let dns_key = ystr("dns");
     for f in files {
         let doc = load(&read(f)?, f)?;
         let map = doc.as_hash().ok_or_else(|| YamlTxErr::NotMap(f.clone()))?;
         for (k, v) in map {
-            result.insert(k.clone(), v.clone());
+            if k == &dns_key {
+                continue;
+            }
+            let combined = if k == &hosts_key
+                && let (Some(existing), Some(base)) =
+                    (result.get(k).and_then(Yaml::as_hash), v.as_hash())
+            {
+                Yaml::Hash(merge_hosts(existing, base))
+            } else {
+                v.clone()
+            };
+            result.insert(k.clone(), combined);
+        }
+        // Resolve use-hosts against the final hosts map for this file, independent of YAML order.
+        if let Some(v) = map.get(&dns_key) {
+            let combined = match (result.get(&dns_key).and_then(Yaml::as_hash), v.as_hash()) {
+                (Some(existing), Some(base)) => Yaml::Hash(merge_dns(
+                    existing,
+                    base,
+                    result.get(&hosts_key).and_then(Yaml::as_hash),
+                )),
+                _ => v.clone(),
+            };
+            result.insert(dns_key.clone(), combined);
         }
     }
     emit(&Yaml::Hash(result))
+}
+
+fn merge_hosts(existing: &Hash, base: &Hash) -> Hash {
+    let canonical = |host: &str| host.trim_end_matches('.').to_lowercase();
+    let base_domains: HashSet<_> = base
+        .keys()
+        .filter_map(Yaml::as_str)
+        .map(canonical)
+        .collect();
+    existing
+        .iter()
+        .filter(|(key, _)| {
+            key.as_str()
+                .is_none_or(|host| !base_domains.contains(&canonical(host)))
+        })
+        .chain(base)
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn merge_dns(existing: &Hash, base: &Hash, merged_hosts: Option<&Hash>) -> Hash {
+    let mut dns = base.clone();
+    let policy_key = ystr("proxy-server-nameserver-policy");
+    let policy: Hash = existing
+        .get(&policy_key)
+        .and_then(Yaml::as_hash)
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| {
+            key.as_str().filter(|key| !key.trim().is_empty())?;
+            let servers = sanitize_dns_list(value, sanitize_mihomo_dns_spec);
+            (!servers.is_empty()).then(|| (key.clone(), server_array(servers)))
+        })
+        .collect();
+    if !policy.is_empty() {
+        dns.insert(policy_key.clone(), Yaml::Hash(policy));
+    }
+    let has_policy = dns
+        .get(&policy_key)
+        .and_then(Yaml::as_hash)
+        .is_some_and(|policy| !policy.is_empty());
+    let base_nameservers = base.get(&ystr("nameserver"));
+
+    let proxy_key = ystr("proxy-server-nameserver");
+    let proxy_servers = existing
+        .get(&proxy_key)
+        .filter(|value| value.as_vec().is_some())
+        .map(|value| {
+            sanitize_dns_list(value, |server| {
+                sanitize_mihomo_bootstrap_ip(server, true)
+                    .or_else(|| sanitize_mihomo_dns_spec(server))
+            })
+        })
+        .unwrap_or_default();
+    if !proxy_servers.is_empty() {
+        dns.insert(proxy_key, server_array(proxy_servers));
+    } else if has_policy
+        && dns
+            .get(&proxy_key)
+            .and_then(Yaml::as_vec)
+            .is_none_or(Vec::is_empty)
+        && let Some(servers) =
+            base_nameservers.filter(|value| value.as_vec().is_some_and(|v| !v.is_empty()))
+    {
+        dns.insert(proxy_key, servers.clone());
+    }
+
+    let default_key = ystr("default-nameserver");
+    let sanitize_bootstrap = |value: &Yaml| {
+        sanitize_dns_list(value, |server| sanitize_mihomo_bootstrap_ip(server, true))
+    };
+    let mut bootstrap = existing
+        .get(&default_key)
+        .filter(|value| value.as_vec().is_some())
+        .map(sanitize_bootstrap)
+        .unwrap_or_default();
+    if bootstrap.is_empty()
+        && has_policy
+        && dns
+            .get(&default_key)
+            .and_then(Yaml::as_vec)
+            .is_none_or(Vec::is_empty)
+        && let Some(nameservers) = base_nameservers
+    {
+        bootstrap = sanitize_bootstrap(nameservers);
+    }
+    if !bootstrap.is_empty() {
+        dns.insert(default_key, server_array(bootstrap));
+    }
+
+    let use_hosts_key = ystr("use-hosts");
+    if existing.get(&use_hosts_key) == Some(&Yaml::Boolean(true))
+        && merged_hosts.is_some_and(|hosts| {
+            hosts.keys().filter_map(Yaml::as_str).any(|host| {
+                !host
+                    .trim_end_matches('.')
+                    .eq_ignore_ascii_case("paopaogateway.dns")
+            })
+        })
+    {
+        dns.insert(use_hosts_key, Yaml::Boolean(true));
+    }
+    dns
+}
+
+fn server_array(servers: Vec<String>) -> Yaml {
+    Yaml::Array(servers.into_iter().map(Yaml::String).collect())
 }
 
 pub fn dns_burn(
@@ -63,7 +197,7 @@ pub fn dns_burn(
 
     let ex_resolved = dnsutil::resolve_domains_concurrent(&domains, &dns_servers, ipv6_enabled);
 
-    let sub_specs = crate::dohdot::extract_dns_servers(&doc["dns"]);
+    let sub_specs = dohdot::extract_dns_servers_for_all_nodes(&doc["dns"]);
     let sub_resolved = if !sub_specs.is_empty() {
         let got = resolve_subdns_batch(&domains, &sub_specs, ipv6_enabled);
         crate::ppsub::proxies::subtract_known(got, &ex_resolved, "subdns")
@@ -268,5 +402,145 @@ mod tests {
         );
         assert_eq!(doc["tproxy-port"].as_i64(), Some(1081), "keep keys from b");
         assert!(doc["proxies"].as_vec().is_some(), "keep proxies from a");
+    }
+
+    fn combine_fixture(custom: &str, base: &str) -> Yaml {
+        let dir = tempfile::tempdir().unwrap();
+        let custom_path = dir.path().join("a.yaml");
+        let base_path = dir.path().join("base.yaml");
+        std::fs::write(&custom_path, custom).unwrap();
+        std::fs::write(&base_path, base).unwrap();
+        let merged = combine(&[
+            custom_path.to_str().unwrap().to_string(),
+            base_path.to_str().unwrap().to_string(),
+        ])
+        .unwrap();
+        YamlLoader::load_from_str(&merged).unwrap().remove(0)
+    }
+
+    fn servers(value: &Yaml) -> Vec<&str> {
+        value
+            .as_vec()
+            .unwrap()
+            .iter()
+            .map(|server| server.as_str().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn combine_keeps_base_dns_settings_with_sanitized_subscription_dns_and_hosts() {
+        let doc = combine_fixture(
+            r#"
+dns:
+  enable: false
+  use-system-hosts: true
+  listen: 0.0.0.0:1053
+  ipv6: true
+  enhanced-mode: fake-ip
+  nameserver: [1.1.1.1]
+  use-hosts: true
+  proxy-server-nameserver-policy:
+    node.example: ['https://dns.example/query/token#PROXY', 'https://dns.example/query/token', system]
+    dot.example: 'tls://dot.dns.example#PROXY'
+    ignored.example: [quic://ignored.example, 198.18.0.1]
+  proxy-server-nameserver: ['10.10.10.2:53', 'tls://dot.dns.example#PROXY']
+  default-nameserver: ['192.168.1.1:53', 'https://dns.example/query', 'localhost:53', '198.18.0.1:53']
+hosts:
+  PAOPAOGATEWAY.DNS: 1.1.1.1
+  node.example: 8.8.4.4
+  alias.example: target.example
+  dns.example: 9.9.9.9
+"#,
+            r#"
+dns:
+  enable: true
+  use-system-hosts: false
+  listen: ''
+  ipv6: false
+  enhanced-mode: normal
+  use-hosts: false
+  nameserver: ['10.10.10.2:53#eth0']
+hosts:
+  paopaogateway.dns: 127.0.0.1
+  node.example: 8.8.8.8
+"#,
+        );
+        let dns = &doc["dns"];
+        assert_eq!(dns["enable"].as_bool(), Some(true));
+        assert_eq!(dns["use-system-hosts"].as_bool(), Some(false));
+        assert_eq!(dns["listen"].as_str(), Some(""));
+        assert_eq!(dns["ipv6"].as_bool(), Some(false));
+        assert_eq!(dns["enhanced-mode"].as_str(), Some("normal"));
+        assert_eq!(servers(&dns["nameserver"]), ["10.10.10.2:53#eth0"]);
+        assert_eq!(dns["use-hosts"].as_bool(), Some(true));
+        assert_eq!(
+            servers(&dns["proxy-server-nameserver"]),
+            ["10.10.10.2:53", "tls://dot.dns.example:853"]
+        );
+        assert_eq!(servers(&dns["default-nameserver"]), ["192.168.1.1:53"]);
+
+        let policy = &dns["proxy-server-nameserver-policy"];
+        assert_eq!(policy.as_hash().unwrap().len(), 2);
+        assert_eq!(servers(&policy["node.example"]), ["https://dns.example/query/token"]);
+        assert_eq!(servers(&policy["dot.example"]), ["tls://dot.dns.example:853"]);
+        let hosts = &doc["hosts"];
+        assert_eq!(hosts.as_hash().unwrap().len(), 4);
+        assert_eq!(hosts["paopaogateway.dns"].as_str(), Some("127.0.0.1"));
+        assert_eq!(hosts["node.example"].as_str(), Some("8.8.8.8"));
+        assert_eq!(hosts["alias.example"].as_str(), Some("target.example"));
+        assert_eq!(hosts["dns.example"].as_str(), Some("9.9.9.9"));
+    }
+
+    #[test]
+    fn combine_backfills_policy_resolvers_from_base_nameserver() {
+        let doc = combine_fixture(
+            r#"
+dns:
+  proxy-server-nameserver-policy:
+    node.example: 'https://dns.example/dns-query'
+"#,
+            r#"
+dns:
+  nameserver: ['10.10.10.2:53#eth0']
+"#,
+        );
+        let dns = &doc["dns"];
+        assert_eq!(servers(&dns["proxy-server-nameserver"]), ["10.10.10.2:53#eth0"]);
+        assert_eq!(servers(&dns["default-nameserver"]), ["10.10.10.2:53"]);
+    }
+
+    #[test]
+    fn combine_checks_for_extra_hosts_after_merging_base_hosts() {
+        let custom = r#"
+hosts: {paopaogateway.dns: 1.1.1.1}
+dns:
+  use-hosts: true
+  enhanced-mode: normal
+  listen: 0.0.0.0:1053
+  nameserver: [1.1.1.1]
+"#;
+        let base_dns = r#"
+dns:
+  use-hosts: false
+  enhanced-mode: fake-ip
+  listen: 127.0.0.1:5353
+  nameserver: ['10.10.10.2:53#eth0']
+"#;
+        let base_hosts = "hosts: {paopaogateway.dns: 127.0.0.1}\n";
+        let doc = combine_fixture(custom, &format!("{base_dns}{base_hosts}"));
+        assert_eq!(doc["hosts"]["paopaogateway.dns"].as_str(), Some("127.0.0.1"));
+        let dns = &doc["dns"];
+        assert_eq!(dns["use-hosts"].as_bool(), Some(false));
+        assert_eq!(dns["enhanced-mode"].as_str(), Some("fake-ip"));
+        assert_eq!(dns["listen"].as_str(), Some("127.0.0.1:5353"));
+        assert_eq!(servers(&dns["nameserver"]), ["10.10.10.2:53#eth0"]);
+        assert!(dns["proxy-server-nameserver"].as_vec().is_none());
+        assert!(dns["default-nameserver"].as_vec().is_none());
+
+        let base_hosts = "hosts: {paopaogateway.dns: 127.0.0.1, base.example: 9.9.9.9}\n";
+        for base in [format!("{base_dns}{base_hosts}"), format!("{base_hosts}{base_dns}")] {
+            let doc = combine_fixture(custom, &base);
+            assert_eq!(doc["dns"]["use-hosts"].as_bool(), Some(true));
+        }
     }
 }

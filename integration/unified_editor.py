@@ -3,25 +3,20 @@ from copy import deepcopy
 import json
 import re
 import threading
-import time
 from manage_common import ManagementError, operation_lock, require_idle
 from manage_config import ConfigManager
 from manage_model import load_settings, settings_revision, validate
 from manage_runtime import MihomoPolicyError, System
-from clash_ppsub import (merge_editor, feature_options, apply_features, fingerprint,
-                         source_identity, logical_document, running_materialized_document, DEFAULT_RULE_BEHAVIOR,
-                         BUILTIN_TARGETS, EditorIssue, provider_view, check_http_rule_provider, rule_fields,
-                         rule_provider_spans, strings)
-from clash_policy import build_policy
-from manage_preview import clash_summary, native_summary, complete_preview, source_details
+from clash_ppsub import (feature_options, DEFAULT_RULE_BEHAVIOR, BUILTIN_TARGETS, EditorIssue,
+                         provider_view, check_http_rule_provider, rule_fields, rule_provider_spans, strings)
+from manage_preview import native_summary, complete_preview, source_details
 
 
 EDITOR_VALIDATION_CODES = {
     'INVALID_EDITOR_REQUEST', 'INVALID_EDITOR_CONFIG', 'INVALID_EDITOR_LIST', 'INVALID_EDITOR_GROUP',
     'INVALID_EDITOR_RULE', 'INVALID_EDITOR_ID', 'INVALID_GROUP_NAME', 'DUPLICATE_GROUP_NAME',
-    'UNKNOWN_PROXY_PROVIDER', 'INVALID_TEST_INTERVAL', 'CLASH_RULE_KIND_CHANGED',
-    'CLASH_RULE_URL_UNSUPPORTED', 'CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED',
-    'CLASH_SUBSCRIPTION_RENAME_UNSUPPORTED', 'INVALID_URL', 'INVALID_PRE_PROXY',
+    'UNKNOWN_PROXY_PROVIDER', 'INVALID_TEST_INTERVAL', 'CLASH_YAML_EDITING_UNSUPPORTED',
+    'INVALID_URL', 'INVALID_PRE_PROXY',
     'INVALID_RESTART_HOUR', 'INVALID_SS_CONFIG', 'RESERVED_PROVIDER_NAME',
 }
 
@@ -89,9 +84,14 @@ def validate_ppsub(value):
                     strings(row[field])
             except ValueError:
                 raise EditorIssue('INVALID_EDITOR_LIST', 'node-groups', index, field) from None
-        for field in ('speedtest_url', 'monitor_url'):
-            if row.get(field) not in (None, ''):
-                check_ppsub_url(row, 'node-groups', index, field)
+        if row.get('speedtest_url') not in (None, ''):
+            check_ppsub_url(row, 'node-groups', index, 'speedtest_url')
+        if row.get('failover'):
+            if row.get('monitor_url') not in (None, ''):
+                check_ppsub_url(row, 'node-groups', index, 'monitor_url')
+            retries = row.get('retries')
+            if retries is not None and (type(retries) is not int or not 0 <= retries <= 100):
+                raise EditorIssue('INVALID_EDITOR_GROUP', 'node-groups', index, 'retries')
 
     rows = check_ppsub_rows(value, 'rules', 5000)
     providers = set()
@@ -148,9 +148,11 @@ def validate_ppsub(value):
 
 def candidate(admin, body, preview=None):
     import subscription_admin as source
+    if body.get('edit_kind') == 'clash_patch':
+        raise ManagementError('CLASH_YAML_EDITING_UNSUPPORTED')
     allowed = {'kind', 'edit_kind', 'value', 'base_revision', 'settings_revision', 'settings_patch',
-               'operation_id', 'snapshot_id', 'dry_run'}
-    if (set(body) - allowed or body.get('edit_kind') not in {'ppsub', 'clash_patch'}
+               'operation_id', 'dry_run'}
+    if (set(body) - allowed or body.get('edit_kind') != 'ppsub'
             or not isinstance(body.get('value'), str) or len(body['value'].encode()) > 1024*1024
             or type(body.get('dry_run', False)) is not bool
             or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', str(body.get('operation_id', '')))):
@@ -166,104 +168,43 @@ def candidate(admin, body, preview=None):
         submitted = json.loads(body['value'])
     except json.JSONDecodeError:
         raise ManagementError('INVALID_EDITOR_CONFIG') from None
-    options = {'policy_update': None, 'ppsub_update': None}
-    verify = None
-    settings = load_settings(layout)
-    if settings['ini']['mode'] == 'yaml' and patch.get('ini'):
-        raise ManagementError('INVALID_EDITOR_REQUEST')
-    if body['edit_kind'] == 'clash_patch':
-        with admin.lock:
-            snapshot = deepcopy(admin.snapshots.get(body.get('snapshot_id')))
-        if (not snapshot or time.monotonic() - snapshot['created'] > 1800
-                or snapshot['revision'] != body['base_revision']
-                or fingerprint(source.running_document()) != fingerprint(snapshot['document'])
-                or (source.POLICY.read_bytes() if source.POLICY.exists() else None) != snapshot['policy']):
-            raise ManagementError('CONFIG_CHANGED')
-        merged, source_url, renames = merge_editor(snapshot['document'], snapshot['baseline'], submitted)
-        if source_url: raise ManagementError('SOURCE_CHANGE_REQUIRES_SWITCH')
-        features = feature_options(submitted)
-        if merged != snapshot['document'] or features != feature_options(snapshot['baseline']):
-            existing = json.loads(snapshot['policy']) if snapshot['policy'] else None
-            policy = build_policy(snapshot['document'], merged, existing, source_identity(settings['ini']), renames)
-            policy['features'] = features
-            effective = apply_features(merged, features)
-            options['policy_update'] = (json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode()
-            def verify():
-                actual = source.running_document()
-                expected = logical_document(effective)
-                if any(actual.get(key) != expected.get(key) for key in policy['sections']):
-                    raise ManagementError('POLICY_NOT_LOADED')
-                if layout.live:
-                    from clash_policy import protected_revision
-                    status = json.loads(layout.path('var/lib/paopaogw/admin/policy-status.json').read_bytes())
-                    key = layout.path('etc/paopaogw/revision-key').read_bytes().strip()
-                    if status.get('status') != 'loaded' or status.get('policy_revision') != protected_revision(policy, key):
-                        raise ManagementError('POLICY_NOT_LOADED')
-        else: effective = None
-        if preview is not None:
-            old_providers = {row.get('_clash_id'): row.get('name') for row in snapshot['baseline'].get('rules', [])
-                             if row.get('type') == 'rule-set' and row.get('_clash_id')}
-            provider_renames = {old_providers[row['_clash_id']]: row.get('name') for row in submitted.get('rules', [])
-                                if row.get('_clash_id') in old_providers}
-            preview['summary'] = clash_summary(snapshot['document'], merged,
-                feature_options(snapshot['baseline']), features, renames, provider_renames)
-            policy = json.loads(options['policy_update']) if options['policy_update'] is not None else (
-                json.loads(snapshot['policy']) if snapshot['policy'] else None)
-            preview['source'] = source_details(layout, settings['ini'], policy=policy)
-    else:
-        if not source.native_ppsub_source(source.config_values()):
-            raise ManagementError('SOURCE_CHANGE_REQUIRES_SWITCH')
-        raw = validate_ppsub(submitted)
-        previous = source.FILES / 'ppsub.json'
-        old = json.loads(previous.read_bytes()) if previous.exists() else None
-        def stable(value):
-            value = deepcopy(value)
-            if isinstance(value, dict): value.pop('exported_at', None)
-            return value
-        if stable(old) != stable(submitted): options['ppsub_update'] = raw
-        if preview is not None:
-            runtime = layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json')
-            comparison = old if old is not None else json.loads(runtime.read_bytes()) if runtime.is_file() else None
-            preview['summary'] = native_summary(comparison, submitted)
-            preview['source'] = source_details(layout, settings['ini'], native=True)
-            preview['source']['materializes_native'] = old is None
-        # Saving a remote PPsub materializes it as the local authoritative source.
-        patch = deepcopy(patch)
-        patch.setdefault('ini', {}).update(mode='suburl', suburl='ppsub@http://127.0.0.1/ppsub.json', fast_node='no')
-        effective = None
-        def verify():
-            if not admin.core.request('/sniffbox/info').get('ppsub'):
+    if not source.native_ppsub_source(source.config_values()):
+        raise ManagementError('SOURCE_CHANGE_REQUIRES_SWITCH')
+    raw = validate_ppsub(submitted)
+    previous = source.FILES / 'ppsub.json'
+    old = json.loads(previous.read_bytes()) if previous.exists() else None
+
+    def stable(value):
+        value = deepcopy(value)
+        if isinstance(value, dict):
+            value.pop('exported_at', None)
+        return value
+
+    options = {'ppsub_update': raw if stable(old) != stable(submitted) else None}
+    if preview is not None:
+        runtime = layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json')
+        comparison = old if old is not None else json.loads(runtime.read_bytes()) if runtime.is_file() else None
+        preview['summary'] = native_summary(comparison, submitted)
+        preview['source'] = source_details(layout, load_settings(layout)['ini'], native=True)
+        preview['source']['materializes_native'] = old is None
+    # Saving a remote PPsub materializes it as the local authoritative source.
+    patch = deepcopy(patch)
+    patch.setdefault('ini', {}).update(mode='suburl', suburl='ppsub@http://127.0.0.1/ppsub.json', fast_node='no')
+
+    def verify():
+        if not admin.core.request('/sniffbox/info').get('ppsub'):
+            raise ManagementError('PPSUB_NOT_LOADED')
+        if layout.live:
+            actual = json.loads(layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json').read_bytes())
+            if stable(actual) != stable(submitted):
                 raise ManagementError('PPSUB_NOT_LOADED')
-            if layout.live:
-                actual = json.loads(layout.path('var/lib/paopaogw/clash/clash-dashboard/data/ppsub.json').read_bytes())
-                if stable(actual) != stable(submitted): raise ManagementError('PPSUB_NOT_LOADED')
+
     system = System(layout, preserve_units={'paopaogw-subscription'})
-    if effective is not None:
-        system.validate_policy(effective)
-        from mihomo_reload import policy_candidate
-        reload_plan, update = policy_candidate(snapshot['document'], effective, feature_options(snapshot['baseline']), features,
-            running_materialized_document() if layout.live else None, renames=renames)
-        if update:
-            options['mihomo_update'] = update
-        if preview is not None: preview['mihomo_reload'] = reload_plan
     return layout, system, patch, options, verify
 
 
 def handle(admin, body):
-    import subscription_admin as source
-    if body['kind'] == 'export_yaml':
-        if set(body) != {'kind', 'snapshot_id', 'base_revision'}:
-            raise ManagementError('INVALID_EDITOR_REQUEST')
-        with admin.lock: snapshot = deepcopy(admin.snapshots.get(body['snapshot_id']))
-        if (not snapshot or time.monotonic() - snapshot['created'] > 1800
-                or body['base_revision'] != source.revision(source.CONFIG.read_bytes())
-                or snapshot['revision'] != body['base_revision']
-                or fingerprint(source.running_document()) != fingerprint(snapshot['document'])):
-            raise ManagementError('CONFIG_CHANGED')
-        import yaml
-        return {'filename': 'gateway-running.yaml', 'content': yaml.safe_dump(
-            apply_features(snapshot['document'], feature_options(snapshot['baseline'])), allow_unicode=True, sort_keys=False)}
-    if not body.get('dry_run'):
+    if body.get('edit_kind') == 'ppsub' and not body.get('dry_run'):
         with admin.lock:
             if admin.operation and admin.operation.get('id') == body.get('operation_id'):
                 return dict(admin.operation)
@@ -271,9 +212,8 @@ def handle(admin, body):
     layout, system, patch, options, verify = candidate(admin, body, preview)
     if body.get('dry_run'):
         result = ConfigManager(layout, system).apply(patch, body['settings_revision'], dry_run=True, **options)
-        result['editor_changed'] = any(raw is not None for raw in options.values())
-        result['save_target'] = 'local_policy' if body['edit_kind'] == 'clash_patch' else 'ppsub'
-        if preview.get('mihomo_reload'): result['mihomo_reload'] = preview['mihomo_reload']
+        result['editor_changed'] = options['ppsub_update'] is not None
+        result['save_target'] = 'ppsub'
         return complete_preview(result, layout, system, preview['summary'], preview['source'])
     with admin.lock:
         if admin.operation and admin.operation.get('id') == body['operation_id']:
@@ -304,14 +244,12 @@ def worker(admin, body, operation):
             operation.update(status='unchanged' if result['status'] == 'unchanged' else 'applied',
                              message='订阅、策略与更新计划已保存并验证。' if result['status'] != 'unchanged' else '配置没有变化，无需应用。',
                              backup=result.get('backup'), outcome=(result.get('runtime') or {}).get('reason') or result['status'])
-            admin.snapshots.pop(body.get('snapshot_id'), None)
     except Exception as error:
         code = str(error).split(':', 1)[0]
         message = {'APPLY_FAILED_ROLLED_BACK': '加载失败，已恢复此次保存前的配置和更新计划。',
                    'ROLLBACK_UNCONFIRMED': '加载失败，原保存文件已还原，但运行恢复尚未通过验证；请检查系统服务和恢复提示。',
                    'EXTERNAL_CONFIG_CONFLICT': '检测到外部修改，请检查运行状态并通过管理脚本恢复。',
                    'CONFIG_REVISION_CONFLICT': '配置已变化，未写入，请重新读取后再保存。',
-                   'CONFIG_CHANGED': '运行配置或快照已变化，未写入，请重新读取后再保存。',
                    'MANAGEMENT_BUSY': '其他管理任务正在进行，请稍后重试。'}.get(code, '校验或应用失败，配置未保存；请检查订阅与规则。')
         details = editor_error_details(error) or {'error': code if re.fullmatch(r'[A-Z_]{3,64}', code) else 'OPERATION_FAILED'}
         with admin.lock:

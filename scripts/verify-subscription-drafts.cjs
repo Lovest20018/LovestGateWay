@@ -8,11 +8,7 @@ const {chromium}=require(process.env.PPGW_PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'..'),output=path.resolve(process.argv[2]||path.join(root,'dist/subscription-flow-ui'));
 const origin='http://127.0.0.1:18886';
 function python(code,value){return JSON.parse(execFileSync(process.env.PPGW_PYTHON||'python',['-c',"import sys,json;sys.path.insert(0,'integration');"+code],{cwd:root,input:JSON.stringify(value),encoding:'utf8'}));}
-const defaults=python("from manage_model import SCHEMA,SECRET_KEYS,public_settings;s={ns:{k:v[1] for k,v in f.items()} for ns,f in SCHEMA.items()};s['ini'].update(mode='suburl',yamlfile='custom.yaml',suburl='https://example.com/main-config');print(json.dumps({'settings':public_settings(s),'schema':{ns:{k:{'type':v[0],'secret':k in SECRET_KEYS,'constraints':v[2:]} for k,v in f.items()} for ns,f in SCHEMA.items()}}))",null);
-let document={proxies:[{name:'N1',type:'socks5',server:'127.0.0.1',port:9}],
-  'proxy-providers':{Airport:{type:'http',url:'https://example.com/nested-provider',path:'./providers/airport.yaml'}},
-  'proxy-groups':[{name:'Main',type:'select',proxies:['N1','DIRECT']}],rules:['MATCH,Main']};
-let projected=python('from clash_ppsub import editor_config;print(json.dumps(editor_config(json.load(sys.stdin))[0]))',document);
+const defaults=python("from manage_model import SCHEMA,SECRET_KEYS,public_settings;s={ns:{k:v[1] for k,v in f.items()} for ns,f in SCHEMA.items()};s['ini'].update(mode='suburl',suburl='ppsub@http://127.0.0.1/ppsub.json');print(json.dumps({'settings':public_settings(s),'schema':{ns:{k:{'type':v[0],'secret':k in SECRET_KEYS,'constraints':v[2:]} for k,v in f.items()} for ns,f in SCHEMA.items()}}))",null);
 const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://example.com/native'}],'node-groups':[{name:'Native group',subs:['all']}],rules:[]};
 (async()=>{
   const browser=await chromium.launch({channel:'chrome',headless:true});
@@ -20,15 +16,14 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     const context=await browser.newContext({viewport:{width:1440,height:980},reducedMotion:'reduce'}),page=await context.newPage(),errors=[],requests=[];
     page.setDefaultTimeout(10000);page.on('pageerror',error=>errors.push(error.message));
     await page.addInitScript(()=>localStorage.setItem('PaoPaoGateWay',JSON.stringify({clashAPIConfigs:[{secret:'fixture-token'}]})));
-    const model={...defaults,revision:'a'.repeat(64),assets:['custom.yaml','second.yaml'],source:{url:'https://example.com/main-config',native_ppsub:false,local_policy:true},mihomo_installed:true};
-    let operation=null,job=null,savedEditor=null,sourceSwitched=0,mismatchSettings=false;
-    const sourceDetails={kind:'remote_yaml',url:'https://example.com/main-config',local_policy:{present:true,applies:true,sections:['proxy-groups','rules']}};
+    const model={...defaults,revision:'a'.repeat(64),assets:[],source:{native_ppsub:true,local_policy:true},mihomo_installed:true};
+    let operation=null,job=null,savedEditor=null,savedPpsub=structuredClone(native),mismatchSettings=false;
+    const sourceDetails=()=>({kind:'native_ppsub',local_policy:{present:model.source.local_policy,applies:model.source.local_policy,sections:['proxy-groups','rules']}});
     let previewPlan={action:'restart',core_action:'restart',core_active:true,pending_load:false,services:[]};
-    const changeSummary={schema:1,changed:true,subscriptions:{counts:{before:1,after:1,added:0,removed:0,modified:1},changed:true,order_changed:false,names:{modified:['Airport']}},
+    const changeSummary={schema:1,changed:true,subscriptions:{counts:{before:1,after:1,added:0,removed:0,modified:1},changed:true,order_changed:false,names:{modified:['Native provider']}},
       node_groups:{counts:{before:1,after:2,added:1,removed:0,modified:0},changed:true,order_changed:true,names:{added:['<img src=x onerror=alert(1)>']},names_truncated:true},
       rule_providers:{counts:{before:0,after:0,added:0,removed:0,modified:0},changed:false},rules:{counts:{before:1,after:2,added:1,removed:0,modified:0},changed:true,unit:'lines'},features:{changed:true,modified:1,changed_keys:['global_monitor']}};
     let providerRows=[],providerPolls=0,editorConfigReads=0;
-    const kind=()=>model.source.native_ppsub?'ppsub':'clash_patch';
     const sessions=sessionFixture({proof:()=> 'fixture-token'});
     await page.route(origin+'/**',async route=>{
       const request=route.request(),target=new URL(request.url()).pathname,body=request.method()==='POST'?request.postDataJSON():null;
@@ -37,30 +32,28 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
         if(target==='/sniffbox/settings/config')return reply(mismatchSettings?{...model,revision:'f'.repeat(64)}:model);
         if(target==='/sniffbox/settings/status')return reply({management:{state:'unknown',recent:[]},runtime:{},running_mode:model.settings.ini.mode,source:model.source});
         if(target==='/sniffbox/subscription/providers'){providerPolls++;return reply({subscriptions:providerRows});}
-        if(target==='/sniffbox/subscription/status')return reply({ready:true,ppsub_write_allowed:true,edit_kind:kind(),base_revision:model.revision,operation});
-        if(target==='/sniffbox/subscription/config'){editorConfigReads++;return reply({config:model.source.native_ppsub?native:projected,write_allowed:true,edit_kind:kind(),base_revision:model.revision,settings_revision:model.revision,source_details:sourceDetails,snapshot_id:'snapshot',node_choices:['N1'],notice:'Fixture source: '+model.settings.ini.mode});}
+        if(target==='/sniffbox/subscription/status')return reply({ready:true,ppsub_write_allowed:true,edit_kind:'ppsub',base_revision:model.revision,operation});
+        if(target==='/sniffbox/subscription/config'){editorConfigReads++;return reply({config:savedPpsub,write_allowed:true,edit_kind:'ppsub',base_revision:model.revision,settings_revision:model.revision,source_details:sourceDetails(),notice:'Fixture native PPsub'});}
         if(target==='/sniffbox/settings/preview'){
           requests.push({target,body});
-          if(model.source.local_policy&&Object.keys(body.patch.ini||{}).some(key=>['mode','suburl','yamlfile'].includes(key))&&!body.reset_source)return reply({error:'SOURCE_CONFLICT'},409);
-          return reply({action:'restart',changes:body.patch,effects:{core:'restart',source_reset:model.source.local_policy,services:[]}});
+          return reply({action:'restart',changes:body.patch,effects:{core:'restart',source_reset:false,services:[]}});
         }
         if(target==='/sniffbox/settings/apply'){
           requests.push({target,body});job=body;
           assert.equal(body.kind,'config');
           const patch=body.payload.patch.ini;
           Object.assign(model.settings.ini,patch);
-          if(patch.suburl)model.source.url=patch.suburl;
-          if(Object.keys(patch).some(key=>['mode','suburl','yamlfile'].includes(key))){model.source.local_policy=false;model.source.native_ppsub=!!body.payload.source_ppsub;}
-          if(body.payload.source_ppsub)assert.deepEqual(JSON.parse(body.payload.source_ppsub),native);
-          model.revision=(BigInt('0x'+model.revision)+1n).toString(16).padStart(64,'0');operation=null;sourceSwitched++;
+          assert.equal(Object.hasOwn(body.payload,'source_ppsub'),false,'the source draft is never applied');
+          model.revision=(BigInt('0x'+model.revision)+1n).toString(16).padStart(64,'0');operation=null;
           return reply({id:body.id,status:'queued'},202);
         }
         if(target.startsWith('/sniffbox/settings/jobs/'))return reply({id:job.id,status:'succeeded',result:{runtime:{status:'running'}}});
         if(target==='/sniffbox/subscription/apply'){
           requests.push({target,body});
-          if(body.dry_run)return reply({action:'restart',changes:body.settings_patch,editor_changed:true,save_target:'local_policy',change_summary:changeSummary,application:previewPlan,source_details:{...sourceDetails,url:undefined}});
+          assert.equal(body.edit_kind,'ppsub');
+          if(body.dry_run)return reply({action:'restart',changes:body.settings_patch,editor_changed:true,save_target:'ppsub',change_summary:changeSummary,application:previewPlan,source_details:sourceDetails()});
           savedEditor=body;
-          projected=JSON.parse(body.value);model.settings.ini.subtime=body.settings_patch.ini.subtime;model.source.local_policy=true;
+          savedPpsub=JSON.parse(body.value);model.settings.ini.subtime=body.settings_patch.ini.subtime;
           model.revision=(BigInt('0x'+model.revision)+1n).toString(16).padStart(64,'0');operation={id:body.operation_id,status:'applied',message:'Combined fixture saved'};
           return reply(operation,202);
         }
@@ -91,7 +84,7 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     assert.equal(requests.at(-1).body.settings_revision,model.revision);
     assert.match(await page.locator('.source-override').first().textContent(),/节点组、规则/);
     assert.match(await page.locator('#preview-content .source-override').textContent(),/此次将使用本地覆盖/);
-    assert.match(await page.locator('[data-change-section="subscriptions"]').textContent(),/修改 1.*修改：Airport/s);
+    assert.match(await page.locator('[data-change-section="subscriptions"]').textContent(),/修改 1.*修改：Native provider/s);
     assert.match(await page.locator('[data-change-section="node_groups"]').textContent(),/新增 1.*顺序已调整/s);
     assert.match(await page.locator('[data-change-section="rules"]').textContent(),/1 → 2/);
     assert.equal(await page.locator('#preview-content img').count(),0,'names must render as text');
@@ -155,13 +148,25 @@ const native={exported_at:'fixture',subs:[{name:'Native provider',url:'https://e
     await subscriptions();await reload(true);await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
     await subscriptions();await ready();
-    await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.getByRole('button',{name:'切换配置来源',exact:true}).click();await page.locator('.source-switch').getByRole('button',{name:'修改地址',exact:true}).click();await page.locator('#source-url').fill('https://example.com/pending-source');
+    const sourceTab=page.getByRole('tab',{name:'配置来源',exact:true});
+    await sourceTab.click();
+    await page.getByRole('button',{name:'切换配置来源',exact:true}).click();
+    const sourceDraft={...native,subs:[{name:'Pending provider',url:'https://example.com/pending-source'}]};
+    await page.locator('#source-ppsub').setInputFiles({name:'pending.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(sourceDraft))});
+    await page.getByText('LovestSub 文件已选中，预览并确认后才会切换来源。',{exact:true}).waitFor();
     await settings();assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),true);
-    await subscriptions();await page.getByRole('tab',{name:'配置来源',exact:true}).click();assert.equal(await page.locator('#source-url').inputValue(),'');await page.locator('.source-switch').getByRole('button',{name:'显示地址',exact:true}).click();assert.equal(await page.locator('#source-url').inputValue(),'https://example.com/pending-source');await page.getByRole('button',{name:'取消切换',exact:true}).click();await settings();
+    await subscriptions();await sourceTab.click();
+    await page.getByText('已选择 LovestSub 文件，等待预览确认。',{exact:true}).waitFor();
+    await page.getByRole('button',{name:'预览来源切换',exact:true}).click();
+    await page.locator('#preview-dialog').waitFor({state:'visible'});
+    assert.deepEqual(JSON.parse(requests.at(-1).body.source_ppsub),sourceDraft);
+    await page.locator('#cancel-preview').click();
+    await page.getByRole('button',{name:'取消切换',exact:true}).click();
+    await settings();
     assert.equal(await page.locator('#setting-ini-max_rec').isDisabled(),false);
     // A browser left open receives another browser/scheduler's provider result,
     // while preserving its unsaved source and provider schedule drafts.
-    model.source.native_ppsub=true;model.source.local_policy=false;operation=null;
+    model.source.local_policy=false;operation=null;
     await subscriptions();await reload();
     const mode=page.getByLabel('Native provider 更新方式',{exact:true});
     await mode.selectOption('auto');

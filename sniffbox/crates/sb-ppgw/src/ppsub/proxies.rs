@@ -1,6 +1,6 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
-use super::hosts::Mapping;
+use super::hosts::{Mapping, SubHosts};
 use super::state::LEGACY_MARK;
 use super::{LOG, SubResult, pp_log, pp_step, pp_warn, ystr};
 use std::collections::{HashMap, HashSet};
@@ -56,7 +56,7 @@ pub(crate) fn build_proxies(
             if let Some(name) = p["name"].as_str() {
                 used.insert(name.to_string());
             }
-            all.push(p.clone());
+            all.push(expand_alias_proxy(p, &r.hosts));
             if dns_burn {
                 burn_proxy(p, burn, &mut used, &mut all);
             }
@@ -89,6 +89,57 @@ pub(crate) fn build_proxies(
     result.extend(fixed);
     result.extend(others);
     result
+}
+
+fn expand_alias_proxy(p: &Yaml, hosts: &SubHosts) -> Yaml {
+    let Some(server) = p["server"].as_str() else {
+        return p.clone();
+    };
+    let Some(target) = hosts.alias_of(server) else {
+        return p.clone();
+    };
+    let Some(ph) = p.as_hash() else {
+        return p.clone();
+    };
+    let mut np = ph.clone();
+    np.insert(ystr("server"), ystr(target));
+    preserve_tls_sni(&mut np, server);
+    Yaml::Hash(np)
+}
+
+fn preserve_tls_sni(proxy: &mut yaml_rust2::yaml::Hash, original_server: &str) {
+    if has_non_empty_str(proxy, "sni") || has_non_empty_str(proxy, "servername") {
+        return;
+    }
+    let Some(kind) = proxy.get(&ystr("type")).and_then(Yaml::as_str) else {
+        return;
+    };
+    let tls_enabled = proxy
+        .get(&ystr("tls"))
+        .and_then(Yaml::as_bool)
+        .unwrap_or(false);
+    let has_reality = proxy
+        .get(&ystr("reality-opts"))
+        .and_then(Yaml::as_hash)
+        .is_some();
+    match kind.to_ascii_lowercase().as_str() {
+        "trojan" | "hysteria" | "hysteria2" | "tuic" | "anytls" => {
+            proxy.insert(ystr("sni"), ystr(original_server));
+        }
+        "http" | "socks5" if tls_enabled => {
+            proxy.insert(ystr("sni"), ystr(original_server));
+        }
+        "vmess" | "vless" if tls_enabled || has_reality => {
+            proxy.insert(ystr("servername"), ystr(original_server));
+        }
+        _ => {}
+    }
+}
+
+fn has_non_empty_str(map: &yaml_rust2::yaml::Hash, key: &str) -> bool {
+    map.get(&ystr(key))
+        .and_then(Yaml::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn fold_alias(r: &SubResult, map: &Resolved, source: &str) -> Resolved {
@@ -156,7 +207,7 @@ pub(crate) fn static_hosts(sub_results: &[SubResult], ipv6: bool) -> HashMap<Str
     out
 }
 
-fn usable_static(list: &[IpAddr], ipv6: bool) -> Vec<IpAddr> {
+pub(super) fn usable_static(list: &[IpAddr], ipv6: bool) -> Vec<IpAddr> {
     list.iter()
         .copied()
         .filter(|ip| (ipv6 || ip.is_ipv4()) && crate::fallback::is_usable_node_ip(*ip))
@@ -260,10 +311,10 @@ pub(crate) fn resolve_all(
         .collect();
     for j in &jobs {
         pp_step(&format!(
-            "[{}] subdns: resolving {} domain(s) via sub's own DNS [{}]",
+            "[{}] subdns: resolving {} domain(s) via {} subscription DNS server(s)",
             j.name,
             j.domains.len(),
-            j.specs.join(", ")
+            j.specs.len()
         ));
     }
 
@@ -915,7 +966,7 @@ mod tests {
             pairs(&[
                 ("A_HK@subdns3", "11.0.1.3"),
                 ("A_JP@hosts7", "12.0.0.7"),
-                ("A_HK", "hk.example.com"),
+                ("A_HK", "entry.example.net"),
                 ("A_HK@1", "11.0.0.1"),
                 ("A_HK@3", "11.0.0.3"),
                 ("A_JP", "jp.example.com"),
@@ -950,11 +1001,11 @@ mod tests {
         assert_eq!(
             after,
             pairs(&[
-                ("A_HK", "hk.example.com"),
+                ("A_HK", "entry.example.net"),
                 ("A_HK@4", "11.0.0.4"),
                 ("A_HK@4A", "11.0.9.4"),
             ]),
-            "the alias only appends"
+            "alias expands the domain node server while burned IP nodes stay stable"
         );
     }
 
@@ -981,7 +1032,7 @@ mod tests {
                 ("A_S@hosts1", "12.0.0.1"),
                 ("B_S@hosts2", "12.0.0.2"),
                 ("A_S", "shared.example.com"),
-                ("A_X", "x.example.com"),
+                ("A_X", "ta.example.net"),
                 ("A_X@5", "11.0.0.5"),
                 ("B_S", "shared.example.com"),
                 ("B_X", "x.example.com"),
@@ -1004,6 +1055,45 @@ mod tests {
             name_server(&build_proxies(&[a], &res, false)),
             pairs(&[("A_HK", "hk.example.com")])
         );
+    }
+
+    #[test]
+    fn dns_burn_off_expands_alias_and_preserves_tls_sni() {
+        let a = sub_from(
+            "A",
+            r#"
+hosts:
+  alias.example.com: target.example.net
+proxies:
+  - {name: SS, server: alias.example.com, type: ss}
+  - {name: TR, server: alias.example.com, type: trojan}
+  - {name: TR_SNI, server: alias.example.com, type: trojan, sni: keep.sni.example}
+  - {name: VL, server: alias.example.com, type: vless, tls: true}
+  - {name: VM, server: alias.example.com, type: vmess, tls: false}
+  - {name: HY2, server: alias.example.com, type: hysteria2}
+"#,
+        );
+        let out = build_proxies(&[a], &Resolution::default(), false);
+        assert_eq!(out.len(), 6);
+        assert_eq!(out[0]["server"].as_str(), Some("target.example.net"));
+        assert!(out[0]["sni"].is_badvalue());
+        assert!(out[0]["servername"].is_badvalue());
+
+        assert_eq!(out[1]["server"].as_str(), Some("target.example.net"));
+        assert_eq!(out[1]["sni"].as_str(), Some("alias.example.com"));
+
+        assert_eq!(out[2]["server"].as_str(), Some("target.example.net"));
+        assert_eq!(out[2]["sni"].as_str(), Some("keep.sni.example"));
+
+        assert_eq!(out[3]["server"].as_str(), Some("target.example.net"));
+        assert_eq!(out[3]["servername"].as_str(), Some("alias.example.com"));
+        assert!(out[3]["sni"].is_badvalue());
+
+        assert_eq!(out[4]["server"].as_str(), Some("target.example.net"));
+        assert!(out[4]["servername"].is_badvalue());
+
+        assert_eq!(out[5]["server"].as_str(), Some("target.example.net"));
+        assert_eq!(out[5]["sni"].as_str(), Some("alias.example.com"));
     }
 
     #[test]
@@ -1163,7 +1253,7 @@ mod tests {
             out,
             pairs(&[
                 ("A_HK@subdns3", "11.0.1.3"),
-                ("A_HK", "hk.example.com"),
+                ("A_HK", "entry.example.net"),
                 ("A_HK@1", "11.0.0.1"),
                 ("A_HK@3", "11.0.0.3"),
             ])

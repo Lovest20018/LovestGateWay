@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Loopback PPsub save/apply helper for the authenticated native panel."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from collections import OrderedDict
 import hashlib
 import hmac
 import json
 import os
 from pathlib import Path
 import re
-import secrets
 import shlex
 import subprocess
 import threading
@@ -16,10 +14,9 @@ import time
 from functools import wraps
 import logging
 from manage_common import Layout, ManagementError, require_idle, operation_lock as management_lock
+from manage_model import parse_assignments, settings_revision
 from urllib.parse import urlsplit
 from gateway_api import CoreClient, ApiError
-from clash_ppsub import editor_config, running_document, merge_editor, fingerprint, source_identity, feature_options, apply_features, logical_document
-from clash_policy import build_policy, SECTIONS
 
 CONFIG = Path('/etc/paopaogw/files/ppgw.ini')
 FILES = CONFIG.parent
@@ -27,6 +24,7 @@ STATE = Path('/var/lib/paopaogw/admin')
 CODE = Path(__file__).resolve().parent
 CORE_TOKEN = Path('/var/lib/paopaogw/core-token')
 POLICY = FILES / 'clash-policy.json'
+CLASH_YAML_EDITING_MESSAGE = '本版本仅支持通过 LovestSub 编辑器维护配置，请先在“配置来源”切换到 LovestSub。'
 
 
 def managed_worker(function):
@@ -129,7 +127,6 @@ class Admin:
         self._operation_layout = layout
         from manage_operations import restore_operation
         self._operation = restore_operation(layout or management_layout())
-        self.snapshots = OrderedDict()
         self.core = CoreClient(CORE_TOKEN)
 
     def authenticated(self, authorization):
@@ -268,7 +265,6 @@ class Admin:
     def node_cache(self):
         try:
             from manage_subscription_schedule import provider_status
-            from manage_model import parse_assignments
             layout = management_layout()
             values = parse_assignments(CONFIG.read_bytes())
             if not native_ppsub_source(values): return {'subscriptions': []}
@@ -277,7 +273,6 @@ class Admin:
         except (OSError, ValueError): return {'subscriptions': []}
 
     def refresh_nodes(self, body):
-        from manage_model import settings_revision
         if (set(body) - {'kind', 'base_revision', 'settings_revision', 'operation_id', 'providers'}
                 or not {'kind', 'base_revision', 'settings_revision', 'operation_id'} <= set(body)
                 or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', str(body.get('operation_id', '')))):
@@ -367,7 +362,6 @@ class Admin:
 
     def current_config(self):
         raw = CONFIG.read_bytes()
-        from manage_model import settings_revision
         layout = management_layout()
         full_revision = settings_revision(layout)
         # Read the Rust parser's quoted assignments without executing a shell.
@@ -380,49 +374,27 @@ class Admin:
         # The editable source URL is retained for the existing source editor;
         # preview explanations use only the safe kind/section fields.
         details['url'] = suburl
-        if native_ppsub_source(values) and (local.is_file() or runtime.is_file()):
+        native = native_ppsub_source(values)
+        if native and (local.is_file() or runtime.is_file()):
             data = json.loads((local if local.is_file() else runtime).read_bytes())
-            source, notice = 'ppsub', '已载入当前 PPsub 配置，编辑完成后可直接保存并应用。'
-        elif values.get('mode') in {'suburl', 'yaml'}:
-            document = running_document()
-            data, counts = editor_config(document)
-            existing_policy = json.loads(POLICY.read_bytes()) if POLICY.is_file() else None
-            if existing_policy and existing_policy.get('source_identity') == source_identity(values):
-                for key in ('global_monitor', 'restart_cron', 'shadowsocks_in'):
-                    data[key] = (existing_policy.get('features') or {}).get(key, {'enable': False})
-                for group in data['node-groups']:
-                    for feature in (existing_policy.get('features') or {}).get('node-groups', []):
-                        if feature.get('name') == group['name']:
-                            group.update({key: value for key, value in feature.items() if key != 'name'})
-            source = 'clash_runtime'
-            notice = (f"已读取实际运行配置：{counts['node_groups']} 个节点组、{counts['rules']} 条分流规则、"
-                      f"{counts['rule_providers']} 个规则订阅。编辑后会在原配置上合并修改，"
-                      '其他字段保留，订阅节点继续更新；修改的分组和规则作为本地策略保存。')
-            snapshot_id = secrets.token_urlsafe(24)
-            with self.lock:
-                self.snapshots[snapshot_id] = {'created': time.monotonic(), 'document': document,
-                    'baseline': data, 'revision': revision(raw), 'values': values,
-                    'policy': POLICY.read_bytes() if POLICY.exists() else None}
-                while len(self.snapshots) > 16:
-                    self.snapshots.popitem(last=False)
-            return {'config': data, 'source': source, 'notice': notice, 'counts': counts,
-                    'base_revision': revision(raw), 'write_allowed': True,
-                    'edit_kind': 'clash_patch', 'snapshot_id': snapshot_id,
-                    'settings_revision': full_revision, 'source_details': details,
-                    'synthetic_source': not bool(document.get('proxy-providers')),
-                    'node_choices': [row['name'] for row in document.get('proxies', [])
-                                     if isinstance(row, dict) and isinstance(row.get('name'), str)]}
+            source, notice = 'ppsub', '已载入当前 LovestSub 配置，编辑完成后可直接保存并应用。'
         else:
             data = {'version': 'PaoPaoGateWay 3.1', 'exported_at': 'new-config',
                     'subs': [], 'node-groups': [], 'rules': []}
-            source, notice = 'empty', '当前不是订阅或 YAML 模式，请先在上方切换配置来源。'
-        return {'config': data, 'source': source, 'notice': notice, 'node_cache': self.node_cache(), 'base_revision': revision(raw), 'write_allowed': source != 'empty',
+            source = 'empty'
+            if native:
+                notice = '尚未读取到 LovestSub 配置，请在“配置来源”导入 LovestSub JSON。'
+            elif values.get('mode') in {'yaml', 'suburl'}:
+                notice = '当前使用完整 Clash 配置，本版本不再支持在线编辑完整 Clash YAML；请先在“配置来源”切换到 LovestSub。'
+            else:
+                notice = '当前不是 LovestSub 模式，请先在“配置来源”切换到 LovestSub。'
+        return {'config': data, 'source': source, 'notice': notice, 'node_cache': self.node_cache(),
+                'base_revision': revision(raw), 'edit_kind': 'ppsub', 'write_allowed': source != 'empty',
                 'settings_revision': full_revision, 'source_details': details}
 
     def status(self):
         raw = CONFIG.read_bytes()
-        mode = re.search(rb'^mode=["\']?([a-z0-9]+)', raw, re.MULTILINE)
-        info = {}
+        values = parse_assignments(raw)
         try:
             info = self.core.request('/sniffbox/info')
             running_mode = info.get('mode')
@@ -431,19 +403,19 @@ class Admin:
             ready, running_mode = False, None
         with self.lock:
             operation = dict(self.operation) if self.operation else None
-        return {'base_revision': revision(raw), 'saved_mode': mode.group(1).decode() if mode else 'unknown',
+        return {'base_revision': revision(raw), 'saved_mode': values.get('mode') or 'unknown',
                 'running_mode': running_mode, 'ready': ready,
                 'mihomo_installed': (CODE / 'bin/clash').is_file(), 'operation': operation, 'node_cache': self.node_cache(),
-                'ppsub_write_allowed': ready,
-                'edit_kind': 'clash_patch' if running_mode in {'yaml', 'suburl'} and not info.get('ppsub') else 'ppsub'}
+                'ppsub_write_allowed': ready and native_ppsub_source(values),
+                'edit_kind': 'ppsub'}
 
     def apply(self, body):
         if isinstance(body, dict) and body.get('kind') == 'refresh_nodes': return self.refresh_nodes(body)
-        if isinstance(body, dict) and body.get('kind') in {'editor', 'export_yaml'}:
+        if isinstance(body, dict) and body.get('kind') == 'editor':
             from unified_editor import handle
             return handle(self, body)
-        if isinstance(body, dict) and body.get('kind') == 'clash_patch':
-            return self.apply_clash(body)
+        if isinstance(body, dict) and body.get('kind') in {'clash_patch', 'export_yaml'}:
+            raise ValueError('CLASH_YAML_EDITING_UNSUPPORTED')
         changes, upload = validate_subscription(body)
         if body.get('kind') == 'ppsub':
             values = config_values()
@@ -469,117 +441,6 @@ class Admin:
             thread.daemon = True
             thread.start()
             return dict(self.operation)
-
-    def apply_clash(self, body):
-        if (set(body) != {'kind', 'value', 'base_revision', 'operation_id', 'snapshot_id'}
-                or not isinstance(body['value'], str) or len(body['value'].encode()) > 1024 * 1024):
-            raise ValueError('INVALID_REQUEST')
-        operation_id = body['operation_id']
-        if not isinstance(operation_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{8,64}', operation_id):
-            raise ValueError('INVALID_OPERATION_ID')
-        if not isinstance(body['snapshot_id'], str):
-            raise ValueError('CONFIG_CHANGED')
-        submitted = json.loads(body['value'])
-        with self.lock:
-            if self.operation and self.operation['id'] == operation_id:
-                return dict(self.operation)
-            if self.operation and self.operation['status'] == 'applying':
-                raise ValueError('BUSY')
-            snapshot = self.snapshots.get(body['snapshot_id'])
-            if not snapshot or time.monotonic() - snapshot['created'] > 1800:
-                raise ValueError('CONFIG_CHANGED')
-            original = CONFIG.read_bytes()
-            if (body['base_revision'] != revision(original) or revision(original) != snapshot['revision']
-                    or fingerprint(running_document()) != fingerprint(snapshot['document'])
-                    or (POLICY.read_bytes() if POLICY.exists() else None) != snapshot['policy']):
-                raise ValueError('CONFIG_CHANGED')
-            merged, source_url, renames = merge_editor(snapshot['document'], snapshot['baseline'], submitted)
-            features = feature_options(submitted)
-            old_features = feature_options(snapshot['baseline'])
-            changes = {'suburl': source_url} if source_url else {}
-            if merged == snapshot['document'] and not changes and features == old_features:
-                self.operation = {'id': operation_id, 'status': 'unchanged', 'message': '配置未改变，无需重启。'}
-                return dict(self.operation)
-            candidate = update_config(original, changes) if changes else original
-            values = dict(snapshot['values'], **changes)
-            existing = json.loads(snapshot['policy']) if snapshot['policy'] else None
-            policy = build_policy(snapshot['document'], merged, existing, source_identity(values), renames)
-            policy['features'] = features
-            merged = apply_features(merged, features)
-            self.operation = {'id': operation_id, 'status': 'applying', 'message': '正在校验并保存本地分流策略…'}
-            thread = threading.Timer(0.5, self.clash_worker,
-                args=(snapshot, original, candidate, policy, merged))
-            thread.daemon = True
-            thread.start()
-            return dict(self.operation)
-
-    @managed_worker
-    def clash_worker(self, snapshot, original, candidate, policy, document):
-        import yaml
-        policy_bytes = (json.dumps(policy, ensure_ascii=False, indent=2) + '\n').encode()
-        written = False
-        check_file = STATE / ('candidate-' + self.operation['id'] + '.yaml')
-        try:
-            STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
-            atomic_write(check_file, yaml.safe_dump(document, allow_unicode=True, sort_keys=False).encode())
-            pid = subprocess.check_output(['systemctl', 'show', 'paopaogw', '--property=MainPID', '--value'],
-                                          text=True, timeout=5).strip()
-            if not pid.isascii() or not pid.isdigit() or int(pid) <= 0:
-                raise ValueError('CORE_NOT_RUNNING')
-            # Validate against the same files/rule cache as the live core, without loading it.
-            subprocess.run(['nsenter', '-t', pid, '-m', '--', str(CODE / 'bin/clash'), '-t',
-                            '-d', '/etc/config/clash', '-f', str(check_file)],
-                           check=True, timeout=25, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if (CONFIG.read_bytes() != original or fingerprint(running_document()) != fingerprint(snapshot['document'])
-                    or (POLICY.read_bytes() if POLICY.exists() else None) != snapshot['policy']):
-                raise ValueError('CONFIG_CHANGED')
-            if not (CODE / 'clash_policy.py').is_file():
-                raise ValueError('POLICY_HELPER_MISSING')
-            atomic_write(STATE / 'ppgw.before-policy.ini', original)
-            if snapshot['policy'] is not None:
-                atomic_write(STATE / 'clash-policy.before.json', snapshot['policy'])
-            atomic_write(POLICY, policy_bytes)
-            written = True
-            if candidate != original:
-                atomic_write(CONFIG, candidate)
-            subprocess.run(['systemctl', 'restart', 'paopaogw'], check=True, timeout=30,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            deadline = time.monotonic() + 90
-            while time.monotonic() < deadline:
-                try:
-                    info = self.core.request('/sniffbox/info')
-                    if info.get('clash_version'):
-                        actual = running_document()
-                        expected = logical_document(document)
-                        if all(actual.get(key) == expected.get(key) for key in policy['sections']):
-                            with self.lock:
-                                self.operation.update(status='applied', message='修改已合并到完整配置，订阅节点仍按原设置更新。')
-                            return
-                except (ApiError, OSError, ValueError, subprocess.SubprocessError):
-                    pass
-                time.sleep(1)
-            raise RuntimeError('NOT_READY')
-        except Exception:
-            restored = not written
-            if written:
-                try:
-                    if POLICY.read_bytes() == policy_bytes and CONFIG.read_bytes() in (original, candidate):
-                        if snapshot['policy'] is None:
-                            POLICY.unlink()
-                        else:
-                            atomic_write(POLICY, snapshot['policy'])
-                        if candidate != original:
-                            atomic_write(CONFIG, original)
-                        subprocess.run(['systemctl', 'restart', 'paopaogw'], check=True, timeout=30,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        restored = True
-                except Exception:
-                    restored = False
-            with self.lock:
-                self.operation.update(status='failed', recovery='check_required' if written else 'none', message=('配置校验或加载失败，原保存文件已保留/还原；运行结果尚未确认，请检查节点引用和规则。'
-                    if restored else '加载失败且配置已被外部修改，请检查运行状态。'))
-        finally:
-            check_file.unlink(missing_ok=True)
 
     @managed_worker
     def worker(self, original, candidate, upload):
@@ -608,7 +469,7 @@ class Admin:
                     info = self.core.request('/sniffbox/info')
                     if info.get('mode') in {'yaml', 'suburl'} and info.get('clash_version'):
                         with self.lock:
-                            self.operation.update(status='applied', message='PPsub 配置已加载，可以到代理页选择节点。')
+                            self.operation.update(status='applied', message='LovestSub 配置已加载，可以到代理页选择节点。')
                         return
                 except ApiError:
                     pass
@@ -700,6 +561,8 @@ class Handler(BaseHTTPRequestHandler):
                 from unified_editor import editor_error_details
                 details = editor_error_details(error)
                 if details:
+                    if details['error'] == 'CLASH_YAML_EDITING_UNSUPPORTED':
+                        details['message'] = CLASH_YAML_EDITING_MESSAGE
                     return self.respond(400, details)
             code = str(error).split(':', 1)[0]
             if code == 'SYSTEM_OPERATION_FAILED' and self.path == '/api/subscription':
@@ -709,6 +572,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(409 if code in {'CONFIG_REVISION_CONFLICT', 'MANAGEMENT_BUSY', 'CONFIG_CHANGED'} else 400,
                                 {'error': code if code in allowed else 'INVALID_EDITOR_REQUEST'})
         except ValueError as error:
+            if self.path == '/api/subscription' and str(error) == 'CLASH_YAML_EDITING_UNSUPPORTED':
+                return self.respond(400, {'error': str(error), 'message': CLASH_YAML_EDITING_MESSAGE})
             if self.path == '/api/subscription' and isinstance(body, dict) and body.get('kind') == 'editor':
                 from unified_editor import editor_error_details
                 details = editor_error_details(error)
@@ -719,19 +584,10 @@ class Handler(BaseHTTPRequestHandler):
                 details = error_details(error)
                 return self.respond(409 if details['error'] in {'MANAGEMENT_BUSY', 'CORE_UPLOAD_BUSY'} else 400,
                                     {'error': details['error'], 'message': details['message']})
-            messages = {
-                'CONFIG_CHANGED': (409, '运行配置已变化或编辑快照已过期，请重新载入“当前配置”。'),
-                'CLASH_GLOBAL_OPTIONS_UNSUPPORTED': (400, '完整配置当前支持节点组、规则和订阅链接编辑；全局监测、定时重启与 Shadowsocks 入站请保留原设置。'),
-                'CLASH_GROUP_OPTION_UNSUPPORTED': (400, '该节点组选项无法直接映射到 Clash，请保留原模式或使用手动选择、测速、故障转移。'),
-                'CLASH_RULE_URL_UNSUPPORTED': (400, '请将规则填写为手写规则，或使用 RULE-SET 规则订阅。'),
-                'CLASH_SUBSCRIPTION_STRUCTURE_UNSUPPORTED': (400, '当前完整订阅请保留提供商条目，可修改链接；多订阅合并请使用原生 PPsub 配置。'),
-                'CLASH_SUBSCRIPTION_RENAME_UNSUPPORTED': (400, '当前完整订阅请保留提供商名称，可修改订阅链接。'),
-            }
-            if str(error) in messages:
-                status, message = messages[str(error)]
-                return self.respond(status, {'error': message})
+            if str(error) == 'CONFIG_CHANGED':
+                return self.respond(409, {'error': '配置已变化，请重新读取后再试。'})
             if str(error) == 'CLASH_PPSUB_NOT_EQUIVALENT':
-                return self.respond(409, {'error': '当前为完整 Clash/Mihomo 配置，不能以 PPsub 简化配置覆盖。当前配置可完整读取查看。'})
+                return self.respond(409, {'error': '请先在“配置来源”确认切换到 LovestSub。'})
             self.respond(400, {'error': '请求无效、配置已变化或有任务正在运行，请刷新后重试。'})
         except (UnicodeError, KeyError):
             self.respond(400, {'error': '请求无效、配置已变化或有任务正在运行，请刷新后重试。'})

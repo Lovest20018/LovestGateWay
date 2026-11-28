@@ -1,6 +1,6 @@
 const {setAppearance}=require('./browser-appearance-fixture.cjs');
 const {sessionFixture}=require('./browser-session-fixture.cjs');
-/* Exercise the source editor and opaque compatibility dashboard with synthetic data; no live Gateway. */
+/* Exercise the PPsub editor inside the dashboard with synthetic data. */
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
@@ -9,21 +9,11 @@ const {chromium} = require(process.env.PPGW_PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(__dirname, '..');
 const output = path.resolve(process.argv[2] || path.join(root, 'dist/merged-upstream-ui'));
 const origin = 'http://127.0.0.1:18884';
-const raw = {
-  proxies: [{name: 'N1', type: 'socks5', server: '127.0.0.1', port: 9, password: 'fixture-only'}],
-  secret: 'fixture-core', dns: {nameserver: ['1.1.1.1']},
-  'proxy-groups': [
-    {name: 'Main', type: 'select', proxies: ['Backup', 'DIRECT'], hidden: true},
-    {name: 'Backup', type: 'fallback', proxies: ['N1', 'N1'], url: 'https://example.com/test', interval: 135, lazy: true},
-  ],
-  rules: ['PROCESS-NAME,fixture.exe,Main', 'DOMAIN-KEYWORD,foo#bar,DIRECT', 'MATCH,Main'],
-};
 function python(code, value) {
   return JSON.parse(execFileSync(process.env.PPGW_PYTHON || 'python', ['-c',
     "import sys,json;sys.path.insert(0,'integration');" + code],
     {cwd: root, input: JSON.stringify(value), encoding: 'utf8'}));
 }
-const projected = python("from clash_ppsub import editor_config;d=json.load(sys.stdin);print(json.dumps(editor_config(d)[0]))", raw);
 const defaults = python("from manage_model import SCHEMA,SECRET_KEYS,public_settings;s={ns:{k:v[1] for k,v in f.items()} for ns,f in SCHEMA.items()};s['ini'].update(mode='suburl',suburl='fixture-source',net_rec=True);print(json.dumps({'settings':public_settings(s),'schema':{ns:{k:{'type':v[0],'secret':k in SECRET_KEYS,'constraints':v[2:]} for k,v in f.items()} for ns,f in SCHEMA.items()}}))", null);
 const native = {
   version: 'PaoPaoGateWay 3.1', exported_at: 'fixture',
@@ -32,7 +22,8 @@ const native = {
   rules: [{fixrule: ['MATCH,Native Main']}],
 };
 
-async function exercise(browser, kind) {
+async function exercise(browser) {
+  const kind = 'ppsub';
   const context = await browser.newContext({viewport: {width: 1440, height: 960}, reducedMotion: 'reduce'});
   try {
     const page = await context.newPage(), errors = [];
@@ -41,9 +32,9 @@ async function exercise(browser, kind) {
     await page.addInitScript(() => localStorage.setItem('PaoPaoGateWay', JSON.stringify({
       clashAPIConfigs: [{secret: 'fixture-token'}],
     })));
-    let operation = null, saved = null, configReads = 0, expectedSource = null;
+    let operation = null, saved = null, configReads = 0;
     const management={state:'loaded',policy_state:'loaded',recent:[{kind:'policy',status:'succeeded',phase:'complete',updated_at:1793870400},{kind:'refresh_nodes',status:'unchanged',phase:'complete',updated_at:1793866800}]};
-    const model = {...structuredClone(defaults), revision: 'fixture-revision', assets: [], source: {url: kind === 'ppsub' ? 'ppsub@http://127.0.0.1/ppsub.json' : 'https://example.com/sub', native_ppsub: kind === 'ppsub', local_policy: true}, mihomo_installed: true,management,running_mode:'suburl'};
+    const model = {...structuredClone(defaults), revision: 'fixture-revision', assets: [], source: {native_ppsub:true,local_policy:false}, mihomo_installed: true,management,running_mode:'suburl'};
     let releaseInitialRead;
     const initialRead = new Promise(resolve => { releaseInitialRead = resolve; });
     const maintenanceRequests = [];
@@ -52,42 +43,34 @@ async function exercise(browser, kind) {
       const target = new URL(route.request().url()).pathname;
       if (target === '/sniffbox/settings/config') return route.fulfill({contentType: 'application/json', body: JSON.stringify(model)});
       if (target.startsWith('/sniffbox/')) {
-        let body = {mode: 'suburl', clash_version: 'fixture', ppsub: kind === 'ppsub'};
+        let body = {mode: 'suburl', clash_version: 'fixture', ppsub: true};
         if (target.endsWith('/status')) body = {
           ready: true, edit_kind: kind, ppsub_write_allowed: true, base_revision: 'fixture-revision', operation,
         };
-        if(target==='/sniffbox/settings/status')body={management,running_mode:'suburl',source:{local_policy:true}};
+        if(target==='/sniffbox/settings/status')body={management,running_mode:'suburl',source:model.source};
         if (target.endsWith('/config')) {
           if (++configReads === 1) {
             await Promise.race([initialRead, new Promise(resolve => setTimeout(resolve, 5000))]);
-            if (kind === 'ppsub') return route.fulfill({status: 503, contentType: 'application/json', body: '{"error":"TEMPORARY_FAILURE"}'});
+            return route.fulfill({status: 503, contentType: 'application/json', body: '{"error":"TEMPORARY_FAILURE"}'});
           }
           body = {
-          config: saved || (kind === 'ppsub' ? native : projected), source: kind === 'ppsub' ? 'ppsub' : 'clash_runtime',
-          edit_kind: kind, snapshot_id: 'fixture-snapshot', write_allowed: true,
-          base_revision: 'fixture-revision', settings_revision:'fixture-revision', synthetic_source:kind==='clash_patch', node_choices: ['N1'], notice: 'Synthetic fixture',
+            config:saved||native, source:'ppsub', edit_kind:kind, write_allowed:true,
+            base_revision:'fixture-revision', settings_revision:'fixture-revision', notice:'Synthetic fixture',
           };
         }
         if (/\/subscription\/(maintenance|core\/|policy\/reset)/.test(target)) maintenanceRequests.push(target);
         if (target.endsWith('/apply')) {
           assert.equal(sessions.authorized(route.request()),true);
           const payload = route.request().postDataJSON();
-          if(payload.kind==='export_yaml')return route.fulfill({contentType:'application/json',body:JSON.stringify({filename:'gateway-running.yaml',content:'proxies: []\ndns:\n  nameserver: [1.1.1.1]\n'})});
           assert.equal(payload.kind,'editor'); assert.equal(payload.edit_kind,kind);
           assert.equal(payload.base_revision,'fixture-revision');assert.equal(payload.settings_revision,'fixture-revision');
           const submitted=JSON.parse(payload.value);
-          if(payload.dry_run)return route.fulfill({contentType:'application/json',body:JSON.stringify({action:'restart',editor_changed:true,changes:payload.settings_patch,save_target:kind==='clash_patch'?'local_policy':'ppsub'})});
+          if(payload.dry_run)return route.fulfill({contentType:'application/json',body:JSON.stringify({action:'restart',editor_changed:true,changes:payload.settings_patch,save_target:'ppsub'})});
           saved=submitted;
-          if(kind==='clash_patch'){
-            assert.equal(payload.snapshot_id,'fixture-snapshot');
-            assert.deepEqual(saved.subs,[]);
-            assert.equal(saved['node-groups'].find(group=>group.failover).retries,4);
-          }else{
-            assert.equal(saved.subs[0].name,'Edited native provider');
-            assert.equal(saved.subs[0].url,'https://example.com/native-updated');
-            assert.equal(payload.settings_patch.ini.subtime,'9h');
-            model.settings.ini.subtime='9h';
-          }
+          assert.equal(saved.subs[0].name,'Edited native provider');
+          assert.equal(saved.subs[0].url,'https://example.com/native-updated');
+          assert.equal(payload.settings_patch.ini.subtime,'9h');
+          model.settings.ini.subtime='9h';
           operation = {id: payload.operation_id, status: 'applied', message: 'Fixture saved ' + kind};
           body = operation;
         }
@@ -119,11 +102,9 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator('.ppgw-subscription-editor input').first().isDisabled(), true);
     releaseInitialRead();
     const reload = page.getByRole('button', {name: '重新读取', exact: true});
-    if (kind === 'ppsub') {
-      await page.getByText('读取当前配置失败，请点击“重新读取”后再保存。', {exact: true}).waitFor();
-      assert.equal(await apply.isDisabled(), true);
-      await reload.click();
-    }
+    await page.getByText('读取当前配置失败，请点击“重新读取”后再保存。', {exact: true}).waitFor();
+    assert.equal(await apply.isDisabled(), true);
+    await reload.click();
     await page.locator('.groups').getByRole('button', {name:'删除',exact:true}).last().waitFor();
     await page.waitForFunction(() => document.querySelector('.source-editor')?.dataset.editorState==='loaded');
     const pageTabs=page.getByRole('tablist',{name:'订阅与策略分栏',exact:true});
@@ -185,7 +166,7 @@ async function exercise(browser, kind) {
     const confirm=(title,name)=>page.getByRole('dialog',{name:title,exact:true}).getByRole('button',{name,exact:true});
     await page.setViewportSize({width:1440,height:960});await added.getByRole('button',{name:'删除',exact:true}).click();await confirm('删除节点组','确认删除').click();assert.equal(await page.locator('.groups > .item').count(),groupCount);
 
-    if (kind === 'ppsub') {
+    {
       const name = page.locator('.subs [data-field="name"]').first();
       await name.fill('Temporary draft');
       const readsBeforeCancel = configReads;
@@ -196,8 +177,9 @@ async function exercise(browser, kind) {
       await reload.click();await confirm('重新读取配置','放弃并重新读取').click();await reread;
       await page.waitForFunction(() => document.querySelector('.source-editor')?.dataset.editorState==='loaded');
       assert.equal(await name.inputValue(), native.subs[0].name);
+      assert.equal(await apply.isDisabled(),true,'an unchanged editor cannot save');
       const choosing = page.waitForEvent('filechooser');
-      await page.getByRole('button', {name:'导入 PPsub',exact:true}).click();
+      await page.getByRole('button', {name:'导入 LovestSub',exact:true}).click();
       const chooser = await choosing;
       const imported = structuredClone(native); imported.subs[0].name = 'Imported provider';
       await chooser.setFiles({name: 'fixture.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported))});
@@ -225,28 +207,16 @@ async function exercise(browser, kind) {
     assert.equal(await page.locator('.monitor').getByLabel('订阅更新间隔', {exact: true}).count(), 1);
     assert.equal(await page.getByLabel('使用本地 YAML', {exact:true}).count(),0);
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();await page.getByRole('heading',{name:'当前配置来源',exact:true}).waitFor();await page.getByRole('tab',{name:'策略编辑',exact:true}).click();
-    if(kind==='clash_patch'){
-      assert.equal(await apply.isDisabled(),true,'an unchanged editor cannot save');
-      const fallbackRow=page.locator('.groups > .item').filter({has:page.locator('[data-field=retries]')}).first();if(!await fallbackRow.evaluate(node=>node.open))await fallbackRow.locator(':scope > summary').click();
-      const retries=fallbackRow.locator('[data-field=retries]');
-      await retries.fill('4');await retries.press('Tab');
-    }
     assert.equal(await apply.isDisabled(), false);
     await apply.click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});
     await page.locator('#apply').click();
     await page.getByText('Fixture saved ' + kind, {exact: true}).waitFor();
     assert.ok(saved);
-    if(kind==='clash_patch'){
-      assert.equal(await page.locator('.subs').isVisible(),false);
-      assert.equal(await page.locator('.phead .menuwrap').nth(1).isVisible(),false);
-      const download=page.waitForEvent('download');await page.getByRole('button',{name:'备份运行 YAML',exact:true}).click();
-      assert.equal((await download).suggestedFilename(),'gateway-running.yaml');
-    }
     assert.equal(await page.locator('#setting-ini-suburl').count(), 0);
     assert.equal(await page.getByRole('tab', {name: '订阅来源', exact: true}).count(), 0);
     assert.equal(await page.getByRole('tab', {name: '分组与规则', exact: true}).count(), 0);
-    if(kind==='ppsub'){
+    {
       const url=page.locator('.subs [data-field=url]').first(),provider=page.locator('.subs .item').first();
       assert.equal(await url.inputValue(),'','saved URL returns to the masked state');
       await provider.getByRole('button',{name:'显示地址',exact:true}).click();
@@ -258,7 +228,7 @@ async function exercise(browser, kind) {
     await page.getByRole('button', {name:'导出编辑内容',exact:true}).click();
     const downloaded = await downloading;
     const exported = JSON.parse(await fs.readFile(await downloaded.path(), 'utf8'));
-    assert.equal(downloaded.suggestedFilename(), 'ppsub.json');
+    assert.equal(downloaded.suggestedFilename(), 'lovestsub.json');
     assert.deepEqual(exported.subs,saved.subs);
     assert.deepEqual(exported.rules, saved.rules);
     assert.equal(await page.locator('input[autocomplete="current-password"]').count(), 0);
@@ -275,17 +245,15 @@ async function exercise(browser, kind) {
     await apply.waitFor({state: 'detached'});
     assert.deepEqual(errors, []);
     assert.deepEqual(maintenanceRequests, []);
-    return {kind, autoLoadCurrent: true, readFailureRetry: kind === 'ppsub', explicitSave: true,
-      actualEditorExport: true, reloadDraftGuard: kind === 'ppsub', sharedLogin: true, routeCleanup: true,
-      compactNewGroupDesktopMobile: true,newGroup: compact,maintenanceConsolidated: true, globalOptionsMerged: true, singleSubscriptionForm: true, sourceUrlSaved: true, ...(kind === 'ppsub' ? {draftAcrossSettings: true, combinedDraftSave: true, importFileDraft: true} : {}), pageErrors: errors};
+    return {kind,autoLoadCurrent:true,readFailureRetry:true,explicitSave:true,actualEditorExport:true,reloadDraftGuard:true,
+      sharedLogin:true,routeCleanup:true,compactNewGroupDesktopMobile:true,newGroup:compact,maintenanceConsolidated:true,
+      globalOptionsMerged:true,singleSubscriptionForm:true,sourceUrlSaved:true,draftAcrossSettings:true,combinedDraftSave:true,importFileDraft:true,pageErrors:errors};
   } finally { await context.close(); }
 }
 
 (async () => {
   const browser = await chromium.launch({channel: 'chrome', headless: true});
   try {
-    console.log(JSON.stringify({syntheticOnly: true, checks: [
-      await exercise(browser, 'clash_patch'), await exercise(browser, 'ppsub'),
-    ]}));
+    console.log(JSON.stringify({syntheticOnly:true,checks:[await exercise(browser)]}));
   } finally { await browser.close(); }
 })().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

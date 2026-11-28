@@ -131,12 +131,7 @@
 .source-form .wide {grid-column:1/-1}
 .source-form .button-row {justify-content:flex-end}
 .source-card > .card {margin-top:18px;background:var(--panel);box-shadow:none}
-.ppgw-export-note {grid-column:1/-1;order:9;color:var(--text-3);font-size:11px;line-height:1.7;margin:0}
-.ppgw-subscription-editor [data-edit-kind="clash_patch"] .subs .sfoot,
-.ppgw-subscription-editor [data-edit-kind="clash_patch"] .subs .ihead button,
-.ppgw-subscription-editor [data-edit-kind="clash_patch"] .subs .ck {display:none!important}
-.ppgw-subscription-editor [data-edit-kind="clash_patch"][data-synthetic-source="true"] .subs {display:none!important}
-.ppgw-subscription-editor [data-edit-kind="clash_patch"] .subs input[readonly] {background:transparent;border-color:transparent;padding-left:0;color:var(--text-2)}
+.ppgw-node-cache-note {grid-column:1/-1;order:9;color:var(--text-3);font-size:11px;line-height:1.7;margin:0}
 @media(max-width:639.5px) {
   .ppgw-gateway .source-card {padding:17px 15px}
   .source-form {grid-template-columns:minmax(0,1fr);gap:15px}
@@ -149,7 +144,6 @@
 .ppgw-gateway .source-switch {margin-top:14px}
 .ppgw-gateway .subscription-draft-actions {display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:12px 4px}
 .ppgw-gateway .subscription-draft-actions .btn {font-size:11px;padding:4px 8px}
-.ppgw-subscription-editor [data-edit-kind="clash_patch"] .phead .menuwrap[hidden] {display:none!important}
 .ppgw-gateway .source-switch > .card {margin-top:18px;background:var(--panel);box-shadow:none;border:1px solid var(--edge)}
 .draft-conflict {display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px}
 .draft-conflict a {flex:none;text-decoration:underline;text-underline-offset:3px}

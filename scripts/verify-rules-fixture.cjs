@@ -11,7 +11,7 @@ const baseline=process.argv.includes('--baseline'),evidence=path.resolve(process
 const origin='http://127.0.0.1:18893',main='Fixture Main /?#',alpha='Sub_🇯🇵 Tokyo /?#',beta='Sub_香港 Two',provider='Fixture Rules /?#',evil='<img src=x onerror="window.untrustedRan=true">';
 const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,type:index===1?'DomainSuffix':'Domain',payload:index===0?evil:index===1?'example.com':'fixture-'+index+'.example',proxy:main,size:index===0?9:-1,extra:{disabled:false,hitCount:index,missCount:index+1,hitAt:1793890000,missAt:1793890100}})),
   providers:{[provider]:{name:provider,vehicleType:'HTTP',behavior:'domain',ruleCount:201,updatedAt:'2026-11-06T00:00:00Z'},[evil]:{name:evil,vehicleType:'File',behavior:'classical',ruleCount:1}},
-  proxies:{[main]:{type:'Selector',all:[alpha,beta,'Fixture Auto','Fixture Smart',main],now:alpha},'Fixture Auto':{type:'URLTest',all:[alpha,beta],now:alpha},'Fixture Smart':{type:'Selector',smart:true,all:[alpha,beta],now:alpha},[alpha]:{type:'Trojan',delay:45},[beta]:{type:'Shadowsocks',delay:80},DIRECT:{type:'Direct'}},mode:'rule'};
+  proxies:{[main]:{type:'Selector',failover:true,all:[alpha,beta,'Fixture Auto','Fixture Smart',main],now:alpha},'Fixture Auto':{type:'URLTest',all:[alpha,beta],now:alpha},'Fixture Smart':{type:'Selector',smart:true,all:[alpha,beta],now:alpha},[alpha]:{type:'Trojan',delay:45},[beta]:{type:'Shadowsocks',delay:80},DIRECT:{type:'Direct'}},mode:'rule'};
 (async()=>{
   await fs.mkdir(evidence,{recursive:true});const browser=await chromium.launch({channel:'chrome',headless:true,args:process.platform==='win32'?['--disable-gpu']:[]});let releasePending=()=>{};
   try{
@@ -42,7 +42,7 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
           if(holdProvider)await new Promise(resolve=>heldProviders.push(resolve));return route.fulfill({status:204,body:''});
         }
         if(target==='/configs'){
-          if(method==='PATCH'){assert.deepEqual(Object.keys(body),['mode']);assert.ok(['global','rule','direct'].includes(body.mode));data.mode=body.mode;return route.fulfill({status:204,body:''});}return reply({mode:data.mode});
+          if(method==='PATCH'){assert.deepEqual(Object.keys(body),['mode']);assert.ok(['global','rule'].includes(body.mode));data.mode=body.mode;return route.fulfill({status:204,body:''});}return reply({mode:data.mode});
         }
         if(target==='/sniffbox/proxies')return reply({proxies:data.proxies,mode:data.mode});
         if(target.startsWith('/proxies/')&&method==='PUT'){
@@ -87,8 +87,31 @@ const fixture={rules:Array.from({length:201},(_,index)=>({index:7007+index*7,typ
     await search.fill('missing');await rules.getByText('没有匹配的规则。',{exact:true}).waitFor();await search.fill('');await rules.getByLabel('每页规则数',{exact:true}).selectOption('20');assert.equal(await rules.locator('tbody tr').count(),20);await rules.getByLabel('每页规则数',{exact:true}).selectOption('auto');
     const toggle=row(7007).getByRole('checkbox'),beforeToggle=writes().length;holdToggle=true;await toggle.click();await page.waitForFunction(()=>document.querySelector('[data-action=mode]').disabled);await toggle.evaluate(node=>{node.checked=false;node.dispatchEvent(new Event('change'));});await page.waitForTimeout(80);assert.equal(writes().length,beforeToggle+1);assert.deepEqual(writes().at(-1).body,{'7007':true});assert.equal(await toggle.isChecked(),true,'pending changes must not claim success');holdToggle=false;releaseToggle();await status.filter({hasText:'临时停用规则完成'}).waitFor();assert.equal(await toggle.isChecked(),false);
     failToggle=true;await toggle.click();await status.filter({hasText:'HTTP 503'}).waitFor();assert.equal(await toggle.isChecked(),false);assert.equal(data.rules[0].extra.disabled,true);failToggle=false;await toggle.click();await status.filter({hasText:'临时启用规则完成'}).waitFor();
-    await rules.getByRole('radio',{name:'全局',exact:true}).click();await rules.locator('.rules-notice').waitFor();assert.equal(await toggle.isDisabled(),true);assert.deepEqual(writes().at(-1).body,{mode:'global'});await rules.getByRole('radio',{name:'直连',exact:true}).click();await rules.locator('.rules-status').filter({hasText:'切换模式完成'}).waitFor();assert.equal(data.mode,'direct');await rules.getByRole('radio',{name:'规则',exact:true}).click();await status.filter({hasText:'切换模式完成'}).waitFor();assert.equal(data.mode,'rule');
-    await row(7007).getByRole('button',{name:main,exact:true}).click();await drawer.waitFor();const betaRow=drawer.locator('.rule-group-row').filter({has:page.locator('[title='+JSON.stringify(beta)+']')});await betaRow.locator('button').first().click();await status.filter({hasText:'切换目标节点完成'}).waitFor();assert.equal(data.proxies[main].now,beta);assert.equal(writes().at(-1).target,'/proxies/'+encodeURIComponent(main));
+    const modes=rules.getByRole('radiogroup',{name:'核心运行模式'}),modeStart=writes().length;
+    assert.deepEqual(await modes.getByRole('radio').allTextContents(),['规则','全局']);
+    await modes.getByRole('radio',{name:'全局',exact:true}).click();
+    await rules.locator('.rules-notice').getByText(/GLOBAL/).waitFor();
+    assert.equal(await toggle.isDisabled(),true);
+    data.mode='direct';
+    await rules.getByRole('button',{name:'刷新',exact:true}).click();
+    const directNotice=rules.getByText('当前为直连模式，规则未生效。',{exact:true});
+    await directNotice.waitFor();
+    assert.equal(await modes.locator('[aria-checked=true]').count(),0);
+    const ruleMode=modes.getByRole('radio',{name:'规则',exact:true});
+    assert.equal(await ruleMode.getAttribute('tabindex'),'0');
+    await ruleMode.click();
+    await directNotice.waitFor({state:'hidden'});
+    assert.equal(data.mode,'rule');
+    assert.deepEqual(writes().slice(modeStart).map(row=>row.body),[{mode:'global'},{mode:'rule'}]);
+    await row(7007).getByRole('button',{name:main,exact:true}).click();await drawer.waitFor();
+    const hint=drawer.locator('.rule-group-hint');
+    assert.match(await hint.textContent(),/手动 · 故障转移/);
+    assert.match(await hint.textContent(),/支持点击手动切换；当前节点健康检查失败时会自动故障转移。/);
+    const betaRow=drawer.locator('.rule-group-row').filter({has:page.locator('[title='+JSON.stringify(beta)+']')});
+    await betaRow.locator('button').first().click();
+    await status.filter({hasText:'切换目标节点完成'}).waitFor();
+    assert.equal(data.proxies[main].now,beta);
+    assert.deepEqual([writes().at(-1).method,writes().at(-1).target,writes().at(-1).body],['PUT','/proxies/'+encodeURIComponent(main),{name:beta}]);
     await drawer.getByRole('button',{name:'查看子组 Fixture Auto',exact:true}).click();assert.equal(await drawer.locator('[data-action=group-select]:not(:disabled)').count(),0);await drawer.getByRole('button',{name:'返回上层',exact:true}).click();await drawer.getByRole('button',{name:'查看子组 Fixture Smart',exact:true}).click();assert.equal(await drawer.locator('[data-action=group-select]:not(:disabled)').count(),0);await drawer.getByRole('button',{name:'返回上层',exact:true}).click();await drawer.getByRole('button',{name:'查看子组 '+main,exact:true}).click();await status.filter({hasText:'循环引用'}).waitFor();await drawer.getByRole('button',{name:'关闭',exact:true}).click();
     await rules.locator('.rule-data-tools>summary').click();const providerCard=rules.locator('.rule-provider').filter({has:page.locator('strong').filter({hasText:provider})});await providerCard.getByRole('button',{name:'更新',exact:true}).click();await status.filter({hasText:'规则订阅更新完成'}).waitFor();await ready();assert.equal(writes().at(-1).target,'/providers/rules/'+encodeURIComponent(provider));await rules.getByRole('button',{name:'全部更新',exact:true}).click();await status.filter({hasText:'全部更新完成'}).waitFor();await ready();assert.deepEqual(writes().slice(-2).map(row=>decodeURIComponent(row.target.slice('/providers/rules/'.length))),Object.keys(data.providers));
     const geoBefore=writes().length;await rules.getByRole('button',{name:'手动更新 GEO 数据',exact:true}).click();const confirm=rules.getByRole('dialog',{name:'确认更新 GEO 数据',exact:true});await confirm.waitFor();assert.equal(writes().length,geoBefore);await confirm.getByRole('button',{name:'取消',exact:true}).click();assert.equal(writes().length,geoBefore);await rules.getByRole('button',{name:'手动更新 GEO 数据',exact:true}).click();await confirm.getByRole('button',{name:'确认更新',exact:true}).click();await status.filter({hasText:'geoip.dat：已下载；geosite.dat：获取版本失败；ASN.mmdb：下载失败'}).waitFor();assert.match(await status.innerText(),/未完成/);await ready();assert.equal(writes().length,geoBefore+1);

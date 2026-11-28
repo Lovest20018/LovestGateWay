@@ -1,6 +1,5 @@
 """Verify native policy transactions in a marked disposable Debian gateway."""
 import argparse
-from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -24,7 +23,6 @@ def main():
     from manage_config import ConfigManager
     from clash_ppsub import running_document
     import subscription_admin as source
-    import unified_editor as editor
     import mihomo_reload
     import socketserver,threading
     class Echo(socketserver.BaseRequestHandler):
@@ -72,23 +70,31 @@ rules: ["MATCH,MAIN"]
         client.request('PUT','/proxies/MAIN',{'name':'DIRECT'});client.request('PATCH','/configs',{'mode':'global'})
         client.request('PUT','/proxies/GLOBAL',{'name':'DIRECT'})
         keep=connection();echo(keep,b'before-native')
-        admin=source.Admin(layout);snapshot=admin.current_config();value=deepcopy(snapshot['config'])
-        value['rules'][-1]['fixrule'].insert(0,'DOMAIN,blocked.test,REJECT')
-        body={'kind':'editor','edit_kind':'clash_patch','value':json.dumps(value),'base_revision':snapshot['base_revision'],
-              'settings_revision':snapshot['settings_revision'],'snapshot_id':snapshot['snapshot_id'],
-              'settings_patch':{},'operation_id':'native-reload-001'}
-        preview=editor.handle(admin,{**body,'dry_run':True});assert preview['action']=='mihomo_reload'
-        operation={'id':body['operation_id'],'status':'applying'};admin.operation=operation
-        editor.worker(admin,body,operation);assert operation['status']=='applied',dict(operation)
+        admin=source.Admin(layout);state=admin.current_config()
+        assert state['source']=='empty' and state['edit_kind']=='ppsub' and not state['write_allowed']
+        assert state['source_details']['kind']=='local_yaml'
+        try:
+            admin.apply({'kind':'editor','edit_kind':'clash_patch','dry_run':True})
+        except source.ManagementError as error:
+            assert str(error)=='CLASH_YAML_EDITING_UNSUPPORTED'
+        else:
+            raise AssertionError('legacy YAML editor accepted')
+        passed('legacy_yaml_source_remains_visible_with_editor_locked')
+        manager=PolicyManager(layout,system);snapshot=manager.show()
+        body={'snapshot_id':snapshot['snapshot_id'],'base_revision':snapshot['base_revision'],
+              'policy':{key:snapshot[key] for key in ('groups','providers','rules')}}
+        body['policy']['rules'].insert(0,'DOMAIN,blocked.test,REJECT')
+        assert manager.preview(body)['action']=='mihomo_reload'
+        assert manager.apply(body)['action']=='mihomo_reload'
         assert runtime()['boot_id']==old['boot_id'] and client.request('GET','/version')[1]==peer
         echo(keep,b'after-native');system.verify_current(load_settings(layout))
         status=json.loads(layout.path('var/lib/paopaogw/admin/policy-status.json').read_bytes())
         assert status['apply_method']=='mihomo_reload' and 'rules' in status['local_sections']
         assert client.request('GET','/configs')[0]['mode']=='global'
-        passed('unified_editor_preview_and_apply_verify_native_persistence_without_restarting_core_or_mihomo')
+        passed('policy_api_preview_and_apply_verify_native_persistence_without_restarting_core_or_mihomo')
         for group, selection in (('CHILD','DIRECT'), ('MAIN','CHILD'), ('AUTO','CHILD'), ('GLOBAL','MAIN')):
             client.request('PUT','/proxies/'+group,{'name':selection})
-        manager=PolicyManager(layout,system);snapshot=manager.show()
+        snapshot=manager.show()
         body={'snapshot_id':snapshot['snapshot_id'],'base_revision':snapshot['base_revision'],
               'policy':{key:snapshot[key] for key in ('groups','providers','rules')}}
         body['policy']['rules'].insert(0,'DOMAIN,second.test,DIRECT')

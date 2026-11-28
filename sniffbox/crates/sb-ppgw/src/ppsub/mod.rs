@@ -1,6 +1,7 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
 mod cache;
+mod dns;
 mod groups;
 pub(crate) mod hosts;
 pub(crate) mod proxies;
@@ -108,7 +109,7 @@ pub(crate) fn pp_log(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::green("[LovestGateWay PPSub]")
+        crate::term::green("[LovestGateWay LovestSub]")
     );
 }
 
@@ -116,7 +117,7 @@ pub(crate) fn pp_step(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::orange("[LovestGateWay PPSub]")
+        crate::term::orange("[LovestGateWay LovestSub]")
     );
 }
 
@@ -124,7 +125,7 @@ pub(crate) fn pp_warn(msg: &str) {
     let _ = writeln!(
         std::io::stdout(),
         "{}{msg}",
-        crate::term::red("[LovestGateWay PPSub]")
+        crate::term::red("[LovestGateWay LovestSub]")
     );
 }
 
@@ -193,17 +194,10 @@ pub fn process_ppsub(
         let dns_servers = proxies::collect_dns_servers(ex_dns);
         proxies::resolve_all(&sub_results, &dns_servers, crate::dnsutil::ipv6_enabled())
     } else {
-        for r in sub_results.iter().filter(|r| !r.hosts.map.is_empty()) {
-            pp_log(&format!(
-                "[{}] hosts: {} node domain(s) mapped by the sub's hosts, unused (dns_burn off)",
-                r.name,
-                r.hosts.map.len()
-            ));
-        }
         proxies::Resolution::default()
     };
 
-    let buf = emit_config(&cfg, &sub_results, &resolution, dns_burn, None)?;
+    let buf = emit_config(&cfg, &sub_results, &resolution, dns_burn, ex_dns, None)?;
     let bytes = buf.len();
     std::fs::write(output_file, buf)
         .map_err(|e| PpsubErr::Write(output_file.to_string(), e.to_string()))?;
@@ -243,6 +237,7 @@ pub(crate) fn emit_config(
     sub_results: &[SubResult],
     resolution: &proxies::Resolution,
     dns_burn: bool,
+    ex_dns: &str,
     reuse: Option<&Yaml>,
 ) -> Result<String, PpsubErr> {
     let node_groups = parse_node_groups(cfg);
@@ -318,6 +313,25 @@ pub(crate) fn emit_config(
         root.insert(ystr("listeners"), Yaml::Array(vec![build_ss_listener(ss)]));
     }
     root.insert(ystr("mode"), ystr("rule"));
+
+    let bundle = dns::build_dns_and_hosts(sub_results, crate::dnsutil::ipv6_enabled(), ex_dns);
+    let mut host_count = 0;
+    let mut policy_count = 0;
+    if let Some(hosts) = bundle.hosts {
+        host_count = hosts.as_hash().map_or(0, Hash::len);
+        root.insert(ystr("hosts"), hosts);
+    }
+    if let Some(dns_cfg) = bundle.dns {
+        policy_count = dns_cfg["proxy-server-nameserver-policy"]
+            .as_hash()
+            .map_or(0, Hash::len);
+        root.insert(ystr("dns"), dns_cfg);
+    }
+    if policy_count > 0 || host_count > 0 {
+        pp_log(&format!(
+            "Emitted {policy_count} Mihomo node DNS policies and {host_count} hosts entries"
+        ));
+    }
 
     let mut buf = String::new();
     YamlEmitter::new(&mut buf)
@@ -632,6 +646,7 @@ mod tests {
             &sub_results,
             &proxies::Resolution::default(),
             false,
+            "",
             Some(prev),
         )
         .expect("emit");
@@ -661,6 +676,106 @@ mod tests {
 
         assert_eq!(doc["proxies"][0]["name"].as_str(), Some("S_HK01"));
         assert_eq!(doc["proxy-groups"][0]["name"].as_str(), Some("HK"));
+    }
+
+    #[test]
+    fn emit_config_includes_subscription_dns_and_hosts_without_dns_burn() {
+        let raw_yaml = r#"
+proxies: [{name: HK, type: ss, server: node.example}]
+dns:
+  nameserver: ['https://private.dns.example/dns-query/token#GROUP']
+hosts:
+  node.example: 223.5.5.5
+  private.dns.example: 9.9.9.9
+  paopaogateway.dns: 8.8.8.8
+"#;
+        let (proxies, hosts) = sub::parse_payload(raw_yaml, "S");
+        let sub_results = [SubResult {
+            name: "S".to_string(),
+            success: true,
+            proxies,
+            hosts,
+            userinfo: None,
+            cached_at: None,
+            raw_yaml: raw_yaml.to_string(),
+            error: String::new(),
+        }];
+        let out = emit_config(
+            &serde_json::json!({}),
+            &sub_results,
+            &proxies::Resolution::default(),
+            false,
+            "10.80.0.2:5353",
+            None,
+        )
+        .unwrap();
+        let doc = &yaml_rust2::YamlLoader::load_from_str(&out).unwrap()[0];
+        assert_eq!(doc["proxies"].as_vec().unwrap().len(), 1);
+        assert_eq!(doc["proxies"][0]["server"].as_str(), Some("node.example"));
+        assert_eq!(
+            doc["dns"]["proxy-server-nameserver-policy"]["node.example"][0].as_str(),
+            Some("https://private.dns.example/dns-query/token")
+        );
+        assert_eq!(doc["dns"]["use-hosts"].as_bool(), Some(true));
+        assert!(
+            doc["dns"]["default-nameserver"]
+                .as_vec()
+                .unwrap()
+                .contains(&ystr("10.80.0.2:5353"))
+        );
+        assert_eq!(doc["hosts"].as_hash().unwrap().len(), 2);
+        assert_eq!(doc["hosts"]["node.example"].as_str(), Some("223.5.5.5"));
+        assert_eq!(doc["hosts"]["private.dns.example"].as_str(), Some("9.9.9.9"));
+    }
+
+    #[test]
+    fn emit_config_expands_alias_nodes_and_preserves_hosts_alias_with_private_doh() {
+        let raw_yaml = r#"
+proxies:
+  - {name: AliasTrojan, type: trojan, server: alias.sub.example.com}
+dns:
+  nameserver: ['https://private.doh.example:44443/dns-query/token#GROUP']
+hosts:
+  alias.sub.example.com: target.entry.example.net
+"#;
+        let (proxies, hosts) = sub::parse_payload(raw_yaml, "K");
+        let sub_results = [SubResult {
+            name: "K".to_string(),
+            success: true,
+            proxies,
+            hosts,
+            userinfo: None,
+            cached_at: None,
+            raw_yaml: raw_yaml.to_string(),
+            error: String::new(),
+        }];
+        let out = emit_config(
+            &serde_json::json!({}),
+            &sub_results,
+            &proxies::Resolution::default(),
+            false,
+            "",
+            None,
+        )
+        .unwrap();
+        let doc = &yaml_rust2::YamlLoader::load_from_str(&out).unwrap()[0];
+        assert_eq!(
+            doc["proxies"][0]["server"].as_str(),
+            Some("target.entry.example.net")
+        );
+        assert_eq!(
+            doc["proxies"][0]["sni"].as_str(),
+            Some("alias.sub.example.com")
+        );
+        assert_eq!(
+            doc["dns"]["proxy-server-nameserver-policy"]["target.entry.example.net"][0].as_str(),
+            Some("https://private.doh.example:44443/dns-query/token")
+        );
+        assert_eq!(doc["dns"]["use-hosts"].as_bool(), Some(true));
+        assert_eq!(
+            doc["hosts"]["alias.sub.example.com"].as_str(),
+            Some("target.entry.example.net")
+        );
     }
 
     #[test]

@@ -854,8 +854,8 @@ get_conf() {
             load_ini
             if [ "$dns_burn" != "no" ]; then
                 export dns_burn="yes"
-                export ex_dns="$ex_dns"
             fi
+            export ex_dns="$ex_dns"
             export dns_ip="$dns_ip"
             export dns_port="$dns_port"
             ppgw_cache_only=0
@@ -1392,16 +1392,16 @@ while true; do
                 ppsub_healthcheck "$ppgw_health_file"
                 hc_rc=$?
                 if [ "$hc_rc" -eq 0 ]; then
-                    if [ "$hc_fail_streak" -gt 0 ]; then log "PPsub health cycle recovered." succ; fi
-                    log "PPsub health cycle completed (checks depend on the configured monitor policy)." debug
+                    if [ "$hc_fail_streak" -gt 0 ]; then log "LovestSub health cycle recovered." succ; fi
+                    log "LovestSub health cycle completed (checks depend on the configured monitor policy)." debug
                     hc_fail_streak=0
                 elif [ "$hc_rc" -eq 3 ]; then
-                    log "PPsub: clash not ready yet, backoff without teardown." warn
+                    log "LovestSub: clash not ready yet, backoff without teardown." warn
                     hc_fail_streak=0
                 else
-                    log "PPsub health check failed, close all connections." warn
+                    log "LovestSub health check failed, close all connections." warn
                     ppgw -closeall >"$PPGWTTY" 2>&1
-                    log "PPsub: Try to update and reload..." warn
+                    log "LovestSub: Try to update and reload..." warn
                     get_conf "$suburl" "yaml" || log "Failed to update suburl, keep current config." warn
                     reload_gw
                     ppsub_healthcheck "$ppgw_health_file"
@@ -1410,9 +1410,9 @@ while true; do
                         hc_fail_streak=0
                     else
                         hc_fail_streak=$((hc_fail_streak + 1))
-                        log "PPsub still unhealthy after reload (streak $hc_fail_streak)." warn
+                        log "LovestSub still unhealthy after reload (streak $hc_fail_streak)." warn
                         if [ "$hc_fail_streak" -ge 2 ]; then
-                            log "PPsub unhealthy $hc_fail_streak rounds, kill clash and reload." warn
+                            log "LovestSub unhealthy $hc_fail_streak rounds, kill clash and reload." warn
                             kill_clash
                             load_clash no
                             hc_fail_streak=0

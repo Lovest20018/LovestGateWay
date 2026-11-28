@@ -65,7 +65,7 @@ def render_effective_candidate(layout, ini, target):
 
 
 def payload_content(raw):
-    """Compare complete ordered nodes and hosts, ignoring fetch/account metadata.
+    """Compare ordered nodes, hosts and DNS, ignoring fetch/account metadata.
 
     Unknown payloads compare byte-for-byte; uncertainty must cause an apply.
     """
@@ -92,7 +92,7 @@ def payload_content(raw):
             if len(pairs) != len(document.value): raise ValueError('duplicate YAML key')
             if isinstance(pairs.get('proxies'), yaml.SequenceNode) and pairs['proxies'].value:
                 return json.dumps({k: canonical(pairs[k], set()) if k in pairs else None
-                                   for k in ('proxies', 'hosts')}, ensure_ascii=False)
+                                   for k in ('proxies', 'hosts', 'dns')}, ensure_ascii=False)
     except (ValueError, TypeError, RecursionError, yaml.YAMLError): pass
     return text
 
@@ -287,5 +287,5 @@ def _refresh_nodes(layout, system, names, progress, trigger):
             raise
         finally:
             level = logging.INFO if outcome in {'applied', 'cached'} else logging.WARNING
-            log.log(level, 'PPsub refresh trigger=%s phase=%s action=%s reason=%s outcome=%s requested=%d fresh=%d',
+            log.log(level, 'LovestSub refresh trigger=%s phase=%s action=%s reason=%s outcome=%s requested=%d fresh=%d',
                     trigger, phase, action, reason, outcome, len(selected), fresh_count)

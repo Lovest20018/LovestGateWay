@@ -7,7 +7,7 @@ const make=(tag,text,className)=>{const node=document.createElement(tag);if(text
 const button=(text,callback)=>{const node=make('button',text,'btn');node.type='button';node.addEventListener('click',callback);return node;};
 const field=(name,input)=>{const node=make('label');node.append(make('span',name),input);return node;};
 const date=value=>{if(!value)return '—';const parsed=new Date(typeof value==='number'?(value>1e12?value:value*1000):value);return Number.isFinite(parsed.getTime())?parsed.toLocaleString('zh-CN'):'—';};
-const groupType=node=>node?.smart?'智能测速':({Selector:'手动选择',URLTest:'测速模式',Fallback:'故障转移',LoadBalance:'负载均衡',Relay:'中继'})[node?.type]||node?.type||'未知';
+const groupType=node=>node?.smart?'智能测速':node?.type==='Selector'&&node.failover===true?'手动 · 故障转移':({Selector:'手动选择',URLTest:'测速模式',Fallback:'故障转移',LoadBalance:'负载均衡',Relay:'中继'})[node?.type]||node?.type||'未知';
 
 export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   const supported=!initialInfo||['yaml','suburl'].includes(initialInfo.mode);
@@ -124,7 +124,9 @@ export function mountRules(host,{initialInfo,onUnauthorized=()=>{}}={}){
   function renderDrawer(){
     const name=drawerPath.at(-1),group=proxies[name];if(!name||!isGroup(group)){if(drawer.open)drawer.close();return;}
     const optimized=optimize();
-    drawerTitle.textContent=name;back.hidden=drawerPath.length<=1;drawerHint.textContent=drawerPath.join(' → ')+' · '+groupType(group)+' · '+group.all.length+' 个节点。'+(group.type==='Selector'&&!group.smart?'点击节点即可切换。':'由核心自动选择；锁定操作请使用代理页。');drawerList.replaceChildren();
+    const manual=group.type==='Selector'&&!group.smart;
+    const hint=manual?(group.failover===true?'支持点击手动切换；当前节点健康检查失败时会自动故障转移。':'点击节点即可切换。'):'由核心自动选择；锁定操作请使用代理页。';
+    drawerTitle.textContent=name;back.hidden=drawerPath.length<=1;drawerHint.textContent=drawerPath.join(' → ')+' · '+groupType(group)+' · '+group.all.length+' 个节点。'+hint;drawerList.replaceChildren();
     for(const member of group.all.slice(0,drawerLimit)){const child=proxies[member],row=make('div',undefined,'rule-group-row'),info=nodeLabel(member,optimized),choose=button([info.flag,info.display].filter(Boolean).join(' '),()=>perform('切换目标节点',async()=>{const live=proxies[name];if(!proxiesCurrent||!isGroup(live)||live.type!=='Selector'||live.smart||!live.all.includes(member)||live.now===member)return;await request('/proxies/'+segment(name),{method:'PUT',body:{name:member}});if(!disposed)live.now=member;}));choose.dataset.action='group-select';choose.dataset.unavailable=String(!proxiesCurrent||group.type!=='Selector'||group.smart===true||group.now===member);choose.setAttribute('aria-pressed',String(group.now===member));choose.title=member;row.dataset.node=member;const latency=delay({proxies},member,name);row.append(choose,make('span',isGroup(child)?groupType(child):latency===null?'—':latency===0?'超时':latency+' ms'));
       if(isGroup(child)){const drill=button('查看子组',()=>{if(drawerPath.includes(member)){message('节点组存在循环引用，已停止继续展开。');return;}drawerPath.push(member);drawerLimit=120;renderDrawer();});drill.setAttribute('aria-label','查看子组 '+member);row.append(drill);}drawerList.append(row);
     }

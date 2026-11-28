@@ -159,8 +159,8 @@ def menu(layout, system):
                 try: preview = manager.apply(patch, revision, dry_run=True)
                 except ManagementError as error:
                     if not str(error).startswith('SOURCE_CONFLICT:'): raise
-                    print('更换来源与本地 PPsub/策略冲突；旧内容会保存在事务备份中。')
-                    if input('输入 reset 确认移除旧 PPsub/策略并继续预览: ') != 'reset': continue
+                    print('更换来源与本地 LovestSub / 策略冲突；旧内容会保存在事务备份中。')
+                    if input('输入 reset 确认移除旧 LovestSub / 策略并继续预览: ') != 'reset': continue
                     reset = True
                     preview = manager.apply(patch, revision, dry_run=True, reset_source=True)
                 emit(preview)

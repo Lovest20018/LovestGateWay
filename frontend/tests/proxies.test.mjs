@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {snapshot,preferences,groups,members,delay,state,nodeLabel,testPlan,testPath,testUrl,segment,usage,informationNode} from '../src/proxy-model.js';
+import {snapshot,preferences,groups,members,delay,state,nodeLabel,testPlan,testPath,testUrl,segment,usage,informationNode,automatic,lockable} from '../src/proxy-model.js';
 
 const raw={mode:'rule',testUrl:'https://example.test/default',subs:[],proxies:{
   GLOBAL:{type:'Selector',all:['Auto','Main','A','DIRECT','REJECT'],now:'Main'},
@@ -8,6 +8,15 @@ const raw={mode:'rule',testUrl:'https://example.test/default',subs:[],proxies:{
   Auto:{type:'URLTest',all:['A','B'],now:'B',testUrl:'https://example.test/group',scores:{A:{score:55}}},
   Hidden:{type:'Selector',all:['B'],hidden:true},A:{type:'Trojan',delay:99,extra:{'https://example.test/group':51}},B:{type:'Shadowsocks',alive:false,delay:0},C:{type:'Vless'},DIRECT:{type:'Direct'},REJECT:{type:'Reject'},
   'Usage_Usage: 4G/10G@@2027-01-01':{type:'Shadowsocks'}},providers:{'Sub /?':{vehicleType:'HTTP',proxies:['A','B','A']},default:{vehicleType:'Compatible',proxies:['C']}}};
+
+test('a PPsub selector with failover keeps manual switching and manual test behavior',()=>{
+  const data=snapshot({...raw,proxies:{...raw.proxies,Main:{...raw.proxies.Main,failover:true,testUrl:'https://example.test/health'}}});
+  assert.equal(data.proxies.Main.failover,true);
+  assert.equal(automatic(data.proxies.Main),false);
+  assert.equal(lockable(data.proxies.Main),false);
+  assert.deepEqual(members(data,'Main'),['A','B','C']);
+  assert.equal(testUrl(data,'Main',preferences({})),raw.testUrl);
+});
 
 test('legacy usage rows never become switchable candidates and snapshot order follows GLOBAL',()=>{
   const data=snapshot(raw);assert.deepEqual(data.proxies.Main.all,['A','B','C']);assert.equal(data.subs[0].name,'Usage');assert.equal(data.subs[0].download,6*1024**3);

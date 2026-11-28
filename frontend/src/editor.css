@@ -49,6 +49,7 @@
 .source-editor .editor-token-entry input {width:210px;max-width:100%;min-height:28px;padding:3px 8px;font-size:12px}
 .source-editor .editor-token-entry .btn {padding:3px 9px;min-height:28px;font-size:11px}
 .source-editor .editor-group-extra,.source-editor .editor-feature-fields {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px;margin-top:4px}
+.source-editor .editor-group-extra>.subtext {grid-column:1/-1;margin:0}
 .source-editor .editor-group-body>.editor-check {margin-top:0}
 .source-editor .monitor {display:flex;flex-direction:column;gap:9px}
 .source-editor .monitor>fieldset {border:0;padding:0;margin:0;min-width:0}

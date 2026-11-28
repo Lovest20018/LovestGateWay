@@ -40,7 +40,9 @@ sudo journalctl -u paopaogw.service --since '10 minutes ago'
 
 ## 订阅与策略
 
-日常使用[订阅与策略及网关设置](../debian-web-settings.md)。“订阅与策略”保持单页，页首先说明当前配置来源，来源切换独立预览确认；全局选项、提供商、节点组、规则与更新计划统一保存。完整配置按来源限制提供商结构操作，本地 YAML 不显示主订阅更新计划。旧 `/ui/#/ppsub` 自动跳转至该页面。保存功能需安装 Mihomo，并启动内部写入服务：
+“订阅与策略”仅编辑 LovestSub。配置来源分栏显示已安装实例正在使用的 LovestSub、本地 YAML 或远程完整 Clash 配置。切换时可导入新的 LovestSub JSON（兼容导入旧 `ppsub.json`），或复用已保存的本机配置。有旧覆盖策略冲突时，可在预览前勾选备份并清除。旧 `/ui/#/ppsub` 自动跳转至该页面。日常操作见[订阅与策略及网关设置](../debian-web-settings.md)。
+
+安装 Mihomo 后，启用内部订阅写入服务。
 
 ```sh
 sudo systemctl enable --now paopaogw-subscription.service
@@ -48,17 +50,19 @@ sudo systemctl enable --now paopaogw-subscription.service
 
 该服务仅监听 `127.0.0.1:8789`。面板经已认证的 `/sniffbox/subscription/config`、`status`、`apply` 固定路由读取和写入，浏览器不需要访问 8789 或再次输入密码。观测 API Token 不能使用这些管理路由。
 
-原生 PPsub 和完整 Clash 配置在打开“订阅与策略”时自动读取，也可通过“重新读取”刷新；完成编辑后选择“保存并应用”。保存前比较配置版本；重启加载失败且配置未被外部修改时恢复原文件。原有 JSON 导入、导出功能保留。
+编辑器优先读本机 `/etc/paopaogw/files/ppsub.json`（保留兼容文件名与 `ppsub@` 内部前缀），也可读取远程 LovestSub 的运行副本并在首次保存时转为本机来源。全局选项、提供商、节点组、规则和更新计划统一保存。保存前校验配置版本及字段，应用后核对核心加载结果。加载失败且配置未被外部修改时恢复原文件。运行完整 Clash 配置的实例会得到只读状态及切换指引。
 
-完整 Clash/Mihomo 配置会从正在运行的核心私有命名空间读取 YAML，并展示实际节点组、规则订阅及按原顺序排列的分流规则。载入后可以直接编辑和保存；服务端根据短期编辑快照识别真正修改的字段，在原 YAML 对象上合并，保留未展示字段、节点凭据和其他顶层设置。重命名组及规则订阅时同步更新引用。不再将完整配置转换成简化 PPsub，也不会生成默认节点组或默认 MATCH 规则。读取只使用本机已加载文件，不重新下载订阅。此功能需要 `python3-yaml` 和 Debian 的 `nsenter`。
+LovestSub 保留原有 JSON 字段。节点组在手动选择下可设置 `failover: true`，并通过 `monitor_url`、`expected_status` 和 `retries` 配置健康检查。自动测速和智能测速分别使用测速参数与 `smart`。代理快照只对当前生效的 LovestSub 手动 Selector 组附加 `failover: true`，代理页和规则页据此显示「手动 · 故障转移」。点击节点沿用 Mihomo Selector 的选择接口。
 
-保存前在核心相同的文件命名空间内运行 mihomo `-t`；没有修改时不写文件、不重启。修改后按源配置身份保存 `/etc/paopaogw/files/clash-policy.json`，再重启并核对实际加载结果；失败且无外部修改时恢复原配置和原策略。编辑快照最长 30 分钟，运行配置或策略变化后需重新载入。
+LovestSub 按订阅将节点域名与专属 DoH/DoT 写入 Mihomo 的 `proxy-server-nameserver-policy`。同一域名出现在多个订阅时，按订阅顺序合并并去重。解析器地址中的 `#` 策略组后缀会被移除。缺少订阅解析策略的节点使用网关的 `proxy-server-nameserver`，`default-nameserver` 仅接收 IP 地址。订阅中的 `hosts` 域名别名会保留并在节点 `server` 上直接展开为目标域名（同时保留原有 TLS `sni`/`servername`），使目标域名直接命中对应订阅的专属 DoH/DoT 策略。`dns_burn` 可另外生成 `@subdns` 等固定 IP 副本。
 
-订阅 URL、更新周期和下载机制继续使用原配置。修改过的节点组、规则及规则订阅区块作为本地策略覆盖，每次订阅下载后重新合并；代理节点及未覆盖字段仍由新订阅更新。替换源订阅后旧策略不会套用到其他来源。完整 Clash 模式支持手动选择、测速、故障转移和智能测速组，关键词映射原生 filter/exclude-filter；前置代理通过独立 provider 的 override.dialer-proxy 应用到节点，保留原 provider 的刷新设置。全局健康监测和定时重启复用原生 PPsub 监督逻辑；Shadowsocks 入站使用单独认证并仅监听 127.0.0.1:8080。高级元数据不会覆盖源订阅的节点凭据。
+合并 `base.yaml` 时，网关模板决定 DNS 启用状态、监听地址、IPv6、`use-system-hosts`、`enhanced-mode` 和 `nameserver`，并优先采用模板的同名 `hosts` 记录，包含 `paopaogateway.dns: 127.0.0.1`。合并会保留有效的节点和解析器 `hosts`，有额外记录时允许 LovestSub 启用 `use-hosts`。节点 DNS 策略缺少 `proxy-server-nameserver` 或 `default-nameserver` 时，从模板的 `nameserver` 补齐。
 
-发布时 `scripts/prepare_dashboard.py` 从可维护源码构建统一路由、全部运行页面、设置、来源与 PPsub 编辑器；PPsub 导入和导出 JSON 继续可用。保留的上游 bundle 不参与运行页面加载，生成资源使用内容摘要文件名，避免旧缓存。
+发布时 `scripts/prepare_dashboard.py` 从可维护源码构建统一路由、全部运行页面、设置、来源与 LovestSub 编辑器；LovestSub 导入和导出 JSON（默认 `lovestsub.json`，兼容导入旧 `ppsub.json`）继续可用。保留的上游 bundle 不参与运行页面加载，生成资源使用内容摘要文件名，避免旧缓存。
 
-静态规则和节点组修改在支持范围内使用经验证的 Mihomo 热加载，预览会显示实际应用方式。provider、凭据、监听、网络、高级功能和来源变化继续重启；无法确认加载结果时恢复原输入并重启验证。具体白名单、连接验收和失败边界见[热加载说明](../mihomo-reload-assessment.md)。
+代理页和规则页的顶部切换只提交 `rule` 或 `global`。外部设置 `direct` 时会显示提示，点击「规则」即可切回。此切换临时作用于 Mihomo，重新加载配置后以配置值为准。
+
+兼容策略管理接口仍可在支持范围内热加载静态规则和节点组。LovestSub 编辑保存和来源切换按配置事务应用。有关热加载的白名单、连接验收和失败恢复，见[热加载说明](../mihomo-reload-assessment.md)。
 
 更新时同时停止正在运行的 `paopaogw-subscription`，安装后再启动。该服务独立于可选观测 API。
 
@@ -89,7 +93,7 @@ Debian 模式按本服务的 cgroup 识别 sniffbox、mihomo 和 OpenVPN 进程�
 
 `paopaogw-maintenance.timer` 启动后每天检查官方稳定版；新安装 maintenance.json 的 auto_update 默认 false。可在“网关设置 → 维护与 API”检查、在线更新和回退；订阅与策略编辑器负责配置编辑与保存应用。下载不经过第三方镜像；官方 digest 缺失、下载校验不符或配置校验失败时不替换。新核心加载失败自动恢复旧二进制，上一成功核心保留为 bin/clash.previous。首次安装核心也可执行上面的 install 命令。该维护权限独立于观测 API。
 
-每次订阅刷新都会校验最终配置，成功配置保存于 admin/clash.last-good.yaml。相同来源的无效候选继续使用最后成功版本；切换来源不会套用旧来源的备份。“恢复订阅原策略”备份本地覆盖后撤销并重新加载，失败时恢复覆盖。runtime API 单独提供源订阅、本地策略和最终配置摘要。
+刷新完整配置时，`ppg.sh` 调用 `integration/clash_policy.py` 对生成的 `/tmp/clash.yaml` 应用与来源匹配的旧覆盖并校验最终配置，保存 `/var/lib/paopaogw/admin/clash.last-good.yaml`，同时更新 `policy-status.json`。相同来源的无效候选可使用最后成功版本。“恢复订阅原策略”会备份本地覆盖，再撤销并重新加载，失败时恢复覆盖。runtime API 分别提供源订阅、本地策略和最终配置摘要。
 
 所有服务调度使用 Asia/Shanghai。控制器日志写入 /var/lib/paopaogw/logs/controller.log，保留一个 1 MiB 轮转文件；启动屏页面读取本实例日志。URL 在展示和控制器日志中脱敏。核心输出仍通过 journalctl 查询。
 

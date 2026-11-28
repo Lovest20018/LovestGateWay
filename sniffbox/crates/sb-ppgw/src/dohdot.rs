@@ -1,10 +1,11 @@
 // Copyright (c) 2026, https://blog.03k.org. All rights reserved.
 
 use crate::resolvepool::{Budget, Deadline, Outcome};
+use crate::{dnsutil, fallback};
 use sb_dns::message::{self, TYPE_A, TYPE_AAAA};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -79,6 +80,90 @@ pub fn parse_dns_spec(raw: &str) -> Option<DnsSpec> {
     crate::dnsutil::parse_dns_server(bare).map(DnsSpec::Udp)
 }
 
+pub fn sanitize_mihomo_dns_spec(raw: &str) -> Option<String> {
+    match parse_dns_spec(raw)? {
+        DnsSpec::Doh(url) => {
+            let valid = !dnsutil::url_hostname(&url).is_empty()
+                && !url.chars().any(|c| c.is_whitespace() || c.is_control());
+            valid.then_some(url)
+        }
+        DnsSpec::Dot(host, port) => {
+            if host.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                return None;
+            }
+            if host.parse::<Ipv6Addr>().is_ok() {
+                Some(format!("tls://[{host}]:{port}"))
+            } else {
+                Some(format!("tls://{host}:{port}"))
+            }
+        }
+        DnsSpec::Udp(addr) => fallback::is_usable_node_ip(addr.ip()).then(|| addr.to_string()),
+    }
+}
+
+pub fn sanitize_mihomo_bootstrap_ip(raw: &str, allow_private: bool) -> Option<String> {
+    let untagged = raw.split('#').next().unwrap_or_default().trim();
+    let bare = untagged
+        .strip_prefix("udp://")
+        .or_else(|| untagged.strip_prefix("tcp://"))
+        .unwrap_or(untagged)
+        .trim();
+    // The gateway's DNS parser also resolves names. Bootstrap must use a literal address.
+    if bare.parse::<SocketAddr>().is_err() && bare.parse::<IpAddr>().is_err() {
+        return None;
+    }
+    let addr = dnsutil::parse_dns_server(bare)?;
+    let ip = addr.ip().to_canonical();
+    if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() {
+        return None;
+    }
+    if let IpAddr::V4(ip) = ip
+        && fallback::is_fake_ip(ip)
+    {
+        return None;
+    }
+    if !allow_private {
+        let private = match ip {
+            IpAddr::V4(ip) => {
+                let [first, second, ..] = ip.octets();
+                ip.is_private() || (first == 100 && (64..=127).contains(&second))
+            }
+            IpAddr::V6(ip) => ip.is_unique_local(),
+        };
+        if private || !fallback::is_usable_node_ip(ip) {
+            return None;
+        }
+    }
+    Some(addr.to_string())
+}
+
+pub fn dns_spec_hostname(raw: &str) -> Option<String> {
+    let host = match parse_dns_spec(raw)? {
+        DnsSpec::Doh(url) => dnsutil::url_hostname(&url),
+        DnsSpec::Dot(host, _) => host,
+        DnsSpec::Udp(_) => return None,
+    };
+    (!host.is_empty() && host.parse::<IpAddr>().is_err()).then_some(host)
+}
+
+pub(crate) fn sanitize_dns_list(
+    value: &Yaml,
+    sanitize: impl Fn(&str) -> Option<String>,
+) -> Vec<String> {
+    let entries = match value {
+        Yaml::String(_) => std::slice::from_ref(value),
+        Yaml::Array(entries) => entries.as_slice(),
+        _ => return Vec::new(),
+    };
+    let mut seen = HashSet::new();
+    entries
+        .iter()
+        .filter_map(Yaml::as_str)
+        .filter_map(sanitize)
+        .filter(|server| seen.insert(server.clone()))
+        .collect()
+}
+
 fn split_host_port(s: &str, default_port: u16) -> (String, u16) {
 
     if let Some(rest) = s.strip_prefix('[')
@@ -98,9 +183,23 @@ fn split_host_port(s: &str, default_port: u16) -> (String, u16) {
 }
 
 pub fn extract_dns_servers(dns: &Yaml) -> Vec<String> {
+    extract_dns_fields(dns, DNS_FIELDS)
+}
+
+pub(crate) fn extract_dns_servers_for_all_nodes(dns: &Yaml) -> Vec<String> {
+    // A global burn pass must not send every node domain to subscription-scoped resolvers.
+    extract_dns_fields(
+        dns,
+        DNS_FIELDS
+            .into_iter()
+            .filter(|&field| field != "proxy-server-nameserver-policy"),
+    )
+}
+
+fn extract_dns_fields(dns: &Yaml, fields: impl IntoIterator<Item = &'static str>) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    for field in DNS_FIELDS {
+    for field in fields {
         collect_strings(&dns[field], &mut |s| {
             if parse_dns_spec(s).is_some() && seen.insert(s.to_string()) {
                 out.push(s.to_string());
@@ -1038,6 +1137,134 @@ mod tests {
         assert!(parse_dns_spec("system").is_none());
         assert!(parse_dns_spec("fake-ip").is_none());
         assert!(parse_dns_spec("198.18.0.1/16").is_none());
+    }
+
+    #[test]
+    fn mihomo_dns_specs_strip_fragments_and_format_addresses() {
+        for (raw, expected) in [
+            (
+                " https://doh.example/dns-query/token#🚀 节点选择 ",
+                "https://doh.example/dns-query/token",
+            ),
+            (
+                "https://doh.example/dns-query#h3=true",
+                "https://doh.example/dns-query",
+            ),
+            ("tls://dot.example#GROUP", "tls://dot.example:853"),
+            (
+                "tls://[2606:4700::1111]:8853#GROUP",
+                "tls://[2606:4700::1111]:8853",
+            ),
+            ("tls://2606:4700::1111", "tls://[2606:4700::1111]:853"),
+            ("tcp://[2606:4700::1111]:5353#GROUP", "[2606:4700::1111]:5353"),
+            ("udp://223.5.5.5#GROUP", "223.5.5.5:53"),
+        ] {
+            assert_eq!(sanitize_mihomo_dns_spec(raw).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn mihomo_dns_specs_reject_invalid_or_unsupported_inputs() {
+        for raw in [
+            "https:///dns-query",
+            "https://doh.example/query with spaces",
+            "https://doh.example/query\u{0007}",
+            "tls://",
+            "tls://dot.\texample:853",
+            "tls://dot.example\u{0007}",
+            "127.0.0.1",
+            "udp://198.19.255.255:53",
+            "tcp://[::]:53",
+            "system",
+            "system://",
+            "dhcp://eth0",
+            "quic://dns.example",
+            "doq://dns.example",
+            "rcode://success",
+        ] {
+            assert!(sanitize_mihomo_dns_spec(raw).is_none(), "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn mihomo_bootstrap_requires_literal_ips_and_only_trusts_gateway_lan() {
+        for (raw, expected) in [
+            ("tcp://10.10.10.2:53#eth0", "10.10.10.2:53"),
+            (" 192.168.1.1 ", "192.168.1.1:53"),
+            ("100.64.0.1", "100.64.0.1:53"),
+            ("udp://[fd00::1]:5353", "[fd00::1]:5353"),
+        ] {
+            assert_eq!(
+                sanitize_mihomo_bootstrap_ip(raw, true).as_deref(),
+                Some(expected)
+            );
+            assert!(sanitize_mihomo_bootstrap_ip(raw, false).is_none(), "{raw}");
+        }
+        assert!(sanitize_mihomo_bootstrap_ip("::ffff:10.10.10.2", false).is_none());
+        assert_eq!(
+            sanitize_mihomo_bootstrap_ip("2606:4700::1111#eth0", false).as_deref(),
+            Some("[2606:4700::1111]:53")
+        );
+        for raw in [
+            "localhost:53",
+            "udp://localhost:53",
+            "https://223.5.5.5/dns-query",
+            "tls://223.5.5.5:853",
+            "0.0.0.0",
+            "::",
+            "127.0.0.1:53",
+            "[::1]:53",
+            "::ffff:127.0.0.1",
+            "224.0.0.1",
+            "ff02::1",
+            "198.18.0.1",
+            "198.19.255.255",
+            "::ffff:198.19.0.1",
+        ] {
+            assert!(sanitize_mihomo_bootstrap_ip(raw, true).is_none(), "{raw}");
+            assert!(sanitize_mihomo_bootstrap_ip(raw, false).is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn dns_spec_hostname_extracts_only_encrypted_resolver_domains() {
+        let doh = "https://user:secret@Doh.example:8443/dns-query/token#GROUP";
+        assert_eq!(
+            dns_spec_hostname(doh).as_deref(),
+            Some("Doh.example")
+        );
+        assert_eq!(
+            dns_spec_hostname("tls://dot.example:8853#GROUP").as_deref(),
+            Some("dot.example")
+        );
+        for raw in [
+            "https:///dns-query",
+            "https://[2606:4700::1111]/dns-query",
+            "https://223.5.5.5/dns-query",
+            "tls://[2606:4700::1111]:853",
+            "tls://223.5.5.5",
+            "udp://223.5.5.5",
+            "system",
+        ] {
+            assert!(dns_spec_hostname(raw).is_none(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn global_dns_burn_does_not_use_node_policy_resolvers() {
+        let doc = &YamlLoader::load_from_str(
+            r#"
+nameserver: [223.5.5.5]
+proxy-server-nameserver-policy:
+  node.example: https://doh.example/query
+"#,
+        )
+        .unwrap()[0];
+        assert_eq!(extract_dns_servers_for_all_nodes(doc), ["223.5.5.5"]);
+        assert_eq!(
+            extract_dns_servers(doc),
+            ["223.5.5.5", "https://doh.example/query"]
+        );
     }
 
     #[test]

@@ -15,14 +15,11 @@ function python(code, value) {
     "import sys,json;sys.path.insert(0,'integration');" + code], {cwd: root, input: JSON.stringify(value), encoding: 'utf8'}));
 }
 const defaults = python("from manage_model import SCHEMA,SECRET_KEYS,public_settings;s={ns:{k:v[1] for k,v in f.items()} for ns,f in SCHEMA.items()};s['ini'].update(mode='suburl',suburl='fixture-private-source',net_rec=True);s['service']['PPGW_INTERFACE']='ens33';print(json.dumps({'settings':public_settings(s),'schema':{ns:{k:{'type':v[0],'secret':k in SECRET_KEYS,'constraints':v[2:]} for k,v in f.items()} for ns,f in SCHEMA.items()}}))", null);
-const raw = {
-  proxies: [{name: 'N1', type: 'socks5', server: '127.0.0.1', port: 9, password: 'private-node-credential'}],
-  dns: {nameserver: ['1.1.1.1']}, secret: 'private-core-credential',
-  'proxy-groups': [{name: 'Main', type: 'select', proxies: ['N1', 'DIRECT'], hidden: true}],
-  'rule-providers': {Local: {type: 'inline', behavior: 'domain', payload: ['example.com']}},
-  rules: ['DOMAIN-KEYWORD,foo#bar,DIRECT', 'MATCH,Main'],
-};
-const editorConfig = python("from clash_ppsub import editor_config;d=json.load(sys.stdin);print(json.dumps(editor_config(d,'https://example.com/sub')[0]))", raw);
+const nativeUrl = 'ppsub@http://127.0.0.1/ppsub.json';
+const legacyUrl = 'https://example.com/full-config?token=fixture';
+const emptyConfig = {exported_at:'new-config', subs:[], 'node-groups':[], rules:[]};
+const editorConfig = {exported_at:'fixture', subs:[{name:'Airport',url:'https://example.com/sub'}],
+  'node-groups':[{name:'Main',subs:['all']}], rules:[{fixrule:['DOMAIN-KEYWORD,foo#bar,DIRECT','MATCH,Main']}]};
 
 async function main() {
   const browser = await chromium.launch({channel:'chrome',headless:true,...(process.platform==='win32'?{args:['--disable-gpu']}:{})});
@@ -36,6 +33,7 @@ async function main() {
       if (!localStorage.getItem('ppgw-theme')) localStorage.setItem('ppgw-theme', 'light');
     });
     const model = {...defaults, revision: 'a'.repeat(64), proxy_username: '', assets: [], source: {native_ppsub: false, local_policy: true}, mihomo_installed: true};
+    const native = () => model.settings.ini.mode === 'suburl' && model.source.native_ppsub;
     let stale = false, fail = false, expireLogin = false, runningJob, polls = 0, configDelay = 0, coreFailed = true, coreLimited = false, localUpload = null, localInstalled = false, localOperations = [];
     let managementOffline=false, managementPolls=0, configReads=0, rechecks=0;
     let coreSerial=1, coreId='mihomo_1', coreRestart=false, coreReads=0, coreMutations=0, coreGate=false, coreExpired=false, coreExpireOnSubmit=false, coreSuperseded=false;
@@ -73,8 +71,15 @@ async function main() {
         };
         return route.fulfill({contentType: 'application/json', body: JSON.stringify(data)});
       }
-      if (target === '/sniffbox/subscription/status') return route.fulfill({contentType: 'application/json', body: JSON.stringify({ready: true, edit_kind: 'clash_patch', ppsub_write_allowed: true, base_revision: model.revision})});
-      if (target === '/sniffbox/subscription/config') return route.fulfill({contentType: 'application/json', body: JSON.stringify({config: editorConfig, edit_kind: 'clash_patch', snapshot_id: 'fixture-snapshot', base_revision: model.revision, settings_revision: model.revision, write_allowed: true, node_choices: ['N1'], notice: 'Synthetic editor'})});
+      if (target === '/sniffbox/subscription/status') return route.fulfill({contentType: 'application/json', body: JSON.stringify({ready:true, edit_kind:'ppsub', ppsub_write_allowed:native(), base_revision:model.revision})});
+      if (target === '/sniffbox/subscription/config') return route.fulfill({contentType:'application/json', body:JSON.stringify({
+        config:native()?editorConfig:emptyConfig, edit_kind:'ppsub', base_revision:model.revision, settings_revision:model.revision, write_allowed:native(),
+        source_details:{kind:native()?'native_ppsub':model.settings.ini.mode==='suburl'?'remote_yaml':'none',
+          url:native()?nativeUrl:model.settings.ini.mode==='suburl'?legacyUrl:''},
+        notice:native()?'Synthetic editor':model.settings.ini.mode==='suburl'?
+          '当前使用完整 Clash 配置，本版本不再支持在线编辑完整 Clash YAML；请先在“配置来源”切换到 LovestSub。':
+          '当前不是 LovestSub 模式，请先在“配置来源”切换到 LovestSub。',
+      })});
       if (target.startsWith('/sniffbox/settings/')) {
         assert.equal(sessions.authorized(req),true);
         if (target === '/sniffbox/settings/gateway-update') return route.fulfill({contentType:'application/json',body:JSON.stringify({installed:{version:'0.2.1'},candidate:null,available:false,operation:null})});
@@ -112,6 +117,11 @@ async function main() {
                 if (ns === 'ini' && key === 'openport_auth') model.proxy_username = value.split(':', 1)[0];
               }
             }
+            if (runningJob.kind === 'policy_reset') model.source.local_policy = false;
+            if (runningJob.payload.source_ppsub) {
+              assert.deepEqual(JSON.parse(runningJob.payload.source_ppsub),editorConfig);
+              model.source.native_ppsub = true;
+            }
             if (runningJob.kind === 'asset') model.assets.push(runningJob.payload.name);
           }
         } else throw Error('Unexpected API ' + target);
@@ -119,7 +129,7 @@ async function main() {
       }
       // The shared authenticated shell also reads its runtime capability state.
       if (target.startsWith('/sniffbox/')) return route.fulfill({contentType: 'application/json',
-        body: JSON.stringify({mode: 'suburl', clash_version: 'fixture', ppsub: false})});
+        body: JSON.stringify({mode:model.settings.ini.mode, clash_version:'fixture', ppsub:native()})});
       const filename = path.join(output, target === '/ui/' || target === '/ui' ? 'index.html' : path.basename(target));
       try {
         const body = await fs.readFile(filename);
@@ -470,20 +480,41 @@ async function main() {
     await page.locator('#apply').click(); await saved();
     assert.equal(submitted[1].kind, 'policy_reset');
     await page.getByRole('tab',{name:'配置来源',exact:true}).click();
-    await page.getByRole('button',{name:'切换配置来源',exact:true}).click();await page.locator('#source-type').selectOption('yaml');
-    await page.locator('#asset-file').setInputFiles({name: 'fixture.yaml', mimeType: 'text/yaml', buffer: Buffer.from('proxies: []\nproxy-groups: []\nrules: [MATCH,DIRECT]\n')});
-    await page.locator('.source-card').getByRole('button', {name: '导入文件', exact: true}).click();
-    await page.getByText('文件已保存。请预览并确认切换到导入的配置；同名资源也可通过“重启应用资源”生效。', {exact: true}).waitFor();
-    assert.equal(submitted[2].kind, 'asset');
+    assert.equal(await page.locator('.source-kind').textContent(),'远程完整配置');
+    assert.equal(await page.locator('.source-location').textContent(),'https://example.com/•••?•••=•••');
+    await page.getByRole('link', {name: '设置', exact: true}).click();
+    await page.getByRole('tab',{name:'网络与出站',exact:true}).click();
+    await page.getByRole('heading',{name:'导入 OpenVPN 配置',exact:true}).waitFor();
+    assert.equal(await page.locator('#asset-name').inputValue(),'custom.ovpn');
+    assert.equal(await page.locator('#asset-file').getAttribute('accept'),'.ovpn');
+    const openVpn='client\ndev tun\nremote vpn.example.invalid 1194\n';
+    await page.locator('#asset-name').fill('fixture.ovpn');
+    await page.locator('#asset-file').setInputFiles({name:'fixture.ovpn',mimeType:'text/plain',buffer:Buffer.from(openVpn)});
+    await page.getByRole('button',{name:'导入文件',exact:true}).click();
+    await page.getByText(/OpenVPN 文件已保存/).waitFor();
+    assert.equal(submitted[2].kind,'asset');
+    assert.deepEqual(submitted[2].payload,{type:'ovpn',name:'fixture.ovpn',content:openVpn,overwrite:false});
+    assert.equal(await page.getByLabel('网关出站模式',{exact:true}).inputValue(),'ovpn');
+    assert.equal(await page.getByLabel('OpenVPN 文件',{exact:true}).inputValue(),'fixture.ovpn');
+    await apply();await saved();
+    assert.deepEqual(submitted[3].payload.patch.ini,{mode:'ovpn',ovpnfile:'fixture.ovpn'});
+    await page.getByRole('link',{name:'订阅',exact:true}).click();
+    await page.getByRole('tab',{name:'配置来源',exact:true}).click();
+    assert.equal(await page.locator('.source-kind').textContent(),'OpenVPN');
+    await page.getByRole('button',{name:'切换配置来源',exact:true}).click();
+    assert.deepEqual(await page.locator('#source-type option').allTextContents(),['LovestSub']);
+    assert.equal(await page.locator('#asset-file').count(),0);
+    await page.locator('#source-ppsub').setInputFiles({name:'lovestsub.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(editorConfig))});
+    await page.getByText('LovestSub 文件已选中，预览并确认后才会切换来源。',{exact:true}).waitFor();
     await page.getByRole('button',{name:'预览来源切换',exact:true}).click();
     await page.locator('#preview-dialog').waitFor({state:'visible'});
     await page.locator('#apply').click();
-    assert.equal(await page.locator('[data-ppsub-apply]').isDisabled(), true);
+    assert.equal(await page.locator('[data-ppsub-apply]').isDisabled(),true);
     await saved();
-    assert.equal(submitted[3].payload.patch.ini.mode, 'yaml');
-    assert.equal(await page.getByLabel('订阅更新间隔',{exact:true}).count(),0);
-    assert.equal(await page.locator('.source-kind').textContent(),'本地 YAML');
-    await page.getByRole('link', {name: '设置', exact: true}).click();
+    assert.deepEqual(submitted[4].payload.patch.ini,{mode:'suburl',suburl:nativeUrl,fast_node:'no'});
+    assert.equal(await page.locator('.source-kind').textContent(),'LovestSub');
+    await page.getByRole('link',{name:'设置',exact:true}).click();
+    await page.getByRole('tab',{name:'访问与统计',exact:true}).click();
     fail = true;
     await blur(page.getByLabel('流量记录上限', {exact: true}), '9002');
     await apply(); await page.getByText('应用验收失败，已恢复原配置。请检查网卡、监听端口和资源。', {exact: true}).waitFor();
@@ -542,7 +573,7 @@ async function main() {
     assert.deepEqual(errors, []);
     for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await context.close();
     console.log(JSON.stringify({syntheticOnly: true, nativeSettings: true, policyReset: true,
-      uploadThenPreview: true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
+      nativePpsubSourceSwitch:true, openVpnUploadThenPreview:true, retryAndRelogin: true, desktopMobile: true, staleAndRollback: true, listenerReconnect: true,
       sharedShell: true, draftAcrossRoutes: true, backNavigationGuard: true, nativeModalFocusAndEscape: true, appearanceSelection: true, mobileMenu: true,
       unmountDuringFetch: true, observerApiSettings: true, recheckPreservesDraft:true, staleCheckDistinguished:true, coreNetworkFailureAndRetry: true, coreRestartReconnect:true, coreTaskSurvivesReload:true, coreSupersededTaskIsolation:true, coreAuthenticationReconnect:true, coreMutationNeverReplayed:true, rateLimitRetryTime: true, manualCoreChunkUpload: true, passwordConfirmation: true, eightCharacterPassword: true, sevenCharacterPasswordRejected: true, proxySeparateCredentials:true, proxyFixedPortInfo:true, proxyCredentialValidation:true, proxySavedCredentialRetention:true, proxyExplicitCredentialClear:true, proxyDraftProtection:true, proxyUsernameVisibleAfterSave:true, proxyPasswordOnlyChange:true, pageErrors: errors}));
   } finally { for(const context of browser.contexts())for(const tab of context.pages())await tab.unrouteAll({behavior:'ignoreErrors'});await browser.close(); }

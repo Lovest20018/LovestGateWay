@@ -133,17 +133,19 @@ impl WebProxies {
         let mode = fetch_mode(sock);
         let test_url = read_test_url(&self.ppgw_ini);
 
-        let smart_urls: HashMap<String, String> =
-            std::fs::read_to_string(crate::geo_cron::ppsub_config_path())
-                .map(|j| {
-                    crate::smart_speed::parse_smart_groups(&j)
-                        .into_iter()
-                        .map(|g| (g.name, g.url))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-        let subs = if crate::runtime::ppsub_active() {
+        let ppsub_json =
+            std::fs::read_to_string(crate::geo_cron::ppsub_config_path()).unwrap_or_default();
+        let smart_urls = crate::smart_speed::parse_smart_groups(&ppsub_json)
+            .into_iter()
+            .map(|g| (g.name, g.url))
+            .collect();
+        let ppsub_active = crate::runtime::ppsub_active();
+        let failover_groups = if ppsub_active {
+            parse_failover_groups(&ppsub_json)
+        } else {
+            HashSet::new()
+        };
+        let subs = if ppsub_active {
             sb_ppgw::ppsub::subinfo::load(&sb_ppgw::ppsub::subinfo::file())
         } else {
             Vec::new()
@@ -154,6 +156,7 @@ impl WebProxies {
             &mode,
             &test_url,
             &smart_urls,
+            &failover_groups,
             &|g| self.smart_stats.group_scores(g),
             &self.smart_fixed.all(),
             &subs,
@@ -341,6 +344,34 @@ pub(crate) fn pct_encode_segment(s: &str) -> String {
     out
 }
 
+fn parse_failover_groups(json: &str) -> HashSet<String> {
+    let Ok(config) = serde_json::from_str::<Value>(json) else {
+        return HashSet::new();
+    };
+    let Some(groups) = config.get("node-groups").and_then(Value::as_array) else {
+        return HashSet::new();
+    };
+    groups
+        .iter()
+        .filter_map(|group| {
+            let speedtest_url = group
+                .get("speedtest_url")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let interval = group.get("interval").and_then(Value::as_i64).unwrap_or(0);
+            if group.get("failover") != Some(&Value::Bool(true))
+                || group.get("smart") == Some(&Value::Bool(true))
+                || !speedtest_url.trim().is_empty()
+                || interval > 0
+            {
+                return None;
+            }
+            let name = group.get("name")?.as_str()?;
+            (!name.trim().is_empty()).then(|| name.to_string())
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_trimmed(
     proxies_raw: &RawProxies,
@@ -348,6 +379,7 @@ pub(crate) fn build_trimmed(
     mode: &str,
     test_url: &str,
     smart_urls: &HashMap<String, String>,
+    failover_groups: &HashSet<String>,
     smart_scores: &dyn Fn(&str) -> Option<Value>,
     smart_fixed: &HashMap<String, String>,
     subs: &[sb_ppgw::ppsub::subinfo::Entry],
@@ -381,6 +413,13 @@ pub(crate) fn build_trimmed(
                     o.insert("fixed".into(), Value::String(n.clone()));
                 }
             }
+        } else if name != "GLOBAL"
+            && t.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s.eq_ignore_ascii_case("Selector"))
+            && failover_groups.contains(name)
+        {
+            t["failover"] = Value::Bool(true);
         }
         proxies.insert(name.clone(), t);
     }
@@ -731,6 +770,63 @@ mod tests {
     }
 
     #[test]
+    fn parses_failover_only_for_manual_ppsub_groups() {
+        let config = json!({"node-groups": [
+            {"name": "Manual", "failover": true},
+            {"name": " Padded ", "failover": true, "smart": false, "speedtest_url": " \t", "interval": -1},
+            {"name": "Zero", "failover": true, "interval": 0},
+            {"name": "Disabled", "failover": false},
+            {"name": "Implicit"},
+            {"name": "Smart", "failover": true, "smart": true},
+            {"name": "Speedtest", "failover": true, "speedtest_url": " https://test.example/204 "},
+            {"name": "Interval", "failover": true, "interval": 1},
+            {"name": "  ", "failover": true},
+            {"failover": true}
+        ]});
+        assert_eq!(
+            parse_failover_groups(&config.to_string()),
+            HashSet::from(["Manual".to_string(), " Padded ".to_string(), "Zero".to_string()])
+        );
+        assert!(parse_failover_groups("invalid").is_empty());
+        assert!(parse_failover_groups(r#"{"node-groups":{}}"#).is_empty());
+    }
+
+    #[test]
+    fn trims_failover_only_for_matching_non_smart_selectors() {
+        let proxies = px(json!({"proxies": {
+            "Manual": {"type": "Selector", "all": ["N1"]},
+            "Lowercase": {"type": "selector", "all": ["N1"]},
+            "GLOBAL": {"type": "Selector", "all": ["N1"]},
+            "Smart": {"type": "Selector", "all": ["N1", sb_ppgw::ppsub::SMART_HIDE_NODE]},
+            "Test": {"type": "URLTest", "all": ["N1"]},
+            "Fallback": {"type": "Fallback", "all": ["N1"]},
+            "Plain": {"type": "Selector", "all": ["N1"]}
+        }}));
+        let failover_groups = ["Manual", "Lowercase", "GLOBAL", "Smart", "Test", "Fallback"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        let out: Value = serde_json::from_str(&build_trimmed(
+            &proxies,
+            &RawProviders::default(),
+            "rule",
+            "http://t",
+            &HashMap::new(),
+            &failover_groups,
+            &|_| None,
+            &HashMap::new(),
+            &[],
+        ))
+        .unwrap();
+        assert_eq!(out["proxies"]["Manual"]["failover"], true);
+        assert_eq!(out["proxies"]["Lowercase"]["failover"], true);
+        assert_eq!(out["proxies"]["Smart"]["smart"], true);
+        for name in ["GLOBAL", "Smart", "Test", "Fallback", "Plain"] {
+            assert!(out["proxies"][name].get("failover").is_none(), "{name}");
+        }
+    }
+
+    #[test]
     fn trims_node_and_group_fields() {
         let proxies = json!({
             "proxies": {
@@ -764,6 +860,7 @@ mod tests {
             "Rule",
             "http://t",
             &HashMap::new(),
+            &HashSet::new(),
             &|_| None,
             &HashMap::new(),
             &[],
@@ -805,7 +902,7 @@ mod tests {
         ]}}});
         let out: Value = serde_json::from_str(&build_trimmed(
             &px(proxies), &pv(providers), "rule", "u", &HashMap::new(),
-            &|_| None, &HashMap::new(), &[],
+            &HashSet::new(), &|_| None, &HashMap::new(), &[],
         )).unwrap();
         assert_eq!(out["proxies"]["G"]["all"], json!(["N2", "N1"]));
         assert_eq!(out["providers"]["Air"]["proxies"], json!(["N2", "N1"]));
@@ -841,6 +938,7 @@ mod tests {
             "rule",
             "u",
             &smart_urls,
+            &HashSet::new(),
             &|g| (g == "Smart").then(|| json!({"N1": {"score": 123, "samples": [100, null]}})),
             &HashMap::new(),
             &[],
@@ -886,6 +984,7 @@ mod tests {
             "rule",
             "http://fallback/204",
             &smart_urls,
+            &HashSet::new(),
             &|_| None,
             &HashMap::new(),
             &[],
@@ -911,6 +1010,7 @@ mod tests {
                 "rule",
                 "http://d/204",
                 &smart_urls,
+                &HashSet::new(),
                 &|_| None,
                 &fixed,
                 &[],
@@ -946,6 +1046,7 @@ mod tests {
             "rule",
             "http://d/204",
             &HashMap::new(),
+            &HashSet::new(),
             &|_| None,
             &HashMap::new(),
             &[],
@@ -1043,6 +1144,7 @@ mod tests {
             "rule",
             "u",
             &HashMap::new(),
+            &HashSet::new(),
             &|_| None,
             &HashMap::new(),
             &[],
@@ -1079,6 +1181,7 @@ mod tests {
             "rule",
             "u",
             &HashMap::new(),
+            &HashSet::new(),
             &|_| None,
             &HashMap::new(),
             &subs,

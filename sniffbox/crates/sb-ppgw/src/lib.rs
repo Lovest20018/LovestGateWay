@@ -661,8 +661,8 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
         Ok(()) => {
             let _ = writeln!(
                 io.out,
-                "{}PPSub processed successfully, output file: {}",
-                term::green("[LovestGateWay PPSub]"),
+                "{}LovestSub processed successfully, output file: {}",
+                term::green("[LovestGateWay LovestSub]"),
                 f.output
             );
 
@@ -719,8 +719,8 @@ fn cmd_ppsub(f: &PpgwFlags, io: &mut Io) -> i32 {
         Err(e) => {
             let _ = writeln!(
                 io.out,
-                "{}PPSub processing failed: {e}",
-                term::red("[LovestGateWay PPSub]")
+                "{}LovestSub processing failed: {e}",
+                term::red("[LovestGateWay LovestSub]")
             );
             1
         }
@@ -758,7 +758,7 @@ fn spawn_gap_fill(io: &mut Io) {
             let _ = writeln!(
                 io.out,
                 "{}gaps left and clash is not up yet — background gap-fill scheduled (pid {})",
-                term::orange("[LovestGateWay PPSub]"),
+                term::orange("[LovestGateWay LovestSub]"),
                 child.id()
             );
         }
@@ -766,7 +766,7 @@ fn spawn_gap_fill(io: &mut Io) {
             let _ = writeln!(
                 io.out,
                 "{}cannot schedule background gap-fill: {e}",
-                term::red("[LovestGateWay PPSub]")
+                term::red("[LovestGateWay LovestSub]")
             );
         }
     }
@@ -846,7 +846,7 @@ pub fn usage() -> String {
     s.push_str("  -nodehash <name> -yaml <f>         Node config hash\n");
     s.push_str("  -rulehash -yaml <f>                Rule section hash\n");
     s.push_str("  -yamlhashFile <f>                  YAML content hash\n");
-    s.push_str("  -healthcheck <f>                   PPSub health check + group failover\n");
+    s.push_str("  -healthcheck <f>                   LovestSub health check + group failover\n");
     s.push_str("  -testProxy -test_node_url <u>      Probe via health-check inbound (:1079)\n");
     s.push_str("  -rawURL <u> -server <dns> -port <p>  nslookup\n");
     s.push_str("  -downURL <u> -output <f>           Download\n");

@@ -183,8 +183,15 @@ fn fill_gaps(
             .ok()
             .and_then(|d| d.into_iter().next());
         let resolution = to_resolution(&st, &sub_results, ipv6);
-        let yaml = super::emit_config(cfg, &sub_results, &resolution, st.dns_burn, prev.as_ref())
-            .map_err(|e| e.to_string())?;
+        let yaml = super::emit_config(
+            cfg,
+            &sub_results,
+            &resolution,
+            st.dns_burn,
+            &st.ex_dns,
+            prev.as_ref(),
+        )
+        .map_err(|e| e.to_string())?;
         write_atomic(&st.output, &yaml).map_err(|e| format!("write {}: {e}", st.output))?;
         st.output_hash = state::file_hash(&st.output);
         if !fresh_subs.is_empty() {
@@ -456,7 +463,7 @@ fn combine_and_reload(output: &str, io: &mut crate::Io) -> Result<(), String> {
     let _ = writeln!(
         io.out,
         "{}gap-fill applied, clash reloaded {CLASH_YAML}",
-        crate::term::green("[PaoPaoGW PPSub]")
+        crate::term::green("[LovestGateWay LovestSub]")
     );
     Ok(())
 }

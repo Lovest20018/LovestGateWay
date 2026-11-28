@@ -84,35 +84,69 @@ class SubscriptionTests(unittest.TestCase):
                 self.assertFalse(manager.authenticated('Bearer observer-token'))
                 self.assertFalse(manager.authenticated('Bearer 非法字符'))
 
-    def test_clash_current_config_loads_actual_policy_without_writing(self):
+    def test_complete_clash_sources_show_status_and_lock_the_editor(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            config = root / 'ppgw.ini'
-            original = b'#paopao-gateway\nmode=suburl\n'
-            config.write_bytes(original)
-            exported = "mode='suburl'\nsuburl='https://example.com/sub?token=secret&x=1'\n"
-            document = {'proxy-groups': [{'name': 'G1', 'type': 'select', 'proxies': ['N1', 'DIRECT']}],
-                        'rule-providers': {'rules1': {'type': 'http', 'url': 'https://example.com/rules', 'format': 'mrs'}},
-                        'rules': ['RULE-SET,rules1,G1', 'MATCH,DIRECT']}
-            with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', root), \
-                 patch.object(admin, 'running_document', return_value=document), \
-                 patch('subscription_admin.subprocess.run') as run:
-                run.return_value.stdout = exported
-                result = admin.Admin(Layout(temp)).current_config()
-            self.assertEqual(result['config']['subs'], [])
-            self.assertTrue(result['synthetic_source'])
-            self.assertEqual(result['source'], 'clash_runtime')
-            self.assertEqual(result['config']['node-groups'][0]['name'], 'G1')
-            self.assertEqual(result['config']['node-groups'][0]['include'], ['N1', 'DIRECT'])
-            self.assertEqual(result['config']['rules'][-1]['fixrule'], document['rules'])
-            self.assertEqual(result['config']['rules'][0]['format'], 'mrs')
-            self.assertEqual(result['counts'], {'node_groups': 1, 'rules': 2, 'rule_providers': 1})
-            self.assertTrue(result['write_allowed'])
-            self.assertEqual(result['edit_kind'], 'clash_patch')
-            self.assertGreaterEqual(len(result['snapshot_id']), 24)
-            self.assertEqual(config.read_bytes(), original)
-            self.assertEqual(run.call_count, 1)
-            self.assertIsInstance(run.call_args.args[0], list)
+            layout = Layout(temp)
+            files = layout.path('etc/paopaogw/files')
+            files.mkdir(parents=True)
+            config = files / 'ppgw.ini'
+            manager = admin.Admin(layout)
+            for mode, suburl, source_kind in (
+                ('yaml', '', 'local_yaml'),
+                ('suburl', 'https://example.com/sub?token=fixture', 'remote_yaml'),
+            ):
+                with self.subTest(mode=mode):
+                    original = f'#paopao-gateway\nmode="{mode}"\nsuburl="{suburl}"\nyamlfile="legacy.yaml"\n'.encode()
+                    config.write_bytes(original)
+                    exported = f"mode='{mode}'\nsuburl='{suburl}'\nyamlfile='legacy.yaml'\n"
+                    with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', files), \
+                         patch('subscription_admin.subprocess.run') as run:
+                        run.return_value.stdout = exported
+                        result = manager.current_config()
+                    self.assertEqual(result['source'], 'empty')
+                    self.assertEqual(result['edit_kind'], 'ppsub')
+                    self.assertFalse(result['write_allowed'])
+                    self.assertIn('不再支持在线编辑完整 Clash YAML', result['notice'])
+                    self.assertEqual(result['source_details']['kind'], source_kind)
+                    self.assertEqual(result['source_details']['url'], suburl)
+                    if mode == 'yaml':
+                        self.assertEqual(result['source_details']['file'], 'legacy.yaml')
+                    for key in ('subs', 'node-groups', 'rules'):
+                        self.assertEqual(result['config'][key], [])
+                    self.assertNotIn('snapshot_id', result)
+                    self.assertEqual(config.read_bytes(), original)
+                    run.assert_called_once()
+                    self.assertIsInstance(run.call_args.args[0], list)
+
+    def test_status_requires_a_ready_core_and_saved_native_source_without_subprocess(self):
+        with tempfile.TemporaryDirectory() as temp:
+            layout = Layout(temp)
+            files = layout.path('etc/paopaogw/files')
+            files.mkdir(parents=True)
+            config = files / 'ppgw.ini'
+            native_url = 'ppsub@https://example.com/config'
+            remote_url = 'https://example.com/config'
+            manager = admin.Admin(layout)
+            with patch.object(admin, 'CONFIG', config), patch.object(admin, 'FILES', files), \
+                 patch.object(admin, 'config_values', side_effect=AssertionError('subprocess during status poll')):
+                for mode, suburl, running, installed, allowed in (
+                    ('suburl', native_url, 'suburl', True, True),
+                    ('suburl', native_url, 'suburl', False, False),
+                    ('suburl', remote_url, 'suburl', True, False),
+                    ('yaml', '', 'yaml', True, False),
+                    ('free', '', 'free', False, False),
+                ):
+                    with self.subTest(mode=mode, suburl=suburl, installed=installed):
+                        config.write_text(f"#paopao-gateway\n  mode='{mode}'\nsuburl='{suburl}'\n")
+                        with patch.object(manager.core, 'request', return_value={
+                            'mode': running, 'clash_version': 'fixture' if installed else '',
+                        }):
+                            value = manager.status()
+                        self.assertEqual(value['saved_mode'], mode)
+                        self.assertEqual(value['running_mode'], running)
+                        self.assertEqual(value['ready'], installed or mode == 'free')
+                        self.assertEqual(value['edit_kind'], 'ppsub')
+                        self.assertEqual(value['ppsub_write_allowed'], allowed)
 
     def test_other_outbound_modes_require_source_switch_before_editing(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -122,6 +156,51 @@ class SubscriptionTests(unittest.TestCase):
                 value = admin.Admin(Layout(temp)).current_config()
             self.assertFalse(value['write_allowed'])
             self.assertEqual(value['source'], 'empty')
+            self.assertEqual(value['edit_kind'], 'ppsub')
+            self.assertIn('当前不是 LovestSub 模式', value['notice'])
+
+    def test_legacy_yaml_editor_and_export_requests_get_explicit_http_rejection(self):
+        from http.client import HTTPConnection
+        from http.server import ThreadingHTTPServer
+        from threading import Thread
+
+        with tempfile.TemporaryDirectory() as temp:
+            token = Path(temp) / 'token'
+            token.write_text('a' * 64)
+            manager = admin.Admin(Layout(temp))
+            with ThreadingHTTPServer(('127.0.0.1', 0), admin.Handler) as server:
+                server.admin = manager
+                thread = Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    with patch.object(admin, 'CORE_TOKEN', token), patch.object(admin.threading, 'Timer') as timer:
+                        for body in (
+                            {'kind': 'clash_patch'},
+                            {'kind': 'export_yaml'},
+                            {'kind': 'editor', 'edit_kind': 'clash_patch'},
+                        ):
+                            with self.subTest(body=body):
+                                with self.assertRaisesRegex(ValueError, '^CLASH_YAML_EDITING_UNSUPPORTED$'):
+                                    manager.apply(body)
+                                conn = HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+                                try:
+                                    conn.request('POST', '/api/subscription', json.dumps(body), {
+                                        'Content-Type': 'application/json', 'Authorization': 'Bearer ' + 'a' * 64,
+                                        'Origin': f'http://127.0.0.1:{server.server_port}',
+                                    })
+                                    response = conn.getresponse()
+                                    self.assertEqual(response.status, 400)
+                                    self.assertEqual(json.loads(response.read()), {
+                                        'error': 'CLASH_YAML_EDITING_UNSUPPORTED',
+                                        'message': admin.CLASH_YAML_EDITING_MESSAGE,
+                                    })
+                                finally:
+                                    conn.close()
+                        timer.assert_not_called()
+                    self.assertIsNone(manager.operation)
+                finally:
+                    server.shutdown()
+                    thread.join(2)
 
     def test_full_clash_cannot_be_overwritten_by_ppsub_projection(self):
         with tempfile.TemporaryDirectory() as temp:

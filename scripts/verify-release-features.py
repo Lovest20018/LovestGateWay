@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Run only inside the disposable release-validation container, with synthetic data."""
-from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
@@ -12,8 +11,8 @@ CODE = Path('/usr/local/lib/paopaogw')
 sys.path.insert(0, str(CODE))
 from gateway_api import CoreClient
 from mihomo_update import Updater
-from subscription_admin import update_config, Admin, atomic_write
-from clash_ppsub import feature_options, apply_features, logical_document
+from subscription_admin import update_config, Admin, atomic_write, config_values
+from clash_ppsub import feature_options, apply_features, logical_document, running_document, source_identity
 from history_store import query as history_query
 import yaml
 
@@ -100,9 +99,7 @@ def main():
         'restart_cron': {'enable': True, 'hour': 4},
         'shadowsocks_in': {'enable': True, 'cipher': 'aes-128-gcm', 'password': 'synthetic-fixture-secret'}}
     features = feature_options(settings)
-    admin = Admin()
-    snapshot = admin.current_config()
-    runtime_doc = admin.snapshots[snapshot['snapshot_id']]['document']
+    runtime_doc = running_document()
     materialized = apply_features(runtime_doc, features)
     candidate = ROOT / 'admin/advanced-fixture.yaml'
     atomic_write(candidate, yaml.safe_dump(materialized).encode())
@@ -111,12 +108,14 @@ def main():
                     '-d', '/etc/config/clash', '-f', str(candidate)], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=40)
     assert logical_document(materialized) == runtime_doc
-    policy = {'schema': 1, 'source_identity': __import__('clash_ppsub').source_identity(__import__('subscription_admin').config_values()),
+    policy = {'schema': 1, 'source_identity': source_identity(config_values()),
               'sections': {}, 'reference_renames': {}, 'features': features}
     atomic_write(CONFIG.parent / 'clash-policy.json', json.dumps(policy).encode())
     restart('yaml')
-    assert client.request('/sniffbox/subscription/config')['config']['restart_cron']['enable']
-    assert json.loads((ROOT / 'clash/clash-dashboard/data/ppsub-policy.json').read_bytes())['global_monitor']['enable']
+    editor = client.request('/sniffbox/subscription/config')
+    assert editor['source'] == 'empty' and editor['edit_kind'] == 'ppsub' and not editor['write_allowed']
+    metadata = json.loads((ROOT / 'clash/clash-dashboard/data/ppsub-policy.json').read_bytes())
+    assert metadata['global_monitor']['enable'] and metadata['restart_cron'] == {'enable': True, 'hour': 4}
     report['checks']['advanced_preproxy_ss_smart_monitor_restart_real_mihomo_validation'] = True
 
     # Reset endpoint applies the upstream source again and retains a policy backup.

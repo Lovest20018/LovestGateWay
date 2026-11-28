@@ -1,4 +1,4 @@
-/* Native gateway settings and Clash policy UI. Credentials never enter job metadata. */
+/* Native gateway settings and PPsub editor. Credentials never enter job metadata. */
 (() => {
   'use strict';
   let current = null;
@@ -51,8 +51,8 @@
       },
       previewEditor: (data, submit) => {
         prepared = {submit};
-        $('preview-content').replaceChildren(...previewDescription(data, 'config'), el('p', {class:'subtext', text:
-          data.save_target === 'local_policy' ? '全局选项、提供商、节点组、规则与更新计划将统一保存。本地覆盖策略不会改写源 YAML。' : 'PPsub 配置与更新计划将统一保存。加载失败时整批恢复。'}));
+        $('preview-content').replaceChildren(...previewDescription(data, 'config'),
+          el('p', {class:'subtext', text:'LovestSub 配置与更新计划将统一保存。加载失败时整批恢复。'}));
         openPreview(root.parentElement.querySelector('[data-ppsub-apply]'));
       },
       editorApplied: async () => { dirty.clear(); sourceDraft = null; sourceExpanded = false; await refreshRuntime(); await load(); },
@@ -93,13 +93,12 @@
       read_token: ['更换 API Token', '留空保留当前 Token；应用后旧 Token 失效，请同步更新使用该 API 的客户端。'],
       subtime: ['订阅更新间隔', '如 30m、6h、1d。'],
       subcron: ['每天定时更新（小时）', '填写 0–23；留空则按间隔更新。'],
-      yamlfile: ['本地 YAML 文件', '先在下方导入，再选择文件并预览。'],
       ovpnfile: ['OpenVPN 文件', '只允许内联证书和受限路由配置。'],
       ovpn_username: ['OpenVPN 用户名', ''], ovpn_password: ['OpenVPN 密码', '留空保留。'],
       socks5_ip: ['SOCKS5 上游 IP', 'IPv6 地址加方括号。'], socks5_port: ['SOCKS5 上游端口', ''],
       socks5_username: ['SOCKS5 用户名', ''], socks5_password: ['SOCKS5 密码', '留空保留。'],
       splice_threshold: ['快速转发阈值（字节）', '留空使用默认值；安全字段可热更新。'],
-      fast_node: ['自动选点方式', '普通订阅可用 yes / check / no；原生 PPsub 使用节点组测速。'],
+      fast_node: ['自动选点方式', '普通订阅可用 yes / check / no；LovestSub 使用节点组测速。'],
       test_node_url: ['节点测试地址', '用于节点连通性与延迟测试的 HTTP(S) 地址。'], ext_node: ['测速排除关键词', '普通订阅自动选点时排除匹配节点；多个关键词用 | 分隔。'],
       fall_direct: ['选点失败时直连', '启用后可能绕过代理，请按实际需求选择。'],
       dns_burn: ['节点 DNS 预解析', '提前解析机场节点域名，增加固定 IP 的可选入口。'], ex_dns: ['额外 DNS 服务器', '扩展 DNS：补充节点解析结果，逗号分隔 IP:端口。'],
@@ -135,7 +134,7 @@
       dns_burn: [
         ['作用', '用信任 DNS 和扩展 DNS 查询机场节点域名，保留原节点，并为可用 IP 添加节点副本，方便代理组测速和选择入口。'],
         ['示例', '同一个节点域名查到两个不同 IP，就可能多出两个固定 IP 版本；它们沿用原节点的协议和账号。'],
-        ['适用范围', '原生 PPsub 直接支持，也会尝试订阅自带的 DNS；其额外入口可能带 @subdns 后缀。普通订阅和本地 YAML 需要同时启用自动选点（fast_node=yes）。'],
+        ['适用范围', 'LovestSub 始终通过 Mihomo 的 proxy-server-nameserver-policy 让各订阅的节点域名使用各自的 DoH/DoT。开启预解析还会生成 @subdns 等固定 IP 副本。普通订阅和本地 YAML 需同时启用自动选点（fast_node=yes）。'],
       ],
       ex_dns: [
         ['作用', '也称扩展 DNS。节点 DNS 预解析会向这些服务器补充查询，收集不同地区或运营商返回的节点入口；部分解析流程也会将其作为备用。'],
@@ -152,12 +151,12 @@
       ],
       fast_node: [
         ['可选值', 'yes：测速并自动选择节点；check：检查连通性，异常时更新配置但不主动测速选点；no：手动选择。'],
-        ['适用范围', '用于普通订阅和本地 YAML 的传统选点流程。原生 PPsub 由各节点组的测速模式控制，此选项会被忽略。'],
+        ['适用范围', '用于普通订阅和本地 YAML 的传统选点流程。LovestSub 由各节点组的测速模式控制，此选项会被忽略。'],
         ['留空时', '普通配置根据是否包含规则自动判断。应用前请确认需要自动切换还是保留手动选点。'],
       ],
       fall_direct: [
         ['作用', '普通订阅自动选点时，全部节点测速失败且直连探测可用，允许回退到直连。'],
-        ['开启前', '确认业务允许流量直接出网。原生 PPsub 忽略此选项，应在节点组和规则中明确配置 DIRECT。'],
+        ['开启前', '确认业务允许流量直接出网。LovestSub 忽略此选项，应在节点组和规则中明确配置 DIRECT。'],
       ],
       udp_enable: [
         ['作用', '允许网关转发 UDP 流量；实际连通还取决于节点协议、上游支持及防火墙。'],
@@ -169,11 +168,11 @@
       ],
       subtime: [
         ['填写示例', '30m 表示每 30 分钟，6h 表示每 6 小时，1d 表示每天。填写每天定时更新的小时后，按该定时计划执行。'],
-        ['原生 PPsub', '这是全局默认计划；每个机场可选择跟随全局、仅手动或独立自动更新。各机场单独设置的计划优先。'],
+        ['LovestSub', '这是全局默认计划；每个机场可选择跟随全局、仅手动或独立自动更新。各机场单独设置的计划优先。'],
       ],
       subcron: [
         ['作用', '按调度时区，在每天指定小时内更新；例如填写 5 表示每天 05 点这一小时内。留空使用更新间隔。'],
-        ['原生 PPsub', '仅影响跟随全局计划的机场；仅手动和独立自动更新的机场继续按各自设置执行。'],
+        ['LovestSub', '仅影响跟随全局计划的机场；仅手动和独立自动更新的机场继续按各自设置执行。'],
       ],
     };
     const modeNames = {free: '直连', socks5: 'SOCKS5', ovpn: 'OpenVPN', yaml: '本地 YAML', suburl: '订阅'};
@@ -190,7 +189,7 @@
       LOGIN_REQUIRED: '登录已失效，请重新登录；任务与未保存的修改仍保留。',
       CONFIG_REVISION_CONFLICT: '配置已被其他操作修改。请刷新配置后重新编辑。',
       STALE_POLICY_SNAPSHOT: '运行配置或订阅已变化，请重新载入策略后再编辑。',
-      SOURCE_CONFLICT: '更换来源与现有本地策略或 PPsub 冲突。确认清除选项后重新预览。',
+      SOURCE_CONFLICT: '更换来源与现有本地策略或 LovestSub 冲突。确认清除选项后重新预览。',
       MANAGEMENT_BUSY: '其他管理操作正在进行，请稍后重试。',
       RECOVERY_REQUIRED: '上一次事务需要恢复。请在宿主运行 sudo ppgw-admin recover --yes，再刷新页面。',
       MIHOMO_REQUIRED: '请先在“维护与 API”中安装 Mihomo。',
@@ -587,49 +586,47 @@
       return result;
     }
     function assetCard() {
-      const kind = el('select', {id: 'asset-kind'}, [el('option', {value: 'yaml', text: 'Clash / Mihomo YAML'}), el('option', {value: 'ovpn', text: 'OpenVPN 配置'})]);
-      const filename = el('input', {id: 'asset-name', value: 'custom.yaml', maxLength: 100});
-      kind.onchange = () => { filename.value = kind.value === 'yaml' ? 'custom.yaml' : 'custom.ovpn'; };
-      const file = el('input', {type: 'file', id: 'asset-file', accept: '.yaml,.yml,.ovpn'});
+      const filename = el('input', {id: 'asset-name', value: 'custom.ovpn', maxLength: 100});
+      const file = el('input', {type: 'file', id: 'asset-file', accept: '.ovpn'});
       const overwrite = el('input', {type: 'checkbox', id: 'asset-overwrite'});
       const upload = el('button', {class: 'button secondary', type: 'button', text: '导入文件', onclick: async () => {
         try {
-          const selectingSource = dirty.size === 1 && dirty.get('ini.mode') === (kind.value === 'yaml' ? 'yaml' : 'ovpn');
-          if ((dirty.size && !selectingSource)) throw Error('请先应用或放弃当前修改，再导入文件。');
-          if (!file.files[0] || file.files[0].size > 1024 * 1024) throw Error('请选择不超过 1 MiB 的配置文件。');
-          postUpload = {kind: kind.value, name: filename.value};
-          await startJob('asset', {type: kind.value, name: filename.value, content: await file.files[0].text(), overwrite: overwrite.checked});
+          const selectingOpenVpn = dirty.size === 1 && dirty.get('ini.mode') === 'ovpn';
+          if (dirty.size && !selectingOpenVpn) throw Error('请先应用或放弃当前修改，再导入文件。');
+          if (!file.files[0] || file.files[0].size > 1024 * 1024) throw Error('请选择不超过 1 MiB 的 OpenVPN 配置文件。');
+          postUpload = filename.value;
+          await startJob('asset', {type: 'ovpn', name: filename.value, content: await file.files[0].text(), overwrite: overwrite.checked});
         } catch (error) { postUpload = null; notice(error.message, 'error'); }
       }});
-      return card('导入本地配置', '导入只保存文件；完成后预览并确认切换模式。PPsub JSON 可在下方编辑器中导入。', '04', [
-        el('div', {class: 'field-grid'}, [el('div', {class: 'field'}, [el('label', {htmlFor: kind.id, text: '配置类型'}), kind]),
-          el('div', {class: 'field'}, [el('label', {htmlFor: filename.id, text: '保存名称'}), filename]),
+      return card('导入 OpenVPN 配置', '导入后预览并确认切换到 OpenVPN。LovestSub JSON 可在“订阅与策略”中导入。', '04', [
+        el('div', {class: 'field-grid'}, [el('div', {class: 'field'}, [el('label', {htmlFor: filename.id, text: '保存名称'}), filename]),
           el('div', {class: 'field wide'}, [el('label', {htmlFor: file.id, text: '选择文件'}), file])]),
         el('label', {class: 'checkline'}, [overwrite, document.createTextNode('允许覆盖同名文件（覆盖前创建备份）')]),
         el('div', {class: 'button-row asset-form'}, [upload, el('button', {class: 'button secondary', text: '重启应用资源', onclick: () => preview(true)})]),
       ]);
     }
+    function nativeSource() {
+      return model.settings.ini.mode === 'suburl' && (model.source.native_ppsub ||
+        sourceDetails?.kind === 'native_ppsub' || (sourceDetails?.url || model.source.url || '').startsWith('ppsub@'));
+    }
     function subscriptionGlobals() {
-      if (model.settings.ini.mode !== 'suburl') return [];
+      if (!nativeSource()) return [];
       const manual = valueOf('ini', 'subtime') === 'manual';
       const toggle = el('input', {type:'checkbox', id:'subscription-manual', checked:manual});
       toggle.onchange = () => { setValue('ini','subtime',toggle.checked?'manual':'1d'); if(toggle.checked)setValue('ini','subcron',''); renderSubscriptionGlobals(); };
-      const native = model.source.native_ppsub || model.settings.ini.suburl.startsWith('ppsub@');
       return [el('section', {class:'subscription-schedule'}, [
-        native ? el('label',{class:'checkline'},[toggle,document.createTextNode('全局默认仅手动更新')]) : null,
+        el('label',{class:'checkline'},[toggle,document.createTextNode('全局默认仅手动更新')]),
         !manual ? fields([['ini','subtime'], ['ini','subcron']]) : null,
-        el('small', {class:'subtext', text:native?'下方每个机场可选择跟随全局、仅手动或独立自动更新。重启使用已保存节点，更新失败保留旧节点；点击“更新此订阅”可单独获取。':manual?'重启使用已保存配置。':'与下方编辑内容一起保存。此计划用于主订阅，配置内提供商按各自设置更新。'})])];
+        el('small', {class:'subtext', text:'下方每个机场可选择跟随全局、仅手动或独立自动更新。重启使用已保存节点，更新失败保留旧节点；点击“更新此订阅”可单独获取。'})])];
     }
     function sourceCard() {
       const ini = {...model.settings.ini, suburl:sourceDetails?.url || model.source.url || ''};
-      const native = ini.mode === 'suburl' && (ini.suburl.startsWith('ppsub@') || model.source.native_ppsub);
-      const kind = ini.mode === 'yaml' ? 'yaml' : native ? 'ppsub' : ini.mode === 'suburl' ? 'remote' : 'other';
-      const names = {yaml:'本地 YAML', ppsub:'原生 PPsub', remote:'远程完整配置', other:modeNames[ini.mode] || ini.mode};
+      const kind = ini.mode === 'yaml' ? 'yaml' : nativeSource() ? 'ppsub' : ini.mode === 'suburl' ? 'remote' : 'other';
+      const names = {yaml:'本地 YAML', ppsub:'LovestSub', remote:'远程完整配置', other:modeNames[ini.mode] || ini.mode};
       const locationText = kind === 'yaml' ? ini.yamlfile : kind === 'remote' ? ini.suburl : kind === 'ppsub' ?
-        (model.source.native_ppsub ? '本机 PPsub 配置' : ini.suburl.slice(6)) : '请先切换到配置来源，再维护订阅与策略。';
-      const description = kind === 'yaml' ? '在“策略编辑”中保存本地覆盖，源 YAML 文件保持原样。文件内提供商继续按各自计划更新。' :
-        kind === 'remote' ? '“策略编辑”中的修改叠加为本地策略，主订阅继续按计划更新。提供商链接属于配置内部资源。' :
-        kind === 'ppsub' ? '在“策略编辑”中维护 PPsub 配置，可添加、删除或重命名订阅提供商。' : '当前使用其他出站模式。';
+        (model.source.native_ppsub ? '本机 LovestSub 配置' : ini.suburl.slice(6)) : '请先切换到配置来源，再维护订阅与策略。';
+      const description = kind === 'yaml' || kind === 'remote' ? '正在使用完整 Clash 配置。切换到 LovestSub 后即可使用在线编辑器。' :
+        kind === 'ppsub' ? '在“策略编辑”中维护 LovestSub 配置，可添加、删除或重命名订阅提供商。' : '当前使用其他出站模式。';
       const section = card('当前配置来源', description, '', [el('div', {class:'source-summary'}, [
         el('strong', {class:'source-kind', text:names[kind]}), kind==='remote'||kind==='ppsub'&&!model.source.native_ppsub?window.ppgwUrlPrivacy.urlSummary(locationText,copyValue):el('code', {class:'source-location', text:locationText})])]);
       section.classList.add('source-card');
@@ -639,36 +636,39 @@
       if(!expanded)section.append(el('button',{class:'btn',type:'button',text:'切换配置来源',onclick:()=>{sourceExpanded=true;render();}}));
       const details = el('section', {class:'source-switch',hidden:!expanded});
       details.append(el('h3', {text:sourceDraft?.changed ? '切换配置来源 · 尚未应用' : '切换配置来源'}));
-      const draft = sourceDraft || {kind:kind === 'other' ? 'remote' : kind, url:kind === 'remote' ? ini.suburl : '', yaml:ini.yamlfile, changed:false, reset:false, ppsub:null};
-      const type = el('select', {id:'source-type'}, [['remote','远程完整配置'],['yaml','本地 YAML'],['ppsub','原生 PPsub']].map(([value,text]) => el('option',{value,text,selected:draft.kind===value})));
-      type.onchange = () => { sourceDraft = {...draft, kind:type.value, changed:true}; render(); };
+      const draft = sourceDraft || {changed:false, reset:false, ppsub:null};
+      const type = el('select', {id:'source-type'}, [el('option',{value:'ppsub',text:'LovestSub'})]);
       const form = el('div',{class:'source-form'},[el('div',{class:'field'},[el('label',{htmlFor:type.id,text:'目标来源'}),type])]);
-      if (draft.kind === 'remote') {
-        const url = el('input',{id:'source-url',type:'url',required:true,value:draft.url,placeholder:'https://example.com/config.yaml'});
-        url.oninput = () => { draft.url=url.value; draft.changed=true; sourceDraft=draft; };
-        form.append(el('div',{class:'field wide'},[el('label',{htmlFor:url.id,text:'主配置订阅地址'}),url,
-          el('small',{text:'下载整份 Clash / Mihomo 配置的地址；配置内的提供商链接在“策略编辑”中维护。'})]));
-        window.ppgwUrlPrivacy.guardUrlInput(url,()=>draft.url);
-      } else if (draft.kind === 'yaml') {
-        const file = el('select',{id:'source-yaml'},model.assets.filter(name=>/\.ya?ml$/.test(name)).map(value=>el('option',{value,text:value,selected:value===draft.yaml})));
-        if (!file.options.length) file.append(el('option',{value:'',text:'请先导入 YAML 文件'}));
-        file.onchange = () => { draft.yaml=file.value; draft.changed=true; sourceDraft=draft; };
-        form.append(el('div',{class:'field wide'},[el('label',{htmlFor:file.id,text:'本机 YAML 文件'}),file]));
-      } else {
-        const file = el('input',{id:'source-ppsub',type:'file',accept:'.json,application/json'});
-        file.onchange = async () => {
-          try { if (!file.files[0] || file.files[0].size>1024*1024) throw Error('请选择不超过 1 MiB 的 PPsub JSON。');
-            draft.ppsub=await file.files[0].text(); JSON.parse(draft.ppsub); draft.changed=true; sourceDraft=draft;
-            notice('PPsub 文件已选中，预览并确认后才会切换来源。');
-          } catch(error) { draft.ppsub=null; notice(error.message,'error'); }
-        };
-        form.append(el('div',{class:'field wide'},[el('label',{htmlFor:file.id,text:'导入 PPsub JSON 来源'}),file,
-          el('small',{text:draft.ppsub ? '已选择 PPsub 文件，等待预览确认。' : model.source.native_ppsub ? '留空使用已保存的本机 PPsub；选择文件将替换它。' : '切换到原生 PPsub 需导入配置文件。'})]));
-      }
+      const file = el('input',{id:'source-ppsub',type:'file',accept:'.json,application/json'});
+      file.onchange = async () => {
+        const selected = file.files[0];
+        const read = {};
+        sourceDraft = draft;
+        draft.reading = read;
+        draft.ppsub = null;
+        draft.invalidFile = false;
+        try {
+          if (!selected || selected.size > 1024 * 1024) throw Error('请选择不超过 1 MiB 的 LovestSub JSON。');
+          const ppsub = await selected.text();
+          if (stopped || sourceDraft !== draft || draft.reading !== read) return;
+          JSON.parse(ppsub);
+          draft.ppsub = ppsub; draft.changed = true;
+          notice('LovestSub 文件已选中，预览并确认后才会切换来源。');
+        } catch(error) {
+          if (sourceDraft === draft && draft.reading === read) {
+            draft.invalidFile = Boolean(selected);
+            notice(error instanceof SyntaxError ? 'LovestSub 文件不是有效的 JSON。' : error.message,'error');
+          }
+        } finally {
+          if (draft.reading === read) delete draft.reading;
+        }
+      };
+      form.append(el('div',{class:'field wide'},[el('label',{htmlFor:file.id,text:'导入 LovestSub JSON 来源'}),file,
+        el('small',{text:draft.ppsub ? '已选择 LovestSub 文件，等待预览确认。' : model.source.native_ppsub ? '留空使用已保存的本机 LovestSub。选择文件将替换它。' : '切换到 LovestSub 需导入配置文件。'})]));
       if (model.source.local_policy || model.source.native_ppsub) {
         const reset=el('input',{id:'reset-source',type:'checkbox',checked:draft.reset});
         reset.onchange=()=>{draft.reset=reset.checked;sourceDraft=draft;};
-        form.append(el('label',{class:'checkline wide'},[reset,document.createTextNode('允许切换时备份并清除冲突的旧本地 PPsub / 覆盖策略')]));
+        form.append(el('label',{class:'checkline wide'},[reset,document.createTextNode('允许切换时备份并清除冲突的旧本地 LovestSub / 覆盖策略')]));
       }
       form.append(el('div',{class:'button-row wide'},[
         el('button',{class:'btn',type:'button',text:'取消切换',onclick:()=>{sourceDraft=null;sourceExpanded=false;notice('');render();}}),
@@ -676,13 +676,11 @@
           const trigger=event.currentTarget;
           try {
             if (dirty.size || window.ppgwPpsub?.hasChanges()) throw Error('请先保存或放弃当前编辑，再切换配置来源。');
-            if ([...form.querySelectorAll('input,select')].some(node=>!node.reportValidity())) return;
-            const target = {mode:draft.kind==='yaml'?'yaml':'suburl',fast_node:'no'};
-            if (draft.kind==='yaml') { if (!$('source-yaml').value) throw Error('请先导入 YAML 文件。'); target.yamlfile=$('source-yaml').value; }
-            else if (draft.kind==='remote') target.suburl=draft.url;
-            else { if (!draft.ppsub && !model.source.native_ppsub) throw Error('请先选择 PPsub JSON 文件。'); target.suburl='ppsub@http://127.0.0.1/ppsub.json'; }
+            if (draft.reading) throw Error('正在读取 LovestSub 文件，请稍后预览。');
+            if (draft.invalidFile || (!draft.ppsub && !model.source.native_ppsub)) throw Error('请先选择有效的 LovestSub JSON 文件。');
+            const target = {mode:'suburl',suburl:'ppsub@http://127.0.0.1/ppsub.json',fast_node:'no'};
             const body={base_revision:model.revision,patch:{ini:target},reset_source:draft.reset,
-              ...(draft.kind==='ppsub'&&draft.ppsub?{source_ppsub:draft.ppsub}:{})};
+              ...(draft.ppsub?{source_ppsub:draft.ppsub}:{})};
             const snapshot=previewSnapshot();
             const data=await api('preview',body);
             prepared={kind:'config',body,source:true,snapshot};
@@ -691,7 +689,6 @@
           } catch(error){notice(error.message,'error');}
         }})]));
       details.append(form); section.append(details);
-      if (draft.kind==='yaml') details.append(assetCard());
       return section;
     }
     function renderSubscriptionGlobals() {
@@ -862,7 +859,7 @@
             el('span', {text: model.schema[ns]?.[key]?.secret ? '已更新（不显示内容）' : typeof value === 'boolean' ? value ? '开启' : '关闭' : Array.isArray(value) ? value.join('、') || '清空' : String(value) || '清空'})]));
         }
         items.push(list);
-        if (data.effects?.source_reset) items.push(el('p', {class: 'subtext', text: '旧本地 PPsub / 策略将清除，并包含在此次备份中。'}));
+        if (data.effects?.source_reset) items.push(el('p', {class: 'subtext', text: '旧本地 LovestSub / 策略将清除，并包含在此次备份中。'}));
         if (data.effects?.access_changed) items.push(el('p', {class: 'subtext', text: '修改管理范围可能使当前设备无法访问；修改管理密码后请重新登录。'}));
         const address = newAddress(data.effects?.web_listen);
         if (address) items.push(el('p', {class: 'subtext', text: '新的管理地址：' + address}));
@@ -954,10 +951,9 @@
             await refreshRuntime();
             await load();
             if (uploaded) {
-              if (/^#\/(subscriptions|ppsub)(?:[?]|$)/.test(location.hash)) sourceDraft={kind:'yaml',yaml:uploaded.name,url:'',ppsub:null,changed:true,reset:false};
-              else { setValue('ini', 'mode', uploaded.kind === 'yaml' ? 'yaml' : 'ovpn');
-              setValue('ini', uploaded.kind === 'yaml' ? 'yamlfile' : 'ovpnfile', uploaded.name); }
-              render(); notice('文件已保存。请预览并确认切换到导入的配置；同名资源也可通过“重启应用资源”生效。', 'success');
+              setValue('ini', 'mode', 'ovpn');
+              setValue('ini', 'ovpnfile', uploaded);
+              render(); notice('OpenVPN 文件已保存。请预览并确认切换到导入的配置，也可通过“重启应用资源”应用同名资源。', 'success');
             } else notice(job.result?.runtime?.reason === 'core_inactive' ? '配置已保存，转发核心当前未加载此次变更。请通过管理脚本检查服务状态。' : '配置已应用，运行状态验收通过。', 'success');
             return;
           }

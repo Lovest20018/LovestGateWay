@@ -116,7 +116,7 @@ export function mountDiagnostics(root,{onUnauthorized=()=>{},onComplete=()=>{}}=
     const card=(title,children)=>el('section',{class:'card glass'},[el('div',{class:'card-heading'},[el('h2',{text:title})]),...children]);
     const rows=Object.entries(value.services||{}).filter(([name])=>Object.hasOwn(services,name)).map(([name,state])=>el('li',{class:'diagnostic-service '+(state.active?'ok':state.enabled?'error':'unknown'),text:services[name]+'：'+(state.active?'运行中':'未运行')+' · '+(state.enabled?'开机启用':'未设为开机启用')}));
     const runtime={running:'核心响应正常',staged:'暂存环境，未执行真实服务验收',unknown:'核心状态尚未确认'};
-    const source={none:'未配置订阅',local_yaml:'本地 YAML',remote_yaml:'远程完整配置',native_ppsub:'原生 PPsub',unknown:'尚未确认'};
+    const source={none:'未配置订阅',local_yaml:'本地 YAML',remote_yaml:'远程完整配置',native_ppsub:'LovestSub',unknown:'尚未确认'};
     const policy={active:'本地覆盖生效',none:'无本地覆盖',invalid:'本地策略无法校验',source_mismatch:'本地策略与当前来源不一致',unknown:'尚未确认'};
     const causes=(value.causes||[]).map(code=>el('li',{text:message(code)}));
     const recent=(value.recent||[]).slice(0,20).map(row=>el('li',{},[el('div',{class:'operation-heading'},[el('strong',{text:(kinds[row.kind]||'管理操作')+' · '+({succeeded:'成功',failed:'失败',interrupted:'中断',running:'执行中',queued:'等待中',applying:'应用中',applied:'已应用',unchanged:'未变化',complete:'已完成'}[row.status]||'待核对')})]),el('p',{class:'subtext',text:time(row.updated_at)+(row.error?' · '+operationError(row):'')} )]));

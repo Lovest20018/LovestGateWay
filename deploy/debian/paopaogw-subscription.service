@@ -1,5 +1,5 @@
 [Unit]
-Description=LovestGateWay native PPsub save/apply helper
+Description=LovestGateWay LovestSub save/apply helper
 After=network.target
 
 [Service]

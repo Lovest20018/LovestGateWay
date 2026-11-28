@@ -74,12 +74,15 @@ fn is_usable_v4(ip: Ipv4Addr) -> bool {
         || (o[0] == 192 && o[1] == 0 && o[2] == 2)
         || (o[0] == 198 && o[1] == 51 && o[2] == 100)
         || (o[0] == 203 && o[1] == 0 && o[2] == 113)
-        || (o[0] == 198 && (o[1] & 0xfe) == 18)
-
     {
         return false;
     }
-    !in_fake_cidr(ip)
+    !is_fake_ip(ip)
+}
+
+pub(crate) fn is_fake_ip(ip: Ipv4Addr) -> bool {
+    let [first, second, ..] = ip.octets();
+    (first == 198 && (second & 0xfe) == 18) || in_fake_cidr(ip)
 }
 
 fn in_fake_cidr(ip: Ipv4Addr) -> bool {

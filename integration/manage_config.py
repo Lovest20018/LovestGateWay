@@ -31,7 +31,7 @@ class ConfigManager:
             names = ('clash-policy.json',) if target['mode'] == 'suburl' and target['suburl'].startswith('ppsub@') else ('ppsub.json', 'clash-policy.json')
             conflicts = ['etc/paopaogw/files/' + name for name in names
                          if self.layout.path('etc/paopaogw/files/' + name).exists()]
-            if conflicts and not reset_source: raise ManagementError('SOURCE_CONFLICT:use --reset-source to remove local PPsub/policy')
+            if conflicts and not reset_source: raise ManagementError('SOURCE_CONFLICT:use --reset-source to remove local LovestSub/policy')
             for path in conflicts: updates[path] = None
         action = 'none'
         if changes.get('ini'): action = 'reload' if set(changes['ini']) <= SAFE_RELOAD else 'restart'

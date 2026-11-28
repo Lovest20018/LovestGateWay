@@ -12,7 +12,7 @@ const performanceOnly=process.argv.includes('--performance');
 const origin='http://127.0.0.1:18892',main='Fixture Main /?#',alpha='Sub_🇯🇵 Tokyo /?#',beta='Sub_香港 Two',offline='Sub_US Timeout',evil='<img src=x onerror="window.untrustedRan=true">',provider='Fixture Sub /?#';
 const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'Sub',upload:1024,download:4096,total:1024**3,expire:1893456000,at:1793890000}],proxies:{
   GLOBAL:{type:'Selector',all:[main,'Fixture Auto','Fixture Smart','Fixture Balance',alpha,beta,'DIRECT','REJECT'],now:main},
-  [main]:{type:'Selector',all:[alpha,beta,offline,evil,'DIRECT','REJECT'],now:alpha},
+  [main]:{type:'Selector',failover:true,all:[alpha,beta,offline,evil,'DIRECT','REJECT'],now:alpha},
   'Fixture Auto':{type:'URLTest',all:[alpha,beta],now:alpha,testUrl:'https://example.test/automatic'},
   'Fixture Smart':{type:'Selector',smart:true,all:[alpha,beta],now:beta,testUrl:'https://example.test/smart',scores:{[alpha]:{score:180,samples:[95,105,null,98]},[beta]:{score:60,samples:[58,60,61,59]}}},
   'Fixture Balance':{type:'LoadBalance',all:[alpha,beta],now:alpha,testUrl:'https://example.test/balance'},
@@ -47,7 +47,10 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
           const tag='"fixture-'+version+'"';if(request.headers()['if-none-match']===tag){notModified++;return route.fulfill({status:304,headers:{ETag:tag},body:''});}
           return reply(data,200,{ETag:tag});
         }
-        if(target==='/sniffbox/proxy')return reply({name:url.searchParams.get('name'),type:'Trojan',udp:true,server:evil,port:443,password:'DO-NOT-DISPLAY-DETAIL-SECRET',history:[{delay:85},{delay:90}]});
+        if(target==='/sniffbox/proxy'){
+          const name=url.searchParams.get('name');
+          return reply(name===main?{name,type:'Selector'}:{name,type:'Trojan',udp:true,server:evil,port:443,password:'DO-NOT-DISPLAY-DETAIL-SECRET',history:[{delay:85},{delay:90}]});
+        }
         if(target==='/sniffbox/nodes')return reply({nodes:[{node:alpha,up:1024,down:2048,total:3072}],total:1});
         if(target==='/sniffbox/smart/fixed'){
           assert.equal(method,'POST');assert.deepEqual(Object.keys(body).sort(),['group','node']);data.proxies[body.group].fixed=body.node||'';if(body.node)data.proxies[body.group].now=body.node;version++;return reply({group:body.group,fixed:body.node});
@@ -61,7 +64,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
           version++;return route.fulfill({status:204,body:''});
         }
         if(target==='/configs'){
-          if(method==='PATCH'){assert.deepEqual(Object.keys(body),['mode']);assert.ok(['global','rule','direct'].includes(body.mode));data.mode=body.mode;version++;return route.fulfill({status:204,body:''});}return reply({mode:data.mode});
+          if(method==='PATCH'){assert.deepEqual(Object.keys(body),['mode']);assert.ok(['global','rule'].includes(body.mode));data.mode=body.mode;version++;return route.fulfill({status:204,body:''});}return reply({mode:data.mode});
         }
         if(target==='/connections')return reply({connections:[{id:'old /?#',chains:[main,alpha]},{id:'keep-current',chains:[main,beta]},{id:'unrelated',chains:['Other',alpha]}],downloadTotal:0,uploadTotal:0});
         if(target.startsWith('/connections/')){assert.equal(method,'DELETE');if(closeFailures)return reply({},503);return route.fulfill({status:204,body:''});}
@@ -98,6 +101,26 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
       assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);assert.equal(writes().length,0);await fs.writeFile(path.join(evidence,'proxy-refresh-performance.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));return;
     }
     await exactCard(main,alpha).waitFor();await page.evaluate(()=>window.documentIdentity='proxies-source');
+    const failoverLabel='手动 · 故障转移',manualHint='支持手动切换；当前节点健康检查失败时会自动故障转移。';
+    await group(main).locator('summary').getByText(failoverLabel,{exact:true}).waitFor();
+    await group(main).getByText(manualHint,{exact:true}).waitFor();
+    assert.equal(await exactCard(main,alpha).getByRole('button',{name:'锁定',exact:true}).isVisible(),false);
+    const globalSummary=group('GLOBAL').locator(':scope > summary');
+    await globalSummary.click();
+    const childGroup=exactCard('GLOBAL',main);
+    await childGroup.getByText(failoverLabel,{exact:true}).waitFor();
+    delete data.proxies[main].failover;version++;
+    await proxies.getByRole('button',{name:'刷新',exact:true}).click();
+    await childGroup.getByText('手动选择',{exact:true}).waitFor();
+    assert.equal(await group(main).locator('.proxy-group-info').isVisible(),false);
+    data.proxies[main].failover=true;version++;
+    await proxies.getByRole('button',{name:'刷新',exact:true}).click();
+    await childGroup.getByText(failoverLabel,{exact:true}).waitFor();
+    await childGroup.getByRole('button',{name:'详情',exact:true}).click();
+    const failoverDetails=proxies.getByRole('dialog',{name:'节点详情',exact:true});
+    await failoverDetails.getByText(failoverLabel,{exact:true}).waitFor();
+    await failoverDetails.getByRole('button',{name:'关闭',exact:true}).click();
+    await globalSummary.click();
     await group(main).evaluate(node=>{window.proxyElements={option:node.querySelectorAll('.proxy-group-tools select')[1].firstElementChild,line:node.querySelector('.proxy-sparkline polyline'),usage:document.querySelector('.proxy-usage')};});
     // A new HTTP snapshot with the same visible data must preserve controls and curves.
     version++;await proxies.getByRole('button',{name:'刷新',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('#proxies-page .proxies-head .layout-actions > .btn:nth-last-child(2)').disabled);
@@ -156,6 +179,7 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     await search.focus();version++;await page.waitForTimeout(5300);assert.equal(await search.inputValue(),'Tokyo');assert.equal(await search.evaluate(node=>document.activeElement===node),true,'background updates must retain the search focus');await search.fill('');
     const selectBeta=exactCard(main,beta).getByRole('button',{name:'选择 '+beta,exact:true});holdSelect=true;const before=writes().length;await selectBeta.click();await page.waitForFunction(()=>document.querySelector('[data-action=mode]').disabled);
     await selectBeta.evaluate(node=>node.click());await page.waitForTimeout(60);assert.equal(writes().length,before+1);holdSelect=false;releaseSelect();await proxies.locator('.proxies-status').getByText('切换节点完成。',{exact:true}).waitFor();assert.equal(data.proxies[main].now,beta);
+    assert.deepEqual([writes()[before].method,writes()[before].target,writes()[before].body],['PUT','/proxies/'+encodeURIComponent(main),{name:beta}]);
     failSelect=true;await exactCard(main,alpha).getByRole('button',{name:'选择 '+alpha,exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'HTTP 503'}).waitFor();assert.equal(data.proxies[main].now,beta);failSelect=false;
     await proxies.locator('[data-preference=autoClose]').check();await exactCard(main,alpha).getByRole('button',{name:'选择 '+alpha,exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'切换节点完成。已关闭'}).waitFor();
     await selectBeta.click();await proxies.locator('.proxies-status').filter({hasText:'切换节点完成。已关闭'}).waitFor();assert.deepEqual(requests.filter(row=>row.target.startsWith('/connections/')&&row.method==='DELETE').map(row=>decodeURIComponent(row.target.slice(13))),['keep-current','old /?#'],'each switch only closes the matching group connections that lack its new node');
@@ -176,7 +200,19 @@ const fixture={mode:'rule',testUrl:'https://example.test/default',subs:[{name:'S
     await providerCard.getByRole('button',{name:'批量测速',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:/代理集合测速未完成.*测速失败/}).waitFor();
     data.providers.Second={vehicleType:'HTTP',proxies:[alpha]};data.providers.Third={vehicleType:'HTTP',proxies:[beta]};version++;await proxies.getByRole('button',{name:'刷新',exact:true}).click();await proxies.locator('.proxy-provider').filter({hasText:'Third'}).waitFor();failedProvider=provider;const batchStart=writes().length;await proxies.getByRole('button',{name:'更新所有订阅',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'成功 2 个，失败 1 个'}).waitFor();assert.equal(writes().slice(batchStart).filter(row=>row.target.startsWith('/providers/proxies/')).length,3);failedProvider='';delete data.providers.Second;delete data.providers.Third;version++;await proxies.getByRole('button',{name:'刷新',exact:true}).click();
     const modeStart=writes().length;await proxies.getByRole('radio',{name:'全局',exact:true}).click();await proxies.locator('.proxies-status').getByText('切换模式完成。',{exact:true}).waitFor();assert.equal(await proxies.locator('.proxy-group').count(),1);assert.equal(await exactCard('GLOBAL',main).count(),0);assert.deepEqual(writes()[modeStart].body,{mode:'global'});
-    await proxies.getByRole('radio',{name:'直连',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'切换模式完成'}).waitFor();assert.equal(data.mode,'direct');await proxies.getByRole('radio',{name:'规则',exact:true}).click();await proxies.locator('.proxies-status').getByText('切换模式完成。',{exact:true}).waitFor();await exactCard(main,alpha).waitFor();
+    const modes=proxies.getByRole('radiogroup',{name:'核心运行模式'});
+    assert.deepEqual(await modes.getByRole('radio').allTextContents(),['规则','全局']);
+    data.mode='direct';version++;
+    await proxies.getByRole('button',{name:'刷新',exact:true}).click();
+    const directNotice=proxies.getByText('当前为核心直连模式（direct），代理分流未生效；请切换回“规则”或“全局”模式。',{exact:true});
+    await directNotice.waitFor();
+    assert.equal(await modes.locator('[aria-checked=true]').count(),0);
+    const ruleMode=modes.getByRole('radio',{name:'规则',exact:true});
+    assert.equal(await ruleMode.getAttribute('tabindex'),'0');
+    await ruleMode.click();
+    await directNotice.waitFor({state:'hidden'});
+    await exactCard(main,alpha).waitFor();
+    assert.deepEqual(writes().slice(modeStart).map(row=>row.body),[{mode:'global'},{mode:'rule'}]);
     testFailures=true;await exactCard(main,alpha).getByRole('button',{name:'测速',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:'测速失败'}).waitFor();testFailures=false;
     await proxies.getByRole('button',{name:'全部测速',exact:true}).click();await proxies.locator('.proxies-status').filter({hasText:/全部测速未完成.*测速失败/}).waitFor();assert.ok(maxTests<=8);assert.ok(maxTests>1);
     holdTests=true;heldTests=[];await proxies.getByRole('button',{name:'全部测速',exact:true}).click();

@@ -13,20 +13,28 @@ export function documentModel(value={}) {
   return doc;
 }
 export function move(rows,index,offset) {const target=index+offset;if(target<0||target>=rows.length)return;rows.splice(target,0,...rows.splice(index,1));}
-export function groupMode(row) {return row.smart?'smart':row.speedtest_url||row.interval?'speedtest':row.failover?'fallback':'manual';}
+export function groupMode(row) {return row.smart?'smart':row.speedtest_url||row.interval?'speedtest':'manual';}
 export function setGroupMode(row,mode) {
-  delete row.smart;delete row.speedtest_url;delete row.interval;delete row.failover;
+  delete row.smart;delete row.speedtest_url;delete row.interval;
+  if(mode!=='manual')delete row.failover;
   if(mode==='smart')row.smart=true;
   if(mode==='speedtest'){row.speedtest_url='https://www.gstatic.com/generate_204';row.interval=600;}
-  if(mode==='fallback'){row.failover=true;row.monitor_url ||= 'https://www.youtube.com/generate_204';row.expected_status ??='0';row.retries ??=3;}
+}
+export function setGroupFailover(row,enabled) {
+  if(enabled){
+    row.failover=true;
+    row.monitor_url ||= 'https://www.youtube.com/generate_204';
+    row.expected_status ??= '0';
+    row.retries ??= 3;
+  }else delete row.failover;
 }
 export function ruleType(row) {return row.type==='rule-set'?'rule-set':row.type==='url'||row.url?'url':'manual';}
-export const ruleSetDefaults=full=>({behavior:'classical',format:full?'yaml':'auto',interval:86400});
-export function setRuleType(row,type,full=false) {
+export const ruleSetDefaults=()=>({behavior:'classical',format:'auto',interval:86400});
+export function setRuleType(row,type) {
   delete row.type;delete row.url;
   if(type==='rule-set'||type==='url'){
     row.type=type;row.url='';
-    if(type==='rule-set')for(const [key,value] of Object.entries(ruleSetDefaults(full)))row[key]??=value;
+    if(type==='rule-set')for(const [key,value] of Object.entries(ruleSetDefaults()))row[key]??=value;
   }else row.fixrule ||= [];
 }
 export function exported(doc) {return clone(doc);}

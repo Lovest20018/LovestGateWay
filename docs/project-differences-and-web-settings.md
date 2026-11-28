@@ -17,12 +17,12 @@
 | 运行隔离 | 配套系统内运行 | 私有挂载/临时目录，按服务 cgroup 识别进程，Web/DNS 支持指定监听地址 |
 | 可选观测 API | 无本项目 observer 契约 | 默认关闭，通过 Web 开关启用；提供实例身份、能力/健康/指标、FakeIP、TCP 观测、Mihomo 快照、历史和受限探测；观测凭据不能改配置 |
 | 日常 Web | 原面板和 PPsub 编辑器 | 11 个分栏均由本项目源码维护；服务端会话、配置预览、持久任务、实际加载核对和回退，支持手机与亮暗主题 |
-| PPsub | 日常订阅与策略编辑模型 | 保留高级和旧配置兼容入口；完整 Clash/Mihomo 配置日常直接编辑，保留未展示字段与节点凭据 |
+| 订阅模型 | PPsub 日常订阅与策略编辑模型 | 界面与文档统一命名为 **LovestSub**（底层保留 `/etc/paopaogw/files/ppsub.json`、`ppsub@` 与 API 兼容字段），支持 JSON 扩展字段、每提供商更新计划与按订阅隔离的多专属 DoH/DoT 策略。旧完整 Clash/Mihomo 来源仍可运行，页面提供状态与迁移入口 |
 | 脚本管理 | 原控制脚本 | 中文 ppgw-admin、类型校验、revision、备份、事务锁、升级和中断恢复；与 Web 复用后端 |
 | 安装默认值 | 配套环境的初始化流程 | 依赖/网卡/随机初始登录/启动；代理、UDP、统计、IPv6、历史及自动更新按需在 Web 开启，既有安装保留原值 |
 | Mihomo | 上游集成方式 | 官方稳定版独立安装、CPU 型号自动选择、摘要校验、更新和回退，维护开关控制服务/定时器 |
 | 功能取舍 | 包含 Cloudflared | Debian 运行、Web 和能力声明禁用 Cloudflared；free/socks5/ovpn/yaml/suburl 五模式保留 |
-| 品牌 | PaoPaoGateWay | LovestGateWay 名称/Logo，保留既有服务名、配置路径、API kind、PPsub 格式和登录存储兼容标识 |
+| 品牌 | PaoPaoGateWay / PPsub | LovestGateWay / LovestSub 名称与 Logo，保留既有服务名、配置路径、API kind、`ppsub.json` / `ppsub@` 兼容格式和登录存储标识 |
 
 FakeIP、透明 TCP/UDP、嗅探、显式 HTTP/SOCKS5 代理、Mihomo 面板、订阅调度等基础能力仍沿用上游，不是本项目从零新增。实际可用能力由目标环境、配置及独立验证决定。
 
@@ -64,12 +64,12 @@ Cloudflared、上游认证、DoH/DoT 与 TLS 改动、上游 Web 制品和 ISO �
 
 原有 `/sniffbox/reload` 会重载网关/Mihomo，不能据其 boot_id 不变推断所有连接不中断。`/sniffbox/reload/core` 只刷新私有 INI 并发 SIGHUP。管理器写持久文件前发布等待标记，主循环等核心已接受的快照与目标摘要一致后推进配置摘要，避免把同一次热更新再次当成完整重载。已有连接和辅助进程的实际保留情况需在目标模式中独立验证。
 
-## Web、安装与 PPsub 的分工
+## Web、安装与 LovestSub 的分工
 
 1. 安装只处理依赖、网卡、初始认证、服务和可恢复升级。安装时必须保留随机密码与访问范围这类基础保护；业务偏好移至 Web，旧测试配置保留显式低层选项。
 2. 网关设置按访问与统计、维护与 API、网络与出站、高级选项分组，预览显示核心及辅助服务影响，监听切换给出新地址。
-3. 订阅与策略直接管理完整 Clash/Mihomo URL/本地 YAML 和原生组/规则。后端在完整对象上合并，保留未展示字段和凭据，避免日常往返简化 PPsub。
-4. PPsub 的高级编辑、导入/导出和旧配置保存继续保留。新入口复用既有持久策略、订阅刷新和校验流程。
+3. 订阅与策略在线维护 LovestSub 配置，支持每提供商更新计划、手动组故障转移、JSON 扩展字段和导入/导出（默认 `lovestsub.json`，兼容旧 `ppsub.json`）。
+4. 旧完整 Clash/Mihomo 来源仍可运行并在“配置来源”展示状态与迁移入口，复用既有持久事务、备份和校验流程。
 5. 独立 settings 服务执行任务，核心重启或浏览器重连后按任务号查询；失败回退不重启任务服务自身。任务元数据不落盘明文输入凭据。
 
 ## 验证与限制
