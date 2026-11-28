@@ -1,6 +1,6 @@
 # LovestGateWay
 
-<img src="lovestgateway.svg" width="320" height="96" alt="LovestGateWay">
+<img src="https://cdn.jsdelivr.net/gh/Lovest20018/LovestGateWay@v0.2.9/lovestgateway.svg" width="320" height="96" alt="LovestGateWay">
 
 [![正式版](https://img.shields.io/github/v/release/Lovest20018/LovestGateWay)](https://github.com/Lovest20018/LovestGateWay/releases/latest)
 [![Debian CI](https://github.com/Lovest20018/LovestGateWay/actions/workflows/debian.yml/badge.svg)](https://github.com/Lovest20018/LovestGateWay/actions/workflows/debian.yml)
@@ -41,6 +41,8 @@
 
 LovestSub 合并订阅的有效 `hosts`，网关的基础 DNS 和 `paopaogateway.dns` 仍由 `base.yaml` 决定。节点使用 `hosts` 域名别名时会展开到目标域名并保留原 TLS SNI。 [完整差异与上游评审记录](docs/project-differences-and-web-settings.md)
 
+GitHub Actions 每周检查上游 `main` 和最新稳定版。上游变化经评审和验收后选择性移植，LovestGateWay 独立发版。 [上游跟进流程](docs/upstream-maintenance.md)
+
 ## v0.2.9
 
 - 代理与规则页显示「手动 · 故障转移」并保留手动切换；顶部模式切换收口为「规则」与「全局」，外部直连时提示恢复。
@@ -51,16 +53,16 @@ LovestSub 合并订阅的有效 `hosts`，网关的基础 DNS 和 `paopaogateway
 
 ## 界面预览
 
-以下截图由当前源码和虚构演示数据生成，不包含真实订阅、节点地址或凭据。
+以下为 v0.2.9 的界面截图，使用虚构演示数据。 [仓库中的截图文件](docs/images)
 
-![LovestGateWay 概览与运行历史](docs/images/overview.png)
+![LovestGateWay 概览与运行历史](https://cdn.jsdelivr.net/gh/Lovest20018/LovestGateWay@v0.2.9/docs/images/overview.png)
 
 <details>
 <summary>查看代理页面与暗色手机界面</summary>
 
-![代理页面](docs/images/proxies.png)
+![代理页面](https://cdn.jsdelivr.net/gh/Lovest20018/LovestGateWay@v0.2.9/docs/images/proxies.png)
 
-<img src="docs/images/mobile-dark.png" width="290" alt="暗色手机界面">
+<img src="https://cdn.jsdelivr.net/gh/Lovest20018/LovestGateWay@v0.2.9/docs/images/mobile-dark.png" width="290" alt="暗色手机界面">
 
 </details>
 
@@ -111,5 +113,3 @@ curl -fsSL https://raw.githubusercontent.com/Lovest20018/LovestGateWay/main/inst
 | 实现状态与验收边界 | [项目状态](docs/optimization-roadmap.md) |
 
 终端管理可运行 `sudo ppgw-admin`。源码主线持续开发，部署应使用正式 Release；目前正式包仅提供 Debian amd64，根目录保留的 ISO / ARM64 / Docker 构建脚本属于上游兼容资料，不代表本项目发布这些产物。
-
-本项目每周检查上游更新，经评审、移植和验收后选择性跟进。[上游关系](docs/upstream-maintenance.md) · [GPL-3.0](LICENSE)

@@ -2,6 +2,8 @@
 
 正式安装包及发布清单见 [GitHub Releases](https://github.com/Lovest20018/LovestGateWay/releases)。本页索引用户可见变化，完整发布说明保存在 `docs/releases/`。
 
+GitHub Actions 每周检查 PaoPaoGateWay 的主分支和最新稳定版。上游变化经评审和验收后选择性移植，LovestGateWay 独立发版。 [上游跟进流程](docs/upstream-maintenance.md)
+
 ## [v0.2.9](docs/releases/0.2.9.md) · 2026-11-28
 
 - 代理页与规则页区分「手动 · 故障转移」并保留手动切换，顶部模式切换收口为「规则」与「全局」。

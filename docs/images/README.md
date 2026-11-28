@@ -16,3 +16,5 @@ node scripts/capture-doc-screenshots.cjs dist/docs-ui docs/images
 ```
 
 渲染脚本拦截所有请求，只返回脚本内演示数据和本地构建文件；遇到未定义接口、外部地址或页面错误会失败。公开前逐张检查图片内容，避免用真实部署截图替换演示数据。
+
+README 通过 jsDelivr 加载仓库内的图片。换图后，将预览说明和图片链接更新到包含新图片的已公开标签或提交。
